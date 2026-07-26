@@ -186,6 +186,21 @@
         transform: translateY(0);
       }
 
+      .cta button:disabled {
+        opacity: 0.65;
+        cursor: wait;
+        transform: none;
+      }
+
+      .hp {
+        position: absolute;
+        left: -9999px;
+        width: 1px;
+        height: 1px;
+        opacity: 0;
+        pointer-events: none;
+      }
+
       .note {
         margin-top: 0.85rem;
         font-size: 0.78rem;
@@ -279,6 +294,14 @@
             autocomplete="email"
             required
           />
+          <input
+            class="hp"
+            type="text"
+            name="company"
+            tabindex="-1"
+            autocomplete="off"
+            aria-hidden="true"
+          />
           <button type="submit">Notify me</button>
         </form>
         <p class="note" id="form-note" role="status" aria-live="polite"></p>
@@ -288,10 +311,13 @@
     <script>
       const form = document.getElementById("notify-form");
       const note = document.getElementById("form-note");
+      const button = form.querySelector('button[type="submit"]');
 
-      form.addEventListener("submit", (event) => {
+      form.addEventListener("submit", async (event) => {
         event.preventDefault();
-        const email = new FormData(form).get("email")?.toString().trim();
+        const data = new FormData(form);
+        const email = data.get("email")?.toString().trim();
+        const company = data.get("company")?.toString().trim();
 
         if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
           note.textContent = "Please enter a valid email.";
@@ -299,9 +325,32 @@
           return;
         }
 
-        note.textContent = "You're on the list. We'll be in touch.";
-        note.classList.add("is-success");
-        form.reset();
+        button.disabled = true;
+        note.textContent = "Sending…";
+        note.classList.remove("is-success");
+
+        try {
+          const response = await fetch("/.netlify/functions/notify", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email, company }),
+          });
+          const result = await response.json().catch(() => ({}));
+
+          if (!response.ok) {
+            throw new Error(result.error || "Something went wrong.");
+          }
+
+          note.textContent = "You're on the list. We'll be in touch.";
+          note.classList.add("is-success");
+          form.reset();
+        } catch (error) {
+          note.textContent =
+            error.message || "Could not submit right now. Try again.";
+          note.classList.remove("is-success");
+        } finally {
+          button.disabled = false;
+        }
       });
     </script>
   </body>

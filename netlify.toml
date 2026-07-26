@@ -1,7 +1,16 @@
 # Netlify static site (shared build config for both sites)
 # Production: queueless-kenya  → branch main    → https://queueless.co.ke
 # Dev:        queueless-kenya-dev → branch develop → https://queueless.thewolfgang.tech
+#
+# Required env vars (both sites):
+#   GMAIL_USER          — Gmail address used to send
+#   GMAIL_APP_PASSWORD  — Gmail App Password (not your normal password)
+#   NOTIFY_TO           — inbox that receives waitlist alerts (optional; defaults to GMAIL_USER)
 
 [build]
   publish = "."
-  command = "echo 'Static site — no build'"
+  command = "npm install"
+  functions = "netlify/functions"
+
+[functions]
+  node_bundler = "esbuild"
