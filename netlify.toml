@@ -1,5 +1,6 @@
 # Netlify: publish root, production branch "develop",
-# custom domain queueless.thewolfgang.tech
+# production domain: queueless.co.ke (DNS at Truehost)
+# staging/alias: queueless.thewolfgang.tech
 
 [build]
   publish = "."
