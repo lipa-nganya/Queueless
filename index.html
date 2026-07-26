@@ -6,23 +6,27 @@
     <title>Queueless Kenya — Coming Soon</title>
     <meta
       name="description"
-      content="Queueless Kenya is coming soon. Skip the wait — something better is on the way."
+      content="Queueless Kenya is coming soon. Smart service. Zero wait."
     />
+    <link rel="icon" href="assets/queueless-logo.png" type="image/png" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Figtree:wght@400;500;600&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&display=swap"
       rel="stylesheet"
     />
     <style>
       :root {
-        --ink: #07140f;
-        --forest: #0c3b2e;
-        --leaf: #1a6b4a;
-        --sun: #e8b84a;
-        --sun-soft: #f0d78a;
-        --mist: #e8f2ec;
-        --mist-dim: rgba(232, 242, 236, 0.72);
+        --void: #000000;
+        --void-soft: #0a0a0a;
+        --lime: #b6e63a;
+        --lime-deep: #8fbf1f;
+        --lime-glow: rgba(182, 230, 58, 0.22);
+        --white: #ffffff;
+        --white-dim: rgba(255, 255, 255, 0.68);
+        --white-faint: rgba(255, 255, 255, 0.38);
+        --line: rgba(255, 255, 255, 0.14);
+        --font: "Montserrat", sans-serif;
       }
 
       *,
@@ -39,9 +43,9 @@
       }
 
       body {
-        font-family: "Figtree", sans-serif;
-        color: var(--mist);
-        background: var(--ink);
+        font-family: var(--font);
+        color: var(--white);
+        background: var(--void);
         overflow-x: hidden;
         -webkit-font-smoothing: antialiased;
       }
@@ -55,109 +59,71 @@
         isolation: isolate;
       }
 
-      /* Atmospheric full-bleed plane */
       .sky {
         position: absolute;
         inset: 0;
         z-index: -2;
-        background:
-          radial-gradient(
-            ellipse 90% 70% at 70% 20%,
-            rgba(232, 184, 74, 0.22),
-            transparent 55%
-          ),
-          radial-gradient(
-            ellipse 80% 60% at 15% 85%,
-            rgba(26, 107, 74, 0.55),
-            transparent 50%
-          ),
-          linear-gradient(
-            165deg,
-            #0a1f18 0%,
-            var(--forest) 42%,
-            #082820 72%,
-            var(--ink) 100%
-          );
-        animation: sky-drift 18s ease-in-out infinite alternate;
+        background: #000000;
       }
 
-      .sky::after {
-        content: "";
-        position: absolute;
-        inset: 0;
-        background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.45'/%3E%3C/svg%3E");
-        opacity: 0.07;
-        mix-blend-mode: overlay;
-        pointer-events: none;
-      }
-
-      /* Soft horizon light as visual anchor */
-      .horizon {
+      .glow {
         position: absolute;
         z-index: -1;
         left: 50%;
-        bottom: -8%;
-        width: min(140vw, 1100px);
-        height: min(55vh, 480px);
-        translate: -50% 0;
+        top: 28%;
+        width: min(70vw, 520px);
+        height: min(40vw, 320px);
+        translate: -50% -50%;
         background: radial-gradient(
           ellipse at center,
-          rgba(232, 184, 74, 0.35) 0%,
-          rgba(26, 107, 74, 0.2) 35%,
+          var(--lime-glow),
           transparent 68%
         );
-        filter: blur(2px);
-        animation: horizon-pulse 7s ease-in-out infinite;
+        filter: blur(8px);
+        animation: glow-pulse 6.5s ease-in-out infinite;
         pointer-events: none;
       }
 
       .content {
-        width: min(100%, 42rem);
+        width: min(100%, 36rem);
         text-align: center;
       }
 
-      .brand {
-        font-family: "Syne", sans-serif;
-        font-weight: 800;
-        font-size: clamp(2.75rem, 9vw, 5.25rem);
-        line-height: 0.95;
-        letter-spacing: -0.03em;
-        text-wrap: balance;
-        opacity: 0;
-        animation: rise 1s cubic-bezier(0.22, 1, 0.36, 1) 0.15s forwards;
-      }
-
-      .brand span {
+      .logo {
         display: block;
-        color: var(--sun);
-        font-size: 0.42em;
-        font-weight: 700;
-        letter-spacing: 0.28em;
-        text-transform: uppercase;
-        margin-top: 0.55em;
-        opacity: 0.95;
+        width: min(58vw, 16rem);
+        max-width: 536px;
+        height: auto;
+        margin-inline: auto;
+        image-rendering: auto;
+        opacity: 0;
+        animation: rise 0.95s cubic-bezier(0.22, 1, 0.36, 1) 0.1s forwards;
       }
 
       .headline {
-        font-family: "Syne", sans-serif;
+        margin-top: clamp(1.6rem, 4vw, 2.25rem);
+        font-size: clamp(1.15rem, 3vw, 1.45rem);
         font-weight: 700;
-        font-size: clamp(1.35rem, 3.5vw, 1.85rem);
-        letter-spacing: -0.02em;
-        margin-top: clamp(1.75rem, 4vw, 2.5rem);
+        letter-spacing: 0.22em;
+        text-transform: uppercase;
         opacity: 0;
-        animation: rise 1s cubic-bezier(0.22, 1, 0.36, 1) 0.4s forwards;
+        animation: rise 0.95s cubic-bezier(0.22, 1, 0.36, 1) 0.35s forwards;
+      }
+
+      .headline .accent {
+        color: var(--lime);
       }
 
       .support {
         margin-top: 0.85rem;
-        font-size: clamp(1rem, 2.2vw, 1.125rem);
+        font-size: clamp(0.95rem, 2.1vw, 1.05rem);
         font-weight: 400;
-        line-height: 1.55;
-        color: var(--mist-dim);
-        max-width: 28rem;
+        line-height: 1.6;
+        color: var(--white-dim);
+        max-width: 26rem;
         margin-inline: auto;
         opacity: 0;
-        animation: rise 1s cubic-bezier(0.22, 1, 0.36, 1) 0.55s forwards;
+        animation: rise 0.95s cubic-bezier(0.22, 1, 0.36, 1) 0.5s forwards;
       }
 
       .cta {
@@ -165,9 +131,9 @@
         flex-wrap: wrap;
         gap: 0.65rem;
         justify-content: center;
-        margin-top: clamp(1.75rem, 4vw, 2.35rem);
+        margin-top: clamp(1.6rem, 4vw, 2.2rem);
         opacity: 0;
-        animation: rise 1s cubic-bezier(0.22, 1, 0.36, 1) 0.7s forwards;
+        animation: rise 0.95s cubic-bezier(0.22, 1, 0.36, 1) 0.65s forwards;
       }
 
       .cta input {
@@ -175,40 +141,44 @@
         max-width: 18rem;
         height: 3rem;
         padding: 0 1.1rem;
-        border: 1px solid rgba(232, 242, 236, 0.22);
-        background: rgba(7, 20, 15, 0.45);
-        color: var(--mist);
+        border: 1px solid var(--line);
+        border-radius: 0;
+        background: rgba(0, 0, 0, 0.72);
+        color: var(--white);
         font: inherit;
-        font-size: 0.95rem;
+        font-size: 0.9rem;
+        font-weight: 500;
         outline: none;
         transition: border-color 0.2s ease, background 0.2s ease;
       }
 
       .cta input::placeholder {
-        color: rgba(232, 242, 236, 0.45);
+        color: var(--white-faint);
       }
 
       .cta input:focus {
-        border-color: rgba(232, 184, 74, 0.7);
-        background: rgba(7, 20, 15, 0.65);
+        border-color: rgba(182, 230, 58, 0.7);
+        background: rgba(0, 0, 0, 0.95);
       }
 
       .cta button {
         height: 3rem;
-        padding: 0 1.4rem;
+        padding: 0 1.45rem;
         border: none;
-        background: var(--sun);
-        color: var(--ink);
-        font-family: "Syne", sans-serif;
+        border-radius: 0;
+        background: var(--lime);
+        color: var(--void);
+        font-family: var(--font);
         font-weight: 700;
-        font-size: 0.9rem;
-        letter-spacing: 0.04em;
+        font-size: 0.78rem;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
         cursor: pointer;
         transition: background 0.2s ease, transform 0.2s ease;
       }
 
       .cta button:hover {
-        background: var(--sun-soft);
+        background: #c8f04f;
         transform: translateY(-1px);
       }
 
@@ -218,21 +188,23 @@
 
       .note {
         margin-top: 0.85rem;
-        font-size: 0.8rem;
-        color: rgba(232, 242, 236, 0.4);
+        font-size: 0.78rem;
+        font-weight: 500;
+        letter-spacing: 0.04em;
+        color: var(--white-faint);
         min-height: 1.2em;
         opacity: 0;
-        animation: rise 1s cubic-bezier(0.22, 1, 0.36, 1) 0.85s forwards;
+        animation: rise 0.95s cubic-bezier(0.22, 1, 0.36, 1) 0.8s forwards;
       }
 
       .note.is-success {
-        color: var(--sun-soft);
+        color: var(--lime);
       }
 
       @keyframes rise {
         from {
           opacity: 0;
-          transform: translateY(1.25rem);
+          transform: translateY(1.15rem);
         }
         to {
           opacity: 1;
@@ -240,38 +212,27 @@
         }
       }
 
-      @keyframes sky-drift {
-        from {
-          filter: hue-rotate(0deg) saturate(1);
-        }
-        to {
-          filter: hue-rotate(8deg) saturate(1.08);
-        }
-      }
-
-      @keyframes horizon-pulse {
+      @keyframes glow-pulse {
         0%,
         100% {
-          opacity: 0.75;
-          transform: translateX(-50%) scale(1);
+          opacity: 0.7;
+          transform: translate(-50%, -50%) scale(1);
         }
         50% {
           opacity: 1;
-          transform: translateX(-50%) scale(1.06);
+          transform: translate(-50%, -50%) scale(1.08);
         }
       }
 
       @media (prefers-reduced-motion: reduce) {
-        .sky,
-        .horizon,
-        .brand,
+        .glow,
+        .logo,
         .headline,
         .support,
         .cta,
         .note {
           animation: none;
           opacity: 1;
-          filter: none;
           transform: none;
         }
       }
@@ -280,20 +241,34 @@
   <body>
     <main class="stage">
       <div class="sky" aria-hidden="true"></div>
-      <div class="horizon" aria-hidden="true"></div>
+      <div class="glow" aria-hidden="true"></div>
 
       <div class="content">
-        <h1 class="brand">
-          Queueless
-          <span>Kenya</span>
+        <h1>
+          <img
+            class="logo"
+            src="assets/queueless-logo.png"
+            width="536"
+            height="462"
+            alt="Queueless — Smart Service. Zero Wait."
+          />
         </h1>
-        <p class="headline">Coming Soon</p>
+        <p class="headline">Coming <span class="accent">Soon</span></p>
         <p class="support">
-          Skip the wait. We're building a smarter way to move through queues
-          across Kenya.
+          We're building a smarter way to move through queues across Kenya.
         </p>
         <form class="cta" id="notify-form" novalidate>
-          <label class="visually-hidden" for="email" style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0)">
+          <label
+            class="visually-hidden"
+            for="email"
+            style="
+              position: absolute;
+              width: 1px;
+              height: 1px;
+              overflow: hidden;
+              clip: rect(0 0 0 0);
+            "
+          >
             Email address
           </label>
           <input
