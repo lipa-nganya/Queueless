@@ -1,6 +1,6 @@
-# Netlify: publish root, production branch "develop",
-# production domain: queueless.co.ke (DNS at Truehost)
-# staging/alias: queueless.thewolfgang.tech
+# Netlify static site (shared build config for both sites)
+# Production: queueless-kenya  → branch main    → https://queueless.co.ke
+# Dev:        queueless-kenya-dev → branch develop → https://queueless.thewolfgang.tech
 
 [build]
   publish = "."
