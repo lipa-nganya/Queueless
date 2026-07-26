@@ -1,0 +1,6 @@
+# Netlify: publish root, production branch "develop",
+# custom domain queueless.thewolfgang.tech
+
+[build]
+  publish = "."
+  command = "echo 'Static site — no build'"
