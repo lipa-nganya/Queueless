@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Queueless Kenya — Coming Soon</title>
+    <meta
+      name="description"
+      content="Queueless Kenya is coming soon. Skip the wait — something better is on the way."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Figtree:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --ink: #07140f;
+        --forest: #0c3b2e;
+        --leaf: #1a6b4a;
+        --sun: #e8b84a;
+        --sun-soft: #f0d78a;
+        --mist: #e8f2ec;
+        --mist-dim: rgba(232, 242, 236, 0.72);
+      }
+
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      html,
+      body {
+        height: 100%;
+      }
+
+      body {
+        font-family: "Figtree", sans-serif;
+        color: var(--mist);
+        background: var(--ink);
+        overflow-x: hidden;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      .stage {
+        position: relative;
+        min-height: 100dvh;
+        display: grid;
+        place-items: center;
+        padding: clamp(1.5rem, 4vw, 3rem);
+        isolation: isolate;
+      }
+
+      /* Atmospheric full-bleed plane */
+      .sky {
+        position: absolute;
+        inset: 0;
+        z-index: -2;
+        background:
+          radial-gradient(
+            ellipse 90% 70% at 70% 20%,
+            rgba(232, 184, 74, 0.22),
+            transparent 55%
+          ),
+          radial-gradient(
+            ellipse 80% 60% at 15% 85%,
+            rgba(26, 107, 74, 0.55),
+            transparent 50%
+          ),
+          linear-gradient(
+            165deg,
+            #0a1f18 0%,
+            var(--forest) 42%,
+            #082820 72%,
+            var(--ink) 100%
+          );
+        animation: sky-drift 18s ease-in-out infinite alternate;
+      }
+
+      .sky::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.45'/%3E%3C/svg%3E");
+        opacity: 0.07;
+        mix-blend-mode: overlay;
+        pointer-events: none;
+      }
+
+      /* Soft horizon light as visual anchor */
+      .horizon {
+        position: absolute;
+        z-index: -1;
+        left: 50%;
+        bottom: -8%;
+        width: min(140vw, 1100px);
+        height: min(55vh, 480px);
+        translate: -50% 0;
+        background: radial-gradient(
+          ellipse at center,
+          rgba(232, 184, 74, 0.35) 0%,
+          rgba(26, 107, 74, 0.2) 35%,
+          transparent 68%
+        );
+        filter: blur(2px);
+        animation: horizon-pulse 7s ease-in-out infinite;
+        pointer-events: none;
+      }
+
+      .content {
+        width: min(100%, 42rem);
+        text-align: center;
+      }
+
+      .brand {
+        font-family: "Syne", sans-serif;
+        font-weight: 800;
+        font-size: clamp(2.75rem, 9vw, 5.25rem);
+        line-height: 0.95;
+        letter-spacing: -0.03em;
+        text-wrap: balance;
+        opacity: 0;
+        animation: rise 1s cubic-bezier(0.22, 1, 0.36, 1) 0.15s forwards;
+      }
+
+      .brand span {
+        display: block;
+        color: var(--sun);
+        font-size: 0.42em;
+        font-weight: 700;
+        letter-spacing: 0.28em;
+        text-transform: uppercase;
+        margin-top: 0.55em;
+        opacity: 0.95;
+      }
+
+      .headline {
+        font-family: "Syne", sans-serif;
+        font-weight: 700;
+        font-size: clamp(1.35rem, 3.5vw, 1.85rem);
+        letter-spacing: -0.02em;
+        margin-top: clamp(1.75rem, 4vw, 2.5rem);
+        opacity: 0;
+        animation: rise 1s cubic-bezier(0.22, 1, 0.36, 1) 0.4s forwards;
+      }
+
+      .support {
+        margin-top: 0.85rem;
+        font-size: clamp(1rem, 2.2vw, 1.125rem);
+        font-weight: 400;
+        line-height: 1.55;
+        color: var(--mist-dim);
+        max-width: 28rem;
+        margin-inline: auto;
+        opacity: 0;
+        animation: rise 1s cubic-bezier(0.22, 1, 0.36, 1) 0.55s forwards;
+      }
+
+      .cta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.65rem;
+        justify-content: center;
+        margin-top: clamp(1.75rem, 4vw, 2.35rem);
+        opacity: 0;
+        animation: rise 1s cubic-bezier(0.22, 1, 0.36, 1) 0.7s forwards;
+      }
+
+      .cta input {
+        flex: 1 1 14rem;
+        max-width: 18rem;
+        height: 3rem;
+        padding: 0 1.1rem;
+        border: 1px solid rgba(232, 242, 236, 0.22);
+        background: rgba(7, 20, 15, 0.45);
+        color: var(--mist);
+        font: inherit;
+        font-size: 0.95rem;
+        outline: none;
+        transition: border-color 0.2s ease, background 0.2s ease;
+      }
+
+      .cta input::placeholder {
+        color: rgba(232, 242, 236, 0.45);
+      }
+
+      .cta input:focus {
+        border-color: rgba(232, 184, 74, 0.7);
+        background: rgba(7, 20, 15, 0.65);
+      }
+
+      .cta button {
+        height: 3rem;
+        padding: 0 1.4rem;
+        border: none;
+        background: var(--sun);
+        color: var(--ink);
+        font-family: "Syne", sans-serif;
+        font-weight: 700;
+        font-size: 0.9rem;
+        letter-spacing: 0.04em;
+        cursor: pointer;
+        transition: background 0.2s ease, transform 0.2s ease;
+      }
+
+      .cta button:hover {
+        background: var(--sun-soft);
+        transform: translateY(-1px);
+      }
+
+      .cta button:active {
+        transform: translateY(0);
+      }
+
+      .note {
+        margin-top: 0.85rem;
+        font-size: 0.8rem;
+        color: rgba(232, 242, 236, 0.4);
+        min-height: 1.2em;
+        opacity: 0;
+        animation: rise 1s cubic-bezier(0.22, 1, 0.36, 1) 0.85s forwards;
+      }
+
+      .note.is-success {
+        color: var(--sun-soft);
+      }
+
+      @keyframes rise {
+        from {
+          opacity: 0;
+          transform: translateY(1.25rem);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+
+      @keyframes sky-drift {
+        from {
+          filter: hue-rotate(0deg) saturate(1);
+        }
+        to {
+          filter: hue-rotate(8deg) saturate(1.08);
+        }
+      }
+
+      @keyframes horizon-pulse {
+        0%,
+        100% {
+          opacity: 0.75;
+          transform: translateX(-50%) scale(1);
+        }
+        50% {
+          opacity: 1;
+          transform: translateX(-50%) scale(1.06);
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .sky,
+        .horizon,
+        .brand,
+        .headline,
+        .support,
+        .cta,
+        .note {
+          animation: none;
+          opacity: 1;
+          filter: none;
+          transform: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="stage">
+      <div class="sky" aria-hidden="true"></div>
+      <div class="horizon" aria-hidden="true"></div>
+
+      <div class="content">
+        <h1 class="brand">
+          Queueless
+          <span>Kenya</span>
+        </h1>
+        <p class="headline">Coming Soon</p>
+        <p class="support">
+          Skip the wait. We're building a smarter way to move through queues
+          across Kenya.
+        </p>
+        <form class="cta" id="notify-form" novalidate>
+          <label class="visually-hidden" for="email" style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0)">
+            Email address
+          </label>
+          <input
+            id="email"
+            name="email"
+            type="email"
+            placeholder="Your email"
+            autocomplete="email"
+            required
+          />
+          <button type="submit">Notify me</button>
+        </form>
+        <p class="note" id="form-note" role="status" aria-live="polite"></p>
+      </div>
+    </main>
+
+    <script>
+      const form = document.getElementById("notify-form");
+      const note = document.getElementById("form-note");
+
+      form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        const email = new FormData(form).get("email")?.toString().trim();
+
+        if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+          note.textContent = "Please enter a valid email.";
+          note.classList.remove("is-success");
+          return;
+        }
+
+        note.textContent = "You're on the list. We'll be in touch.";
+        note.classList.add("is-success");
+        form.reset();
+      });
+    </script>
+  </body>
+</html>
