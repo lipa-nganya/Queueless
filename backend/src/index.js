@@ -13,9 +13,32 @@ const adminDir = path.resolve(__dirname, "../../admin");
 const uploadsDir = path.resolve(__dirname, "../uploads");
 const port = Number(process.env.PORT || 4000);
 
+// The deployed frontends call this API cross-origin; local dev serves them from these ports.
+const defaultOrigins = [
+  "http://localhost:3000",
+  "http://localhost:4000",
+  "http://127.0.0.1:3000",
+  "http://127.0.0.1:4000",
+];
+const allowedOrigins = new Set(
+  (process.env.CORS_ORIGINS || "")
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean)
+    .concat(defaultOrigins)
+);
+
 const app = express();
 
-app.use(cors());
+app.use(
+  cors({
+    origin(origin, callback) {
+      // Same-origin and non-browser clients send no Origin header.
+      if (!origin || allowedOrigins.has(origin)) return callback(null, true);
+      return callback(new Error(`Origin ${origin} is not allowed.`));
+    },
+  })
+);
 app.use(express.json());
 app.use("/api", routes);
 app.use("/uploads", express.static(uploadsDir));
