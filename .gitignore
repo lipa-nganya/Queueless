@@ -8,3 +8,7 @@ node_modules/
 .netlify
 
 .runtime/
+
+# Railway CLI scratch dirs
+.railway/
+.railway-config-pull-*/
