@@ -12,5 +12,10 @@
   command = "npm install"
   functions = "netlify/functions"
 
+# The dev site previews the customer app at its root instead of the
+# coming-soon page. Scoped to develop so main keeps serving the landing page.
+[context."develop"]
+  publish = "customer"
+
 [functions]
   node_bundler = "esbuild"

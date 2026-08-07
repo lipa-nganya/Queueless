@@ -1,5 +1,11 @@
-const API_BASE = "http://localhost:4000/api";
-const UPLOADS_BASE = "http://localhost:4000";
+// Deployed builds read the backend origin from config.js; locally the API runs on :4000.
+const API_ORIGIN =
+  window.QUEUELESS_API_ORIGIN ||
+  (["localhost", "127.0.0.1"].includes(location.hostname)
+    ? "http://localhost:4000"
+    : location.origin);
+const API_BASE = `${API_ORIGIN}/api`;
+const UPLOADS_BASE = API_ORIGIN;
 const TOKEN_KEY = "queueless_customer_token";
 const PENDING_PHONE_KEY = "queueless_pending_phone";
 
