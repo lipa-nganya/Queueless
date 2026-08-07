@@ -1,4 +1,5 @@
-const API_BASE = "/api";
+// Empty origin keeps the same-origin "/api" used when the backend serves this UI.
+const API_BASE = `${window.QUEUELESS_API_ORIGIN || ""}/api`;
 const TOKEN_KEY = "queueless_admin_token";
 
 const app = document.getElementById("app");

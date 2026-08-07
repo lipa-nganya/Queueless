@@ -1,0 +1,11 @@
+# Config for the admin site (queueless-kenya-admin), which builds with
+# base = "admin" so Netlify reads this file instead of the one at the repo root.
+[build]
+  publish = "."
+  command = "echo Static site - no build"
+
+# The admin UI is a single-page app routed by hash, so every path serves index.html.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
