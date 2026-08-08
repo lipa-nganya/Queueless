@@ -53,6 +53,7 @@ const app = document.getElementById("app");
 let discoverState = {
   groups: [],
   businesses: [],
+  myQueue: [],
   activeGroupId: null,
   search: "",
   me: null,
@@ -371,6 +372,14 @@ function resolveImageUrl(imageUrl) {
   return UPLOADS_BASE + imageUrl;
 }
 
+function formatWaitMinutes(minutes) {
+  const total = Math.max(0, Math.round(Number(minutes) || 0));
+  if (total < 60) return `${total} min`;
+  const hours = Math.floor(total / 60);
+  const mins = total % 60;
+  return mins === 0 ? `${hours}h` : `${hours}h ${mins}min`;
+}
+
 function enrichBusiness(business, index) {
   const i = index % DEMO_IMAGES.length;
   const queueSize = business.queue_size ?? DEMO_QUEUE[i];
@@ -387,6 +396,69 @@ function enrichBusiness(business, index) {
   };
 }
 
+function matchesHomeFilters(business, { ignoreGroup = false } = {}) {
+  const matchesGroup =
+    ignoreGroup ||
+    !discoverState.activeGroupId ||
+    business.business_group_id === discoverState.activeGroupId;
+  const q = discoverState.search.trim().toLowerCase();
+  const matchesSearch =
+    !q ||
+    business.name.toLowerCase().includes(q) ||
+    String(business.business_group_name || "")
+      .toLowerCase()
+      .includes(q);
+  return matchesGroup && matchesSearch;
+}
+
+// Joined businesses float to the top, shortest estimated wait first.
+// Estimated wait = people ahead × average service time (from the queue API).
+function orderedHomeBusinesses() {
+  const businessById = new Map(
+    discoverState.businesses.map((business) => [Number(business.id), business])
+  );
+
+  const joined = discoverState.myQueue
+    .slice()
+    .sort((a, b) => {
+      const waitDiff =
+        (a.estimated_wait_minutes ?? Number.POSITIVE_INFINITY) -
+        (b.estimated_wait_minutes ?? Number.POSITIVE_INFINITY);
+      if (waitDiff !== 0) return waitDiff;
+      return (a.position ?? 0) - (b.position ?? 0);
+    })
+    .map((entry) => {
+      const business = businessById.get(Number(entry.business_id));
+      if (!business) return null;
+      if (!matchesHomeFilters(business, { ignoreGroup: true })) return null;
+      return { ...business, myQueueEntry: entry };
+    })
+    .filter(Boolean);
+
+  const joinedIds = new Set(joined.map((business) => Number(business.id)));
+  const others = discoverState.businesses
+    .filter((business) => !joinedIds.has(Number(business.id)))
+    .filter((business) => matchesHomeFilters(business))
+    .map((business) => ({ ...business, myQueueEntry: null }));
+
+  return [...joined, ...others];
+}
+
+function positionBadge(entry, fallbackItem) {
+  if (!entry) {
+    return `<div class="wait">${fallbackItem.avgWait} min<small>${fallbackItem.queueSize} in queue</small></div>`;
+  }
+
+  const wait = entry.estimated_wait_minutes ?? 0;
+  const waitLabel = wait <= 0 ? "You're next" : formatWaitMinutes(wait);
+  return `
+    <div class="wait wait-joined">
+      #${entry.position}
+      <small>${escapeHtml(waitLabel)}</small>
+    </div>
+  `;
+}
+
 function renderBusinessCards(list) {
   if (!list.length) {
     return `<p class="empty-state">No businesses in this category yet. Ask admin to add some.</p>`;
@@ -397,15 +469,20 @@ function renderBusinessCards(list) {
       ${list
         .map((business, index) => {
           const item = enrichBusiness(business, index);
+          const entry = business.myQueueEntry || null;
           return `
-            <article class="biz-card" role="button" tabindex="0" data-biz-id="${item.id}">
+            <article class="biz-card ${entry ? "biz-card-joined" : ""}" role="button" tabindex="0" data-biz-id="${item.id}">
               <img class="biz-thumb" src="${escapeHtml(item.thumb)}" alt="${escapeHtml(item.name)}" loading="lazy" onerror="this.src='data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2270%22 height=%2270%22 fill=%22%23eef0f3%22%3E%3Crect width=%2270%22 height=%2270%22/%3E%3C/svg%3E'" />
               <div class="biz-meta">
                 <h3>${escapeHtml(item.name)}</h3>
                 <div class="place">${icon("pin")} ${escapeHtml(item.place)}</div>
-                <div class="rating">${icon("star")} ${item.rating} <span class="reviews">(${item.reviews})</span></div>
+                ${
+                  entry
+                    ? `<div class="queue-position-line">Your position · ${entry.people_ahead} ahead</div>`
+                    : `<div class="rating">${icon("star")} ${item.rating} <span class="reviews">(${item.reviews})</span></div>`
+                }
               </div>
-              <div class="wait">${item.avgWait} min<small>${item.queueSize} in queue</small></div>
+              ${positionBadge(entry, item)}
             </article>
           `;
         })
@@ -433,19 +510,13 @@ function renderDiscoverFrame() {
     { id: "more", name: "More", key: "more" },
   ];
 
-  const filtered = discoverState.businesses.filter((business) => {
-    const matchesGroup =
-      !discoverState.activeGroupId ||
-      business.business_group_id === discoverState.activeGroupId;
-    const q = discoverState.search.trim().toLowerCase();
-    const matchesSearch =
-      !q ||
-      business.name.toLowerCase().includes(q) ||
-      String(business.business_group_name || "")
-        .toLowerCase()
-        .includes(q);
-    return matchesGroup && matchesSearch;
-  });
+  const ordered = orderedHomeBusinesses();
+  const joinedCount = ordered.filter((business) => business.myQueueEntry).length;
+  const sectionTitle = joinedCount
+    ? joinedCount === 1
+      ? "Your queue · Nearby"
+      : "Your queues · Nearby"
+    : "Nearby Businesses";
 
   app.innerHTML = `
     <div class="home-shell">
@@ -482,10 +553,10 @@ function renderDiscoverFrame() {
       </div>
 
       <div class="section-head">
-        <h2>Nearby Businesses</h2>
+        <h2>${sectionTitle}</h2>
         <button type="button">See all</button>
       </div>
-      <div id="biz-list-wrap">${renderBusinessCards(filtered)}</div>
+      <div id="biz-list-wrap">${renderBusinessCards(ordered)}</div>
       ${tabbar("home")}
     </div>
   `;
@@ -496,19 +567,7 @@ function renderDiscoverFrame() {
   document.getElementById("search-input").addEventListener("input", (event) => {
     discoverState.search = event.target.value;
     document.getElementById("biz-list-wrap").innerHTML = renderBusinessCards(
-      discoverState.businesses.filter((business) => {
-        const matchesGroup =
-          !discoverState.activeGroupId ||
-          business.business_group_id === discoverState.activeGroupId;
-        const q = discoverState.search.trim().toLowerCase();
-        const matchesSearch =
-          !q ||
-          business.name.toLowerCase().includes(q) ||
-          String(business.business_group_name || "")
-            .toLowerCase()
-            .includes(q);
-        return matchesGroup && matchesSearch;
-      })
+      orderedHomeBusinesses()
     );
     bindBizCards();
   });
@@ -536,14 +595,16 @@ async function renderHome() {
   bindTabs();
 
   try {
-    const [me, groups, businesses] = await Promise.all([
+    const [me, groups, businesses, myQueue] = await Promise.all([
       api("/customer/me"),
       api("/customer/business-groups"),
       api("/customer/businesses"),
+      api("/customer/queue"),
     ]);
     discoverState.me = me;
     discoverState.groups = groups;
     discoverState.businesses = businesses;
+    discoverState.myQueue = Array.isArray(myQueue) ? myQueue : [];
     if (!discoverState.activeGroupId && groups.length) {
       const barber = groups.find((group) =>
         /barber/i.test(group.name)
@@ -552,30 +613,23 @@ async function renderHome() {
     }
     renderDiscoverFrame();
   } catch (error) {
-    clearToken();
+    const authFailed = error.status === 401 || error.status === 403;
+    if (authFailed) clearToken();
     app.innerHTML = `
       <div class="auth-shell">
         <div class="card">
           <div class="brand">Queue<span>less</span></div>
-          <h2>Session expired</h2>
+          <h2>${authFailed ? "Session expired" : "Something went wrong"}</h2>
           <p class="lead">${escapeHtml(error.message)}</p>
-          <button class="btn" type="button" id="to-login">Log in again</button>
+          <button class="btn" type="button" id="home-error-action">
+            ${authFailed ? "Log in again" : "Try again"}
+          </button>
         </div>
       </div>
     `;
-    document.getElementById("to-login").onclick = () => go("login");
+    document.getElementById("home-error-action").onclick = () =>
+      authFailed ? go("login") : renderHome();
   }
-}
-
-function renderPlaceholder(title, copy, tab) {
-  app.innerHTML = `
-    <div class="placeholder-page">
-      <h1>${title}</h1>
-      <p>${copy}</p>
-      ${tabbar(tab)}
-    </div>
-  `;
-  bindTabs();
 }
 
 async function renderProfile() {
@@ -644,8 +698,17 @@ async function renderBusinessDetail(id) {
   const index = discoverState.businesses.findIndex((b) => b.id === id);
   const item = enrichBusiness(biz, index >= 0 ? index : 0);
 
+  let alreadyInQueue = false;
+  try {
+    const myQueue = await api("/customer/queue");
+    alreadyInQueue = myQueue.some((entry) => Number(entry.business_id) === Number(item.id));
+  } catch {
+    // If the check fails, leave the button enabled and let join handle conflicts.
+  }
+
   const queueBadgeColor = item.queueSize <= 3 ? "var(--emerald)" : item.queueSize <= 8 ? "var(--lime-deep)" : "var(--danger)";
   const queueLabel = item.queueSize === 0 ? "No queue" : item.queueSize === 1 ? "1 person" : `${item.queueSize} people`;
+  const joinLabel = alreadyInQueue ? "Already in queue" : "Join Queue";
 
   app.innerHTML = `
     <div class="detail-shell">
@@ -682,7 +745,7 @@ async function renderBusinessDetail(id) {
           </div>
           <div class="queue-divider"></div>
           <div class="queue-stat">
-            <div class="queue-stat-value" style="color:var(--ocean-teal)">${item.myEstimate} min</div>
+            <div class="queue-stat-value" style="color:var(--ocean-teal)">${escapeHtml(formatWaitMinutes(item.myEstimate))}</div>
             <div class="queue-stat-label">your est. wait</div>
           </div>
         </div>
@@ -691,23 +754,451 @@ async function renderBusinessDetail(id) {
           ${icon("star")} <strong>${item.rating}</strong> <span class="reviews">(${item.reviews} reviews)</span>
         </div>
 
-        <button class="btn detail-join-btn" type="button">Join Queue</button>
+        <div class="detail-actions">
+          <button
+            class="btn detail-join-btn"
+            type="button"
+            ${alreadyInQueue ? "disabled" : ""}
+          >${joinLabel}</button>
+          <button class="btn btn-ghost detail-book-btn" type="button">Book for later</button>
+        </div>
+        <p class="message" id="detail-message" role="status"></p>
       </div>
+      ${bookingSheetHtml(item)}
       ${tabbar("home")}
     </div>
   `;
 
   bindTabs();
   document.getElementById("back-btn").onclick = () => history.back() || go("home");
-  document.querySelector(".detail-join-btn").onclick = () => {
-    // Placeholder — queue joining will be implemented later
-    const btn = document.querySelector(".detail-join-btn");
-    btn.textContent = "You're in queue! 🎉";
+
+  const message = document.getElementById("detail-message");
+  const joinBtn = document.querySelector(".detail-join-btn");
+
+  if (!alreadyInQueue) {
+    joinBtn.onclick = async (event) => {
+      const btn = event.currentTarget;
+      btn.disabled = true;
+      message.textContent = "";
+      message.classList.remove("success");
+      try {
+        await api(`/customer/businesses/${item.id}/queue`, { method: "POST" });
+        go("queue");
+      } catch (error) {
+        if (error.status === 409) {
+          go("queue");
+          return;
+        }
+        message.textContent = error.message;
+        btn.disabled = false;
+      }
+    };
+  } else {
+    message.textContent = "You're already in this queue.";
+    message.classList.add("success");
+  }
+
+  bindBookingSheet(item, message);
+}
+
+/* ---------------------------------------------------------------- bookings */
+
+// Bookings are limited to the next 24 hours, so the picker never offers a
+// time the API would reject.
+const BOOKING_WINDOW_HOURS = 24;
+
+function bookingSlots(now = new Date()) {
+  const slots = [];
+  const start = new Date(now.getTime() + 15 * 60 * 1000);
+  start.setMinutes(Math.ceil(start.getMinutes() / 15) * 15, 0, 0);
+  const limit = now.getTime() + BOOKING_WINDOW_HOURS * 60 * 60 * 1000;
+
+  for (let t = start.getTime(); t <= limit; t += 15 * 60 * 1000) {
+    slots.push(new Date(t));
+  }
+  return slots;
+}
+
+function slotLabel(date) {
+  const today = new Date();
+  const sameDay = date.toDateString() === today.toDateString();
+  const time = date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return sameDay ? `Today ${time}` : `Tomorrow ${time}`;
+}
+
+function bookingSheetHtml(item) {
+  const slots = bookingSlots();
+  return `
+    <div class="sheet-overlay hidden" id="booking-sheet">
+      <div class="sheet">
+        <div class="sheet-handle"></div>
+        <h3>Book a slot</h3>
+        <p class="sheet-lead">
+          Reserve your place at ${escapeHtml(item.name)}. You can book up to
+          ${BOOKING_WINDOW_HOURS} hours ahead.
+        </p>
+        <div class="field">
+          <label for="booking-slot">Arrival time</label>
+          <select id="booking-slot">
+            ${slots
+              .map((slot) => `<option value="${slot.toISOString()}">${escapeHtml(slotLabel(slot))}</option>`)
+              .join("")}
+          </select>
+        </div>
+        <button class="btn" type="button" id="booking-confirm">Confirm booking</button>
+        <button class="btn-link" type="button" id="booking-cancel">Not now</button>
+        <p class="message" id="booking-message" role="status"></p>
+      </div>
+    </div>
+  `;
+}
+
+function bindBookingSheet(item, detailMessage) {
+  const sheet = document.getElementById("booking-sheet");
+  const sheetMessage = document.getElementById("booking-message");
+  const close = () => sheet.classList.add("hidden");
+
+  document.querySelector(".detail-book-btn").onclick = () => {
+    sheetMessage.textContent = "";
+    sheet.classList.remove("hidden");
+  };
+  document.getElementById("booking-cancel").onclick = close;
+  sheet.addEventListener("click", (event) => {
+    if (event.target === sheet) close();
+  });
+
+  document.getElementById("booking-confirm").onclick = async (event) => {
+    const btn = event.currentTarget;
+    const scheduledFor = document.getElementById("booking-slot").value;
     btn.disabled = true;
+    sheetMessage.textContent = "";
+    try {
+      await api(`/customer/businesses/${item.id}/bookings`, {
+        method: "POST",
+        body: JSON.stringify({ scheduled_for: scheduledFor }),
+      });
+      close();
+      go("bookings");
+    } catch (error) {
+      sheetMessage.textContent = error.message;
+      if (detailMessage) detailMessage.textContent = "";
+    } finally {
+      btn.disabled = false;
+    }
   };
 }
 
+async function renderBookings() {
+  app.innerHTML = `
+    <div class="placeholder-page">
+      <h1>Bookings</h1>
+      <p class="empty-state">Loading…</p>
+      ${tabbar("bookings")}
+    </div>
+  `;
+  bindTabs();
+
+  let bookings = [];
+  try {
+    bookings = await api("/customer/bookings");
+  } catch (error) {
+    app.innerHTML = `
+      <div class="placeholder-page">
+        <h1>Bookings</h1>
+        <p class="empty-state">${escapeHtml(error.message)}</p>
+        ${tabbar("bookings")}
+      </div>
+    `;
+    bindTabs();
+    return;
+  }
+
+  const list = bookings.length
+    ? bookings
+        .map((booking) => {
+          const when = new Date(booking.scheduled_for);
+          const minutesAway = Math.round((when.getTime() - Date.now()) / 60000);
+          const countdown =
+            minutesAway <= 0
+              ? "Now"
+              : minutesAway < 60
+                ? `in ${minutesAway} min`
+                : `in ${Math.floor(minutesAway / 60)}h ${minutesAway % 60}m`;
+          return `
+            <article class="booking-card">
+              <div class="booking-when">
+                <span class="booking-time">${escapeHtml(
+                  when.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+                )}</span>
+                <span class="booking-day">${escapeHtml(slotLabel(when).split(" ")[0])}</span>
+              </div>
+              <div class="booking-meta">
+                <h3>${escapeHtml(booking.business_name)}</h3>
+                <div class="place">${icon("pin")} ${escapeHtml(booking.location || "—")}</div>
+                <div class="booking-countdown">${escapeHtml(countdown)}</div>
+              </div>
+              <div class="booking-actions">
+                <button class="chip chip-primary" data-join="${booking.business_id}" data-booking="${booking.id}">Check in</button>
+                <button class="chip" data-cancel="${booking.id}">Cancel</button>
+              </div>
+            </article>
+          `;
+        })
+        .join("")
+    : `<p class="empty-state">No bookings yet. Open a business and tap “Book for later”.</p>`;
+
+  app.innerHTML = `
+    <div class="placeholder-page">
+      <h1>Bookings</h1>
+      <p class="page-lead">Reserved slots for the next ${BOOKING_WINDOW_HOURS} hours.</p>
+      <div class="booking-list">${list}</div>
+      <p class="message" id="bookings-message" role="status"></p>
+      ${tabbar("bookings")}
+    </div>
+  `;
+  bindTabs();
+
+  const message = document.getElementById("bookings-message");
+
+  document.querySelectorAll("[data-cancel]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      try {
+        await api(`/customer/bookings/${btn.dataset.cancel}/cancel`, { method: "POST" });
+        await renderBookings();
+      } catch (error) {
+        message.textContent = error.message;
+        btn.disabled = false;
+      }
+    });
+  });
+
+  document.querySelectorAll("[data-join]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      try {
+        await api(`/customer/businesses/${btn.dataset.join}/queue`, {
+          method: "POST",
+          body: JSON.stringify({ booking_id: Number(btn.dataset.booking) }),
+        });
+        go("queue");
+      } catch (error) {
+        if (error.status === 409) return go("queue");
+        message.textContent = error.message;
+        btn.disabled = false;
+      }
+    });
+  });
+}
+
+/* ------------------------------------------------------------- live queue */
+
+let queueTimer = null;
+
+function stopQueuePolling() {
+  if (queueTimer) {
+    clearInterval(queueTimer);
+    queueTimer = null;
+  }
+}
+
+function queueMilestone(position) {
+  if (position <= 1) return { emoji: "🎉", text: "You're up next!", tone: "now" };
+  if (position === 2) return { emoji: "🔥", text: "Almost there — one to go", tone: "close" };
+  if (position <= 4) return { emoji: "⚡️", text: "Getting close, stay nearby", tone: "close" };
+  return { emoji: "⏳", text: "Hang tight, we'll keep you posted", tone: "waiting" };
+}
+
+function queueCardHtml(entry) {
+  const { position, people_ahead: ahead, queue_length: total } = entry;
+  const milestone = queueMilestone(position);
+  // Progress reflects how much of the original line has cleared.
+  const served = Math.max(total - ahead, 0);
+  const progress = total > 0 ? Math.round((served / total) * 100) : 100;
+  const wait = entry.estimated_wait_minutes;
+  const waitLabel = wait <= 0 ? "Any moment" : formatWaitMinutes(wait);
+
+  return `
+    <article class="queue-card ${milestone.tone}" data-entry="${entry.id}">
+      <div class="queue-card-main">
+        <div class="position-ring" style="--progress:${progress}">
+          <div class="position-inner">
+            <span class="position-number">${position}</span>
+            <span class="position-of">of ${total || position}</span>
+          </div>
+        </div>
+
+        <div class="queue-card-info">
+          <div class="queue-card-head">
+            <h2>${escapeHtml(entry.business_name)}</h2>
+            <span class="queue-chip">${escapeHtml(entry.business_group_name || "")}</span>
+          </div>
+          <div class="place">${icon("pin")} ${escapeHtml(entry.location || "—")}</div>
+          <p class="queue-milestone">
+            <span class="milestone-emoji">${milestone.emoji}</span>
+            ${escapeHtml(milestone.text)}
+          </p>
+          <div class="queue-facts">
+            <span><strong>${ahead}</strong> ahead</span>
+            <span><strong>${escapeHtml(waitLabel)}</strong> est. wait</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="queue-card-foot">
+        <div class="queue-progress" title="${served} of ${total || position} served">
+          <div class="queue-progress-bar" style="width:${progress}%"></div>
+        </div>
+        <button class="queue-leave" data-leave="${entry.id}" type="button">Leave</button>
+      </div>
+    </article>
+  `;
+}
+
+function queueNavHtml(entries) {
+  // Only worth showing once there is more than one queue to move between.
+  if (entries.length < 2) return "";
+  return `
+    <nav class="queue-nav" aria-label="Your queues">
+      ${entries
+        .map(
+          (entry) => `
+            <button class="queue-nav-chip" type="button" data-nav="${entry.id}">
+              <span class="queue-nav-pos">#${entry.position}</span>
+              ${escapeHtml(entry.business_name)}
+            </button>
+          `
+        )
+        .join("")}
+    </nav>
+  `;
+}
+
+// Highlights the chip whose card is currently nearest the top of the viewport.
+function bindQueueNav() {
+  const nav = document.querySelector(".queue-nav");
+  if (!nav) return null;
+
+  const chips = new Map(
+    [...nav.querySelectorAll("[data-nav]")].map((chip) => [chip.dataset.nav, chip])
+  );
+
+  const setActive = (id) => {
+    for (const [chipId, chip] of chips) {
+      chip.classList.toggle("active", chipId === String(id));
+    }
+  };
+
+  nav.querySelectorAll("[data-nav]").forEach((chip) => {
+    chip.addEventListener("click", () => {
+      const card = document.querySelector(`[data-entry="${chip.dataset.nav}"]`);
+      if (!card) return;
+      setActive(chip.dataset.nav);
+      card.scrollIntoView({ behavior: "smooth", block: "center" });
+      card.classList.add("flash");
+      setTimeout(() => card.classList.remove("flash"), 900);
+    });
+  });
+
+  const observer = new IntersectionObserver(
+    (records) => {
+      const visible = records
+        .filter((record) => record.isIntersecting)
+        .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
+      if (visible) setActive(visible.target.dataset.entry);
+    },
+    { rootMargin: "-45% 0px -45% 0px" }
+  );
+
+  document.querySelectorAll("[data-entry]").forEach((card) => observer.observe(card));
+
+  const firstChip = nav.querySelector("[data-nav]");
+  if (firstChip) setActive(firstChip.dataset.nav);
+
+  return observer;
+}
+
+async function renderQueue() {
+  stopQueuePolling();
+
+  let navObserver = null;
+
+  const paint = (inner, nav = "") => {
+    app.innerHTML = `
+      <div class="queue-shell">
+        <div class="queue-header">
+          <h1>Your Queue</h1>
+          <p class="page-lead">Live position, updated automatically.</p>
+          ${nav}
+        </div>
+        <div id="queue-body">${inner}</div>
+        <p class="message" id="queue-message" role="status"></p>
+        ${tabbar("queue")}
+      </div>
+    `;
+    bindTabs();
+  };
+
+  paint(`<p class="empty-state">Loading…</p>`);
+
+  async function load() {
+    let entries;
+    try {
+      entries = await api("/customer/queue");
+    } catch (error) {
+      stopQueuePolling();
+      paint(`<p class="empty-state">${escapeHtml(error.message)}</p>`);
+      return;
+    }
+
+    if (viewFromHash() !== "queue") {
+      stopQueuePolling();
+      return;
+    }
+
+    if (!document.getElementById("queue-body")) return;
+
+    if (!entries.length) {
+      stopQueuePolling();
+      paint(`<p class="empty-state">You're not in any queue. Open a business and tap “Join Queue”.</p>`);
+      return;
+    }
+
+    entries.sort((a, b) => {
+      const waitDiff =
+        (a.estimated_wait_minutes ?? Number.POSITIVE_INFINITY) -
+        (b.estimated_wait_minutes ?? Number.POSITIVE_INFINITY);
+      if (waitDiff !== 0) return waitDiff;
+      return (a.position ?? 0) - (b.position ?? 0);
+    });
+
+    // Rebuilding the whole shell keeps the sticky nav in sync with the cards.
+    navObserver?.disconnect();
+    paint(entries.map(queueCardHtml).join(""), queueNavHtml(entries));
+    navObserver = bindQueueNav();
+
+    document.querySelectorAll("[data-leave]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        btn.disabled = true;
+        try {
+          await api(`/customer/queue/${btn.dataset.leave}/leave`, { method: "POST" });
+          await load();
+        } catch (error) {
+          const message = document.getElementById("queue-message");
+          if (message) message.textContent = error.message;
+          btn.disabled = false;
+        }
+      });
+    });
+  }
+
+  await load();
+  queueTimer = setInterval(load, 10000);
+}
+
 async function render() {
+  stopQueuePolling();
+
   if (!getToken()) {
     const view = viewFromHash();
     if (view === "login") return renderLogin();
@@ -720,12 +1211,8 @@ async function render() {
     const id = Number(view.replace("business-", ""));
     if (id) return renderBusinessDetail(id);
   }
-  if (view === "bookings") {
-    return renderPlaceholder("Bookings", "Your bookings will appear here.", "bookings");
-  }
-  if (view === "queue") {
-    return renderPlaceholder("Queue", "Live queue status will appear here.", "queue");
-  }
+  if (view === "bookings") return renderBookings();
+  if (view === "queue") return renderQueue();
   if (view === "profile") return renderProfile();
   if (view === "login" || view === "signup" || view === "verify") {
     return renderHome();

@@ -965,4 +965,240 @@ router.get("/customer/businesses/:id", requireCustomer, async (req, res) => {
   }
 });
 
+/*
+ * Queue and bookings.
+ *
+ * businesses.queue_size is the walk-in baseline an admin maintains for people
+ * physically in line, so the number of customers ahead of an app user is that
+ * baseline plus everyone who joined through the app before them.
+ */
+
+const BOOKING_WINDOW_HOURS = 24;
+
+// Wraps a queue_entries row with the derived position figures the UI needs.
+const QUEUE_ENTRY_SELECT = `
+  SELECT
+    qe.id,
+    qe.business_id,
+    qe.joined_at,
+    qe.booking_id,
+    b.name AS business_name,
+    b.image_url,
+    b.location,
+    b.avg_wait_minutes,
+    b.queue_size AS walk_in_baseline,
+    bg.name AS business_group_name,
+    (
+      SELECT COUNT(*)::int
+      FROM queue_entries ahead
+      WHERE ahead.business_id = qe.business_id
+        AND ahead.status = 'waiting'
+        AND ahead.joined_at < qe.joined_at
+    ) AS app_customers_ahead,
+    (
+      SELECT COUNT(*)::int
+      FROM queue_entries total
+      WHERE total.business_id = qe.business_id
+        AND total.status = 'waiting'
+    ) AS app_queue_length
+  FROM queue_entries qe
+  INNER JOIN businesses b ON b.id = qe.business_id
+  INNER JOIN business_groups bg ON bg.id = b.business_group_id
+`;
+
+function decorateQueueEntry(row) {
+  const ahead = row.walk_in_baseline + row.app_customers_ahead;
+  return {
+    ...row,
+    people_ahead: ahead,
+    position: ahead + 1,
+    queue_length: row.walk_in_baseline + row.app_queue_length,
+    estimated_wait_minutes: ahead * row.avg_wait_minutes,
+  };
+}
+
+router.post("/customer/businesses/:id/queue", requireCustomer, async (req, res) => {
+  try {
+    const businessId = Number(req.params.id);
+    if (!Number.isInteger(businessId) || businessId < 1) {
+      return res.status(400).json({ error: "Invalid business." });
+    }
+
+    const business = await query("SELECT id FROM businesses WHERE id = $1", [businessId]);
+    if (!business.rows[0]) return res.status(404).json({ error: "Business not found." });
+
+    const existing = await query(
+      `
+        SELECT id FROM queue_entries
+        WHERE business_id = $1 AND customer_id = $2 AND status = 'waiting'
+        LIMIT 1
+      `,
+      [businessId, req.customer.sub]
+    );
+    if (existing.rows[0]) {
+      return res.status(409).json({
+        error: "You are already in this queue.",
+        entry_id: existing.rows[0].id,
+      });
+    }
+
+    const bookingId = req.body?.booking_id ? Number(req.body.booking_id) : null;
+    const created = await query(
+      `
+        INSERT INTO queue_entries (business_id, customer_id, booking_id)
+        VALUES ($1, $2, $3)
+        RETURNING id
+      `,
+      [businessId, req.customer.sub, bookingId]
+    );
+
+    if (bookingId) {
+      await query(
+        "UPDATE bookings SET status = 'fulfilled' WHERE id = $1 AND customer_id = $2",
+        [bookingId, req.customer.sub]
+      );
+    }
+
+    const entry = await query(`${QUEUE_ENTRY_SELECT} WHERE qe.id = $1`, [created.rows[0].id]);
+    return res.status(201).json(decorateQueueEntry(entry.rows[0]));
+  } catch (error) {
+    console.error("Join queue failed:", error);
+    return res.status(500).json({ error: "Could not join the queue." });
+  }
+});
+
+router.get("/customer/queue", requireCustomer, async (req, res) => {
+  try {
+    const result = await query(
+      `${QUEUE_ENTRY_SELECT} WHERE qe.customer_id = $1 AND qe.status = 'waiting' ORDER BY qe.joined_at ASC`,
+      [req.customer.sub]
+    );
+    return res.json(result.rows.map(decorateQueueEntry));
+  } catch (error) {
+    console.error("Load queue failed:", error);
+    return res.status(500).json({ error: "Could not load your queue." });
+  }
+});
+
+router.post("/customer/queue/:id/leave", requireCustomer, async (req, res) => {
+  try {
+    const result = await query(
+      `
+        UPDATE queue_entries
+        SET status = 'cancelled', left_at = NOW()
+        WHERE id = $1 AND customer_id = $2 AND status = 'waiting'
+        RETURNING id
+      `,
+      [Number(req.params.id), req.customer.sub]
+    );
+    if (!result.rows[0]) return res.status(404).json({ error: "Queue entry not found." });
+    return res.json({ ok: true, id: result.rows[0].id });
+  } catch (error) {
+    console.error("Leave queue failed:", error);
+    return res.status(500).json({ error: "Could not leave the queue." });
+  }
+});
+
+router.post("/customer/businesses/:id/bookings", requireCustomer, async (req, res) => {
+  try {
+    const businessId = Number(req.params.id);
+    const scheduledFor = new Date(req.body?.scheduled_for);
+
+    if (!Number.isInteger(businessId) || businessId < 1) {
+      return res.status(400).json({ error: "Invalid business." });
+    }
+    if (Number.isNaN(scheduledFor.getTime())) {
+      return res.status(400).json({ error: "Choose a valid time." });
+    }
+
+    const now = Date.now();
+    if (scheduledFor.getTime() <= now) {
+      return res.status(400).json({ error: "Pick a time in the future." });
+    }
+    if (scheduledFor.getTime() > now + BOOKING_WINDOW_HOURS * 60 * 60 * 1000) {
+      return res.status(400).json({
+        error: `Bookings can only be made up to ${BOOKING_WINDOW_HOURS} hours in advance.`,
+      });
+    }
+
+    const business = await query("SELECT id FROM businesses WHERE id = $1", [businessId]);
+    if (!business.rows[0]) return res.status(404).json({ error: "Business not found." });
+
+    const clash = await query(
+      `
+        SELECT id FROM bookings
+        WHERE customer_id = $1 AND business_id = $2 AND status = 'booked'
+        LIMIT 1
+      `,
+      [req.customer.sub, businessId]
+    );
+    if (clash.rows[0]) {
+      return res.status(409).json({ error: "You already have a booking with this business." });
+    }
+
+    const created = await query(
+      `
+        INSERT INTO bookings (business_id, customer_id, scheduled_for)
+        VALUES ($1, $2, $3)
+        RETURNING id, business_id, scheduled_for, status, created_at
+      `,
+      [businessId, req.customer.sub, scheduledFor.toISOString()]
+    );
+
+    return res.status(201).json(created.rows[0]);
+  } catch (error) {
+    console.error("Create booking failed:", error);
+    return res.status(500).json({ error: "Could not create the booking." });
+  }
+});
+
+router.get("/customer/bookings", requireCustomer, async (req, res) => {
+  try {
+    const result = await query(
+      `
+        SELECT
+          bk.id,
+          bk.business_id,
+          bk.scheduled_for,
+          bk.status,
+          bk.created_at,
+          b.name AS business_name,
+          b.image_url,
+          b.location,
+          b.avg_wait_minutes,
+          bg.name AS business_group_name
+        FROM bookings bk
+        INNER JOIN businesses b ON b.id = bk.business_id
+        INNER JOIN business_groups bg ON bg.id = b.business_group_id
+        WHERE bk.customer_id = $1 AND bk.status = 'booked'
+        ORDER BY bk.scheduled_for ASC
+      `,
+      [req.customer.sub]
+    );
+    return res.json(result.rows);
+  } catch (error) {
+    console.error("Load bookings failed:", error);
+    return res.status(500).json({ error: "Could not load your bookings." });
+  }
+});
+
+router.post("/customer/bookings/:id/cancel", requireCustomer, async (req, res) => {
+  try {
+    const result = await query(
+      `
+        UPDATE bookings
+        SET status = 'cancelled'
+        WHERE id = $1 AND customer_id = $2 AND status = 'booked'
+        RETURNING id
+      `,
+      [Number(req.params.id), req.customer.sub]
+    );
+    if (!result.rows[0]) return res.status(404).json({ error: "Booking not found." });
+    return res.json({ ok: true, id: result.rows[0].id });
+  } catch (error) {
+    console.error("Cancel booking failed:", error);
+    return res.status(500).json({ error: "Could not cancel the booking." });
+  }
+});
+
 export default router;

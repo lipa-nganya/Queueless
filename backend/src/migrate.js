@@ -59,6 +59,41 @@ export async function migrate() {
     CREATE UNIQUE INDEX IF NOT EXISTS admins_email_unique
       ON admins (lower(email))
       WHERE email IS NOT NULL;
+
+    -- A booking is a queue slot reserved for a future time.
+    CREATE TABLE IF NOT EXISTS bookings (
+      id SERIAL PRIMARY KEY,
+      business_id INTEGER NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+      customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+      scheduled_for TIMESTAMPTZ NOT NULL,
+      status TEXT NOT NULL DEFAULT 'booked',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    -- Live queue. Position is derived from joined_at rather than stored, so
+    -- entries never need renumbering when someone leaves.
+    CREATE TABLE IF NOT EXISTS queue_entries (
+      id SERIAL PRIMARY KEY,
+      business_id INTEGER NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+      customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+      booking_id INTEGER REFERENCES bookings(id) ON DELETE SET NULL,
+      status TEXT NOT NULL DEFAULT 'waiting',
+      joined_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      left_at TIMESTAMPTZ
+    );
+
+    -- A customer can hold only one live place per business.
+    CREATE UNIQUE INDEX IF NOT EXISTS queue_entries_one_active
+      ON queue_entries (business_id, customer_id)
+      WHERE status = 'waiting';
+
+    CREATE INDEX IF NOT EXISTS queue_entries_business_waiting
+      ON queue_entries (business_id, joined_at)
+      WHERE status = 'waiting';
+
+    CREATE INDEX IF NOT EXISTS bookings_customer_upcoming
+      ON bookings (customer_id, scheduled_for)
+      WHERE status = 'booked';
   `);
 }
 
