@@ -4,6 +4,7 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import { migrate, seedAdmin } from "./migrate.js";
+import { seedSettings } from "./settings.js";
 import routes from "./routes.js";
 
 dotenv.config();
@@ -41,7 +42,16 @@ app.use(
 );
 app.use(express.json());
 app.use("/api", routes);
-app.use("/uploads", express.static(uploadsDir));
+
+// Upload filenames embed a timestamp and are never rewritten, so they can be
+// cached indefinitely. Without this every page view revalidates every image.
+app.use(
+  "/uploads",
+  express.static(uploadsDir, {
+    maxAge: "1y",
+    immutable: true,
+  })
+);
 app.get("/health", (_req, res) => {
   res.json({ ok: true });
 });
@@ -50,6 +60,7 @@ app.use(express.static(adminDir));
 async function start() {
   await migrate();
   await seedAdmin();
+  await seedSettings();
 
   app.listen(port, () => {
     console.log(`Admin + API: http://localhost:${port}/`);

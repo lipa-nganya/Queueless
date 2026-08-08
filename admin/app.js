@@ -1,8 +1,78 @@
 // Empty origin keeps the same-origin "/api" used when the backend serves this UI.
-const API_BASE = `${window.QUEUELESS_API_ORIGIN || ""}/api`;
+const API_ORIGIN = window.QUEUELESS_API_ORIGIN || "";
+const API_BASE = `${API_ORIGIN}/api`;
 const TOKEN_KEY = "queueless_admin_token";
 
+// Uploads are stored by the API, so relative paths must resolve against the
+// backend rather than the origin serving this UI.
+function resolveImageUrl(imageUrl) {
+  if (!imageUrl) return "";
+  if (imageUrl.startsWith("http")) return imageUrl;
+  return API_ORIGIN + imageUrl;
+}
+
 const app = document.getElementById("app");
+
+// Keys must match GROUP_ICONS in the backend and the icon set in the customer app.
+const GROUP_ICONS = {
+  scissors: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><path d="M8.2 7.8 20 18M8.2 16.2 20 6"/></svg>`,
+  salon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="3.2"/><path d="M5.5 19.5c1.4-3.2 3.7-4.8 6.5-4.8s5.1 1.6 6.5 4.8"/></svg>`,
+  clinic: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M12 8v8M8 12h8"/></svg>`,
+  pharmacy: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="8"/><path d="M12 8v8M8 12h8"/></svg>`,
+  bank: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 10h16M6 10v8M10 10v8M14 10v8M18 10v8M3 18h18M12 4l9 6H3l9-6Z"/></svg>`,
+  government: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3.5 19 6v5.5c0 4-2.9 7.3-7 8.9-4.1-1.6-7-4.9-7-8.9V6l7-2.5Z"/></svg>`,
+  restaurant: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 3v6a2 2 0 0 0 4 0V3M8 11v10M17 3c-1.2 1.6-2 3.4-2 5.2 0 1.6.8 2.6 2 2.8v10"/></svg>`,
+  shop: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 8h14l-1 12H6L5 8Z"/><path d="M9 8V6a3 3 0 0 1 6 0v2"/></svg>`,
+  car: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 15v-2.5L6 8h12l2 4.5V15H4Z"/><circle cx="7.5" cy="15.5" r="1.5"/><circle cx="16.5" cy="15.5" r="1.5"/></svg>`,
+  education: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m12 5 9 4-9 4-9-4 9-4Z"/><path d="M7 11v4c0 1.4 2.2 2.5 5 2.5s5-1.1 5-2.5v-4"/></svg>`,
+  fitness: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 9v6M7 7v10M17 7v10M20 9v6M7 12h10"/></svg>`,
+  phone: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="7" y="3" width="10" height="18" rx="2.5"/><path d="M11 18h2"/></svg>`,
+  more: `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="6" cy="6" r="1.5"/><circle cx="12" cy="6" r="1.5"/><circle cx="18" cy="6" r="1.5"/><circle cx="6" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="18" cy="12" r="1.5"/><circle cx="6" cy="18" r="1.5"/><circle cx="12" cy="18" r="1.5"/><circle cx="18" cy="18" r="1.5"/></svg>`,
+};
+
+function groupIcon(key) {
+  return GROUP_ICONS[key] || GROUP_ICONS.more;
+}
+
+const PIN_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 21s6-5.2 6-10a6 6 0 1 0-12 0c0 4.8 6 10 6 10Z"/><circle cx="12" cy="11" r="2.2"/></svg>`;
+
+const CUSTOMER_STATUS_LABELS = {
+  verified: "Verified",
+  pending_otp: "Pending OTP",
+  otp_expired: "OTP expired",
+};
+
+function customerStatusLabel(status) {
+  return CUSTOMER_STATUS_LABELS[status] || String(status || "").replace(/_/g, " ");
+}
+
+function iconPickerHtml(name, selected) {
+  return `
+    <div class="icon-picker" role="radiogroup" aria-label="Group icon">
+      ${Object.keys(GROUP_ICONS)
+        .map(
+          (key) => `
+            <label class="icon-option${key === selected ? " selected" : ""}" title="${key}">
+              <input type="radio" name="${name}" value="${key}"${key === selected ? " checked" : ""} />
+              ${GROUP_ICONS[key]}
+            </label>
+          `
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+// Keeps the highlighted swatch in step with the checked radio.
+function bindIconPicker(root) {
+  root.querySelectorAll(".icon-picker").forEach((picker) => {
+    picker.addEventListener("change", () => {
+      picker.querySelectorAll(".icon-option").forEach((option) => {
+        option.classList.toggle("selected", option.querySelector("input").checked);
+      });
+    });
+  });
+}
 
 function getToken() {
   return localStorage.getItem(TOKEN_KEY);
@@ -110,6 +180,7 @@ function shell(active, content) {
           <button type="button" data-view="groups" class="${active === "groups" ? "active" : ""}">Business groups</button>
           <button type="button" data-view="businesses" class="${active === "businesses" ? "active" : ""}">Businesses</button>
           <button type="button" data-view="admins" class="${active === "admins" ? "active" : ""}">Admins</button>
+          <button type="button" data-view="settings" class="${active === "settings" ? "active" : ""}">Settings</button>
         </nav>
         <div class="sidebar-foot">
           <button class="btn btn-secondary btn-block" type="button" id="logout-btn">Sign out</button>
@@ -136,6 +207,55 @@ function bindShellNav() {
   });
 }
 
+function formatWaitMinutes(minutes) {
+  const total = Math.max(0, Math.round(Number(minutes) || 0));
+  if (total < 60) return `${total} min`;
+  const hours = Math.floor(total / 60);
+  const mins = total % 60;
+  return mins === 0 ? `${hours}h` : `${hours}h ${mins}min`;
+}
+
+function topQueuesHtml(queues) {
+  if (!queues.length) {
+    return `<p class="empty">No one is queueing right now.</p>`;
+  }
+
+  // Bars are scaled against the busiest queue so the leader always fills the row.
+  const longest = Math.max(...queues.map((queue) => queue.waiting_total));
+
+  return `
+    <ol class="queue-bars">
+      ${queues
+        .map(
+          (queue, index) => `
+            <li class="queue-bar-row">
+              <span class="queue-rank">${index + 1}</span>
+              <div class="queue-bar-main">
+                <div class="queue-bar-head">
+                  <span class="queue-bar-name">${escapeHtml(queue.name)}</span>
+                  <span class="queue-bar-count">
+                    <strong>${queue.waiting_total}</strong> waiting
+                  </span>
+                </div>
+                <div class="queue-bar-track">
+                  <div class="queue-bar-fill" style="width:${Math.round((queue.waiting_total / longest) * 100)}%"></div>
+                </div>
+                <div class="queue-bar-meta">
+                  <span class="group-chip">
+                    ${groupIcon(queue.business_group_icon)}
+                    ${escapeHtml(queue.business_group_name)}
+                  </span>
+                  <span>~${escapeHtml(formatWaitMinutes(queue.clear_time_minutes))} to clear</span>
+                </div>
+              </div>
+            </li>
+          `
+        )
+        .join("")}
+    </ol>
+  `;
+}
+
 async function renderDashboard() {
   app.innerHTML = shell(
     "dashboard",
@@ -143,14 +263,19 @@ async function renderDashboard() {
       <div class="main-header">
         <div>
           <h2>Dashboard</h2>
-          <p>Live counts across customers, groups, and businesses.</p>
+          <p>Live counts across customers, groups, businesses, and queues.</p>
         </div>
       </div>
       <div class="stats" id="stats">
+        <div class="stat"><div class="label">Ongoing queues</div><div class="value">…</div></div>
+        <div class="stat"><div class="label">People waiting</div><div class="value">…</div></div>
         <div class="stat"><div class="label">Customers</div><div class="value">…</div></div>
-        <div class="stat"><div class="label">Business groups</div><div class="value">…</div></div>
         <div class="stat"><div class="label">Businesses</div><div class="value">…</div></div>
       </div>
+      <section class="panel">
+        <h3>Busiest queues</h3>
+        <div id="top-queues"><p class="empty">Loading…</p></div>
+      </section>
       <p class="message" id="page-message"></p>
     `
   );
@@ -161,19 +286,25 @@ async function renderDashboard() {
   try {
     const data = await api("/dashboard");
     document.getElementById("stats").innerHTML = `
+      <div class="stat stat-accent">
+        <div class="label">Ongoing queues</div>
+        <div class="value">${data.ongoing_queues_count}</div>
+      </div>
+      <div class="stat">
+        <div class="label">People waiting</div>
+        <div class="value">${data.people_waiting_count}</div>
+      </div>
       <div class="stat">
         <div class="label">Customers</div>
         <div class="value">${data.customers_count}</div>
       </div>
       <div class="stat">
-        <div class="label">Business groups</div>
-        <div class="value">${data.business_groups_count}</div>
-      </div>
-      <div class="stat">
         <div class="label">Businesses</div>
         <div class="value">${data.businesses_count}</div>
+        <div class="stat-sub">${data.business_groups_count} groups</div>
       </div>
     `;
+    document.getElementById("top-queues").innerHTML = topQueuesHtml(data.top_queues || []);
   } catch (error) {
     message.textContent = error.message;
   }
@@ -209,7 +340,7 @@ async function renderCustomers() {
       <table>
         <thead>
           <tr>
-            <th>Name</th>
+            <th>Customer</th>
             <th>Phone</th>
             <th>OTP</th>
             <th>Status</th>
@@ -219,19 +350,29 @@ async function renderCustomers() {
         <tbody>
           ${customers
             .map((customer) => {
+              const name = customer.first_name || customer.full_name || "Unnamed";
               const otp =
                 customer.otp_code && customer.status === "pending_otp"
-                  ? `<strong style="color:var(--lime-flow)">${escapeHtml(customer.otp_code)}</strong>`
+                  ? `<code class="otp-code">${escapeHtml(customer.otp_code)}</code>`
                   : customer.otp_code && customer.status === "otp_expired"
-                    ? `<span class="muted">${escapeHtml(customer.otp_code)} (expired)</span>`
+                    ? `<code class="otp-code otp-expired">${escapeHtml(customer.otp_code)}</code>`
                     : `<span class="muted">—</span>`;
               return `
                 <tr>
-                  <td>${escapeHtml(customer.first_name || customer.full_name || "—")}</td>
-                  <td>${escapeHtml(customer.phone || "—")}</td>
+                  <td>
+                    <div class="cell-media">
+                      <span class="avatar">${escapeHtml(name.slice(0, 1).toUpperCase())}</span>
+                      <span class="cell-title">${escapeHtml(name)}</span>
+                    </div>
+                  </td>
+                  <td class="cell-phone">${escapeHtml(customer.phone || "—")}</td>
                   <td>${otp}</td>
-                  <td>${escapeHtml(customer.status)}</td>
-                  <td class="muted">${formatDate(customer.created_at)}</td>
+                  <td>
+                    <span class="status-pill status-${escapeHtml(customer.status)}">
+                      ${escapeHtml(customerStatusLabel(customer.status))}
+                    </span>
+                  </td>
+                  <td class="muted cell-date">${formatDate(customer.created_at)}</td>
                 </tr>
               `;
             })
@@ -256,12 +397,18 @@ async function renderGroups() {
       </div>
       <section class="panel">
         <h3>Create business group</h3>
-        <form class="form-row" id="group-form">
-          <div class="field" style="margin-top:0">
-            <label for="group-name">Name</label>
-            <input id="group-name" name="name" placeholder="e.g. Barber Shop" required />
+        <form id="group-form">
+          <div class="form-row">
+            <div class="field" style="margin-top:0">
+              <label for="group-name">Name</label>
+              <input id="group-name" name="name" placeholder="e.g. Barber Shop" required />
+            </div>
+            <button class="btn btn-primary" type="submit">Create</button>
           </div>
-          <button class="btn btn-primary" type="submit">Create</button>
+          <div class="field">
+            <label>Icon</label>
+            ${iconPickerHtml("icon", "scissors")}
+          </div>
         </form>
         <p class="message" id="page-message" role="status"></p>
       </section>
@@ -284,9 +431,10 @@ async function renderGroups() {
       <table>
         <thead>
           <tr>
-            <th>Name</th>
+            <th>Group</th>
             <th>Businesses</th>
             <th>Created</th>
+            <th></th>
           </tr>
         </thead>
         <tbody>
@@ -294,9 +442,26 @@ async function renderGroups() {
             .map(
               (group) => `
                 <tr>
-                  <td>${escapeHtml(group.name)}</td>
-                  <td>${group.businesses_count}</td>
-                  <td class="muted">${formatDate(group.created_at)}</td>
+                  <td>
+                    <div class="cell-media">
+                      <span class="group-icon">${groupIcon(group.icon)}</span>
+                      <span class="cell-title">${escapeHtml(group.name)}</span>
+                    </div>
+                  </td>
+                  <td>
+                    <span class="count-badge${group.businesses_count ? "" : " count-zero"}">
+                      ${group.businesses_count}
+                    </span>
+                  </td>
+                  <td class="muted cell-date">${formatDate(group.created_at)}</td>
+                  <td class="row-actions">
+                    <button class="btn btn-secondary btn-sm group-edit-btn"
+                      data-id="${group.id}"
+                      data-name="${escapeHtml(group.name)}"
+                      data-icon="${escapeHtml(group.icon || "")}">
+                      Edit
+                    </button>
+                  </td>
                 </tr>
               `
             )
@@ -304,21 +469,102 @@ async function renderGroups() {
         </tbody>
       </table>
     `;
+
+    table.querySelectorAll(".group-edit-btn").forEach((btn) => {
+      btn.addEventListener("click", () => openGroupEditor(btn.dataset));
+    });
   }
+
+  function openGroupEditor({ id, name, icon }) {
+    const existing = document.getElementById("group-edit-overlay");
+    if (existing) existing.remove();
+
+    const overlay = document.createElement("div");
+    overlay.id = "group-edit-overlay";
+    overlay.className = "edit-overlay";
+    overlay.innerHTML = `
+      <div class="edit-drawer">
+        <div class="edit-drawer-header">
+          <h3>Edit business group</h3>
+          <button type="button" class="btn-icon" id="group-edit-close" aria-label="Close">✕</button>
+        </div>
+        <form id="group-edit-form">
+          <div class="field">
+            <label for="group-edit-name">Name</label>
+            <input id="group-edit-name" name="name" value="${escapeHtml(name)}" required />
+          </div>
+          <div class="field">
+            <label>Icon</label>
+            ${iconPickerHtml("icon", icon || "more")}
+          </div>
+          <div class="form-row">
+            <button class="btn btn-primary" type="submit">Save</button>
+            <button class="btn btn-secondary" type="button" id="group-edit-cancel">Cancel</button>
+          </div>
+          <p class="message" id="group-edit-message" role="status"></p>
+        </form>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    bindIconPicker(overlay);
+
+    const onKeydown = (event) => {
+      if (event.key === "Escape") close();
+    };
+    const close = () => {
+      document.removeEventListener("keydown", onKeydown);
+      overlay.remove();
+    };
+    document.addEventListener("keydown", onKeydown);
+    document.getElementById("group-edit-close").onclick = close;
+    document.getElementById("group-edit-cancel").onclick = close;
+    overlay.addEventListener("click", (event) => {
+      if (event.target === overlay) close();
+    });
+
+    document.getElementById("group-edit-form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const data = new FormData(event.currentTarget);
+      const editMessage = document.getElementById("group-edit-message");
+      editMessage.textContent = "";
+      try {
+        await api(`/business-groups/${id}`, {
+          method: "PUT",
+          body: JSON.stringify({
+            name: data.get("name")?.toString().trim(),
+            icon: data.get("icon"),
+          }),
+        });
+        close();
+        message.textContent = "Business group updated.";
+        message.classList.add("success");
+        await loadGroups();
+      } catch (error) {
+        editMessage.textContent = error.message;
+      }
+    });
+  }
+
+  bindIconPicker(document);
 
   document.getElementById("group-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = event.currentTarget;
-    const name = new FormData(form).get("name")?.toString().trim();
+    const data = new FormData(form);
+    const name = data.get("name")?.toString().trim();
     message.textContent = "";
     message.classList.remove("success");
 
     try {
       await api("/business-groups", {
         method: "POST",
-        body: JSON.stringify({ name }),
+        body: JSON.stringify({ name, icon: data.get("icon") }),
       });
       form.reset();
+      bindIconPicker(document);
+      form.querySelectorAll(".icon-option").forEach((option) => {
+        option.classList.toggle("selected", option.querySelector("input").checked);
+      });
       message.textContent = "Business group created.";
       message.classList.add("success");
       await loadGroups();
@@ -365,51 +611,60 @@ async function renderBusinesses() {
 
       <!-- Edit panel (hidden by default) -->
       <div id="edit-overlay" class="edit-overlay hidden" role="dialog" aria-modal="true" aria-label="Edit business">
-        <div class="edit-drawer">
+        <div class="edit-drawer edit-drawer-wide">
           <div class="edit-drawer-header">
             <h3>Edit business</h3>
             <button type="button" class="btn-icon" id="edit-close" aria-label="Close">✕</button>
           </div>
-          <form id="edit-form">
-            <div class="field">
-              <label for="edit-name">Name</label>
-              <input id="edit-name" name="name" required />
-            </div>
-            <div class="field">
-              <label for="edit-group">Business group</label>
-              <select id="edit-group" name="business_group_id" required>
-                <option value="">Select group</option>
-              </select>
-            </div>
-            <div class="field">
-              <label for="edit-description">Description</label>
-              <textarea id="edit-description" name="description" rows="3" placeholder="Short description of the business…"></textarea>
-            </div>
-            <div class="field">
-              <label for="edit-location">Location</label>
-              <input id="edit-location" name="location" placeholder="e.g. Tom Mboya St, Nairobi" />
-            </div>
-            <div class="field">
-              <label for="edit-phone">Phone</label>
-              <input id="edit-phone" name="phone" placeholder="e.g. 0712 345 678" />
-            </div>
-            <p class="message" id="edit-message" role="status"></p>
-            <div class="edit-actions">
-              <button class="btn btn-primary" type="submit">Save changes</button>
-            </div>
-          </form>
 
-          <div class="edit-image-section">
-            <h4>Business image</h4>
-            <div class="image-preview-wrap">
-              <img id="edit-image-preview" src="" alt="" class="hidden" />
-              <span id="edit-image-placeholder" class="image-placeholder">No image</span>
+          <div class="edit-columns">
+            <div class="edit-image-section">
+              <h4>Business image</h4>
+              <div class="image-preview-wrap">
+                <img id="edit-image-preview" src="" alt="" class="hidden" />
+                <span id="edit-image-placeholder" class="image-placeholder">No image</span>
+              </div>
+              <label class="btn image-upload-btn" for="edit-image-input">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5" />
+                  <path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3" />
+                </svg>
+                Upload image
+                <input id="edit-image-input" type="file" accept="image/*" style="display:none" />
+              </label>
+              <p class="message" id="edit-image-message" role="status"></p>
             </div>
-            <label class="btn btn-secondary image-upload-btn" for="edit-image-input">
-              Choose image
-              <input id="edit-image-input" type="file" accept="image/*" style="display:none" />
-            </label>
-            <p class="message" id="edit-image-message" role="status"></p>
+
+            <form id="edit-form">
+              <div class="field-grid">
+                <div class="field">
+                  <label for="edit-name">Name</label>
+                  <input id="edit-name" name="name" required />
+                </div>
+                <div class="field">
+                  <label for="edit-group">Business group</label>
+                  <select id="edit-group" name="business_group_id" required>
+                    <option value="">Select group</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="edit-location">Location</label>
+                  <input id="edit-location" name="location" placeholder="e.g. Tom Mboya St, Nairobi" />
+                </div>
+                <div class="field">
+                  <label for="edit-phone">Phone</label>
+                  <input id="edit-phone" name="phone" placeholder="e.g. 0712 345 678" />
+                </div>
+                <div class="field field-wide">
+                  <label for="edit-description">Description</label>
+                  <textarea id="edit-description" name="description" rows="3" placeholder="Short description of the business…"></textarea>
+                </div>
+              </div>
+              <div class="edit-actions">
+                <p class="message" id="edit-message" role="status"></p>
+                <button class="btn btn-primary" type="submit">Save changes</button>
+              </div>
+            </form>
           </div>
         </div>
       </div>
@@ -449,7 +704,7 @@ async function renderBusinesses() {
       allGroups.map((g) => `<option value="${g.id}"${g.id === business.business_group_id ? " selected" : ""}>${escapeHtml(g.name)}</option>`).join("");
 
     if (business.image_url) {
-      editImagePreview.src = business.image_url;
+      editImagePreview.src = resolveImageUrl(business.image_url);
       editImagePreview.alt = business.name;
       editImagePreview.classList.remove("hidden");
       editImagePlaceholder.classList.add("hidden");
@@ -522,7 +777,7 @@ async function renderBusinesses() {
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.error || "Upload failed.");
-      editImagePreview.src = result.image_url + "?t=" + Date.now();
+      editImagePreview.src = resolveImageUrl(result.image_url) + "?t=" + Date.now();
       editImagePreview.classList.remove("hidden");
       editImagePlaceholder.classList.add("hidden");
       editImageMessage.textContent = "Image updated.";
@@ -552,6 +807,8 @@ async function renderBusinesses() {
       return;
     }
 
+    const iconByGroupId = new Map(allGroups.map((group) => [group.id, group.icon]));
+
     table.innerHTML = `
       <table>
         <thead>
@@ -569,15 +826,29 @@ async function renderBusinesses() {
               (business) => `
                 <tr>
                   <td>
-                    ${business.image_url
-                      ? `<img src="${escapeHtml(business.image_url)}" alt="${escapeHtml(business.name)}" class="biz-thumb" />`
-                      : ""}
-                    ${escapeHtml(business.name)}
+                    <div class="cell-media">
+                      ${business.image_url
+                        ? `<img src="${escapeHtml(resolveImageUrl(business.image_url))}" alt="" class="biz-thumb" />`
+                        : `<span class="biz-thumb thumb-empty">${escapeHtml(business.name.slice(0, 1).toUpperCase())}</span>`}
+                      <div class="cell-text">
+                        <span class="cell-title">${escapeHtml(business.name)}</span>
+                        <span class="cell-sub">${escapeHtml(business.phone || "No phone")}</span>
+                      </div>
+                    </div>
                   </td>
-                  <td>${escapeHtml(business.business_group_name)}</td>
-                  <td class="muted">${escapeHtml(business.location || "—")}</td>
-                  <td class="muted">${formatDate(business.created_at)}</td>
                   <td>
+                    <span class="group-chip">
+                      ${groupIcon(iconByGroupId.get(business.business_group_id))}
+                      ${escapeHtml(business.business_group_name)}
+                    </span>
+                  </td>
+                  <td>
+                    ${business.location
+                      ? `<span class="cell-location">${PIN_ICON}${escapeHtml(business.location)}</span>`
+                      : `<span class="muted">—</span>`}
+                  </td>
+                  <td class="muted cell-date">${formatDate(business.created_at)}</td>
+                  <td class="row-actions">
                     <button class="btn btn-secondary btn-sm edit-btn"
                       data-id="${business.id}"
                       data-name="${escapeHtml(business.name)}"
@@ -932,6 +1203,128 @@ async function renderAcceptInvite(view) {
   });
 }
 
+async function renderSettings() {
+  app.innerHTML = shell(
+    "settings",
+    `
+      <div class="main-header">
+        <div>
+          <h2>Settings</h2>
+          <p>Configuration that takes effect immediately, without a redeploy.</p>
+        </div>
+      </div>
+      <section class="panel" id="settings-panel">
+        <p class="empty">Loading…</p>
+      </section>
+    `
+  );
+  bindShellNav();
+
+  const panel = document.getElementById("settings-panel");
+
+  let settings;
+  try {
+    settings = await api("/settings");
+  } catch (error) {
+    panel.innerHTML = `<p class="empty">${escapeHtml(error.message)}</p>`;
+    return;
+  }
+
+  const configured = settings.sms_configured;
+
+  panel.innerHTML = `
+    <h3>Notifications</h3>
+    <div class="setting-row">
+      <div class="setting-copy">
+        <div class="setting-title">Send real SMS</div>
+        <p class="setting-desc">
+          When off, verification codes are not sent anywhere and are read from
+          Admin → Customers. When on, they are delivered to customers by
+          ${escapeHtml(settings.sms_provider)} from sender ID
+          <code>${escapeHtml(settings.sms_shortcode)}</code>.
+        </p>
+        ${configured
+          ? ""
+          : `<p class="setting-warn">Advanta is not configured on the server. Set <code>ADVANTA_API_KEY</code> and <code>ADVANTA_PARTNER_ID</code> to enable this.</p>`}
+      </div>
+      <label class="switch" title="${configured ? "" : "Advanta is not configured"}">
+        <input type="checkbox" id="sms-toggle" ${settings.sms_enabled ? "checked" : ""} ${configured ? "" : "disabled"} />
+        <span class="switch-track"><span class="switch-thumb"></span></span>
+      </label>
+    </div>
+
+    <div class="setting-test ${settings.sms_enabled && configured ? "" : "hidden"}" id="sms-test">
+      <div class="field" style="margin-top:0">
+        <label for="test-phone">Send a test SMS</label>
+        <div class="form-row two">
+          <input id="test-phone" placeholder="07XXXXXXXX" inputmode="tel" />
+          <button class="btn btn-secondary" type="button" id="test-sms-btn">Send test</button>
+        </div>
+      </div>
+    </div>
+
+    <p class="message" id="page-message" role="status"></p>
+  `;
+
+  const message = document.getElementById("page-message");
+  const toggle = document.getElementById("sms-toggle");
+  const testBox = document.getElementById("sms-test");
+
+  // "pending" is neither success nor failure: Advanta has taken the message
+  // but delivery is not confirmed yet, so it must not be shown as an error.
+  const setMessage = (text, tone = "error") => {
+    message.textContent = text;
+    message.classList.toggle("success", tone === "success");
+    message.classList.toggle("pending", tone === "pending");
+  };
+
+  toggle?.addEventListener("change", async () => {
+    const wanted = toggle.checked;
+    toggle.disabled = true;
+    setMessage("");
+    try {
+      const saved = await api("/settings", {
+        method: "PUT",
+        body: JSON.stringify({ sms_enabled: wanted }),
+      });
+      toggle.checked = saved.sms_enabled;
+      testBox.classList.toggle("hidden", !saved.sms_enabled);
+      setMessage(
+        saved.sms_enabled
+          ? "Real SMS is on. Verification codes now go to customers' phones."
+          : "Real SMS is off. Codes are shown in Admin → Customers.",
+        "success"
+      );
+    } catch (error) {
+      // Put the switch back where it was so it never misreports the server.
+      toggle.checked = !wanted;
+      setMessage(error.message);
+    } finally {
+      toggle.disabled = false;
+    }
+  });
+
+  document.getElementById("test-sms-btn")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    const phone = document.getElementById("test-phone").value.trim();
+    if (!phone) return setMessage("Enter a phone number to test.");
+    button.disabled = true;
+    setMessage("Sending…", "pending");
+    try {
+      const result = await api("/settings/test-sms", {
+        method: "POST",
+        body: JSON.stringify({ phone }),
+      });
+      // Green only on confirmed delivery; amber while it is still queued.
+      setMessage(result.message, result.delivered ? "success" : "pending");
+    } catch (error) {
+      setMessage(error.message);
+    } finally {
+      button.disabled = false;
+    }
+  });
+}
+
 async function render() {
   const view = (location.hash || "#dashboard").replace(/^#/, "") || "dashboard";
 
@@ -959,6 +1352,10 @@ async function render() {
   }
   if (view === "admins") {
     await renderAdmins();
+    return;
+  }
+  if (view === "settings") {
+    await renderSettings();
     return;
   }
   await renderDashboard();

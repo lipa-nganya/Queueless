@@ -103,6 +103,105 @@ function phoneFieldHtml({
   `;
 }
 
+const PIN_LENGTH = 4;
+
+/*
+ * One box per digit. The boxes carry no name, so the form reads the PIN from
+ * the hidden input they keep in sync — call sites and the API are unchanged.
+ */
+function pinFieldHtml({ id, label }) {
+  const boxes = Array.from({ length: PIN_LENGTH }, (_, index) => `
+    <input
+      class="pin-box"
+      id="${id}-${index}"
+      data-pin-box="${index}"
+      type="password"
+      inputmode="numeric"
+      autocomplete="off"
+      maxlength="1"
+      size="1"
+      pattern="[0-9]"
+      placeholder=" "
+      aria-label="${label}, digit ${index + 1} of ${PIN_LENGTH}"
+      required
+    />
+  `).join("");
+
+  return `
+    <div class="field pin-field" data-pin-field="${id}">
+      <div class="pin-label-row">
+        <label for="${id}-0">${label}</label>
+        <button class="pin-toggle" type="button" data-pin-toggle aria-label="Show PIN" aria-pressed="false">
+          ${icon("eye")}
+        </button>
+      </div>
+      <div class="pin-boxes">${boxes}</div>
+      <input type="hidden" id="${id}" name="${id}" />
+    </div>
+  `;
+}
+
+// Wires digit entry and the reveal control. Call after rendering a pinFieldHtml.
+function bindPinFields() {
+  document.querySelectorAll("[data-pin-field]").forEach((field) => {
+    const boxes = [...field.querySelectorAll(".pin-box")];
+    const hidden = field.querySelector('input[type="hidden"]');
+    const toggle = field.querySelector("[data-pin-toggle]");
+    const sync = () => {
+      hidden.value = boxes.map((box) => box.value).join("");
+    };
+
+    boxes.forEach((box, index) => {
+      box.addEventListener("focus", () => box.select());
+
+      box.addEventListener("input", () => {
+        box.value = box.value.replace(/\D/g, "").slice(0, 1);
+        sync();
+        if (box.value && index < boxes.length - 1) boxes[index + 1].focus();
+      });
+
+      box.addEventListener("keydown", (event) => {
+        if (event.key === "Backspace" && !box.value && index > 0) {
+          // Step back and clear, so holding backspace walks the whole PIN out.
+          event.preventDefault();
+          boxes[index - 1].value = "";
+          boxes[index - 1].focus();
+          sync();
+        } else if (event.key === "ArrowLeft" && index > 0) {
+          event.preventDefault();
+          boxes[index - 1].focus();
+        } else if (event.key === "ArrowRight" && index < boxes.length - 1) {
+          event.preventDefault();
+          boxes[index + 1].focus();
+        }
+      });
+
+      box.addEventListener("paste", (event) => {
+        event.preventDefault();
+        const digits = (event.clipboardData?.getData("text") || "")
+          .replace(/\D/g, "")
+          .slice(0, boxes.length - index);
+        [...digits].forEach((digit, offset) => {
+          boxes[index + offset].value = digit;
+        });
+        sync();
+        boxes[Math.min(index + digits.length, boxes.length - 1)].focus();
+      });
+    });
+
+    toggle?.addEventListener("click", () => {
+      const showing = boxes[0].type === "text";
+      boxes.forEach((box) => {
+        box.type = showing ? "password" : "text";
+      });
+      toggle.innerHTML = showing ? icon("eye") : icon("eyeOff");
+      toggle.setAttribute("aria-label", showing ? "Show PIN" : "Hide PIN");
+      toggle.setAttribute("aria-pressed", String(!showing));
+      (boxes.find((box) => !box.value) || boxes[boxes.length - 1]).focus();
+    });
+  });
+}
+
 function buildPhone(countryCode, phoneNumber) {
   const code = String(countryCode || "").replace(/\D/g, "");
   let local = String(phoneNumber || "").replace(/\D/g, "");
@@ -143,12 +242,25 @@ async function api(path, options = {}) {
 }
 
 function viewFromHash() {
-  return (location.hash || "#signup").replace("#", "") || "signup";
+  return (location.hash || "#login").replace("#", "") || "login";
 }
 
 function go(view) {
   location.hash = view;
   render();
+}
+
+// Set when arriving at the queue screen from a specific business, so the list
+// can scroll straight to that card instead of making the customer hunt for it.
+let queueFocusBusinessId = null;
+
+// Handed from the login screen to the signup screen when the number typed at
+// login has no account behind it.
+let signupPrefillPhone = null;
+
+function goToQueue(businessId = null) {
+  queueFocusBusinessId = businessId;
+  go("queue");
 }
 
 function escapeHtml(value) {
@@ -166,11 +278,21 @@ function icon(name) {
     salon: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="3.2"/><path d="M5.5 19.5c1.4-3.2 3.7-4.8 6.5-4.8s5.1 1.6 6.5 4.8"/></svg>`,
     clinic: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M12 8v8M8 12h8"/></svg>`,
     bank: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 10h16M6 10v8M10 10v8M14 10v8M18 10v8M3 18h18M12 4l9 6H3l9-6Z"/></svg>`,
+    pharmacy: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="8"/><path d="M12 8v8M8 12h8"/></svg>`,
+    government: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3.5 19 6v5.5c0 4-2.9 7.3-7 8.9-4.1-1.6-7-4.9-7-8.9V6l7-2.5Z"/></svg>`,
+    restaurant: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 3v6a2 2 0 0 0 4 0V3M8 11v10M17 3c-1.2 1.6-2 3.4-2 5.2 0 1.6.8 2.6 2 2.8v10"/></svg>`,
+    shop: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 8h14l-1 12H6L5 8Z"/><path d="M9 8V6a3 3 0 0 1 6 0v2"/></svg>`,
+    car: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 15v-2.5L6 8h12l2 4.5V15H4Z"/><circle cx="7.5" cy="15.5" r="1.5"/><circle cx="16.5" cy="15.5" r="1.5"/></svg>`,
+    education: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m12 5 9 4-9 4-9-4 9-4Z"/><path d="M7 11v4c0 1.4 2.2 2.5 5 2.5s5-1.1 5-2.5v-4"/></svg>`,
+    fitness: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 9v6M7 7v10M17 7v10M20 9v6M7 12h10"/></svg>`,
+    phone: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="7" y="3" width="10" height="18" rx="2.5"/><path d="M11 18h2"/></svg>`,
     more: `<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><circle cx="6" cy="6" r="1.5"/><circle cx="12" cy="6" r="1.5"/><circle cx="18" cy="6" r="1.5"/><circle cx="6" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="18" cy="12" r="1.5"/><circle cx="6" cy="18" r="1.5"/><circle cx="12" cy="18" r="1.5"/><circle cx="18" cy="18" r="1.5"/></svg>`,
     search: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4 4"/></svg>`,
     filter: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16M7 12h10M10 18h4"/></svg>`,
     pin: `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 21s6-5.2 6-10a6 6 0 1 0-12 0c0 4.8 6 10 6 10Z"/><circle cx="12" cy="11" r="2.2"/></svg>`,
     chevron: `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m7 10 5 5 5-5"/></svg>`,
+    eye: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2.5 12S6 5.8 12 5.8 21.5 12 21.5 12 18 18.2 12 18.2 2.5 12 2.5 12Z"/><circle cx="12" cy="12" r="3"/></svg>`,
+    eyeOff: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M9.9 5.2A9.6 9.6 0 0 1 12 5c6 0 9.5 6.2 9.5 6.2a17 17 0 0 1-3.3 3.9M6.4 7.3A16.7 16.7 0 0 0 2.5 11.2S6 17.4 12 17.4a9.5 9.5 0 0 0 3.7-.73"/><path d="M9.9 9.3a3 3 0 0 0 4.2 4.2"/><path d="m4 3.6 16.4 16.4"/></svg>`,
     bell: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 17h12l-1.2-2.1V10a4.8 4.8 0 1 0-9.6 0v4.9L6 17Z"/><path d="M10 17a2 2 0 0 0 4 0"/></svg>`,
     star: `<svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><path d="m12 3.5 2.5 5.1 5.6.8-4 3.9.9 5.6L12 16.8 6.9 19l.9-5.6-4-3.9 5.6-.8L12 3.5Z"/></svg>`,
     home: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m4 11 8-7 8 7v9a1 1 0 0 1-1 1h-5v-6H10v6H5a1 1 0 0 1-1-1v-9Z"/></svg>`,
@@ -205,25 +327,28 @@ function bindTabs() {
 }
 
 function renderSignup() {
+  // Carried over when login found no account for the number just typed.
+  const carried = signupPrefillPhone;
+  signupPrefillPhone = null;
+  const parts = splitStoredPhone(carried || "");
+
   app.innerHTML = `
     <div class="auth-shell">
       <form class="card" id="signup-form">
         <div class="brand">Queue<span>less</span></div>
         <h2>Create account</h2>
-        <p class="lead">Sign up with your phone number and a 4-digit PIN.</p>
+        <p class="lead">
+          ${carried
+            ? "That number isn't registered yet. Add your name and a PIN to finish signing up."
+            : "Sign up with your phone number and a 4-digit PIN."}
+        </p>
         <div class="field">
           <label for="first_name">First name</label>
           <input id="first_name" name="first_name" autocomplete="given-name" required />
         </div>
-        ${phoneFieldHtml()}
-        <div class="field">
-          <label for="pin">Create PIN</label>
-          <input id="pin" name="pin" type="password" inputmode="numeric" maxlength="4" pattern="\\d{4}" placeholder="4 digits" required />
-        </div>
-        <div class="field">
-          <label for="confirm_pin">Confirm PIN</label>
-          <input id="confirm_pin" name="confirm_pin" type="password" inputmode="numeric" maxlength="4" pattern="\\d{4}" required />
-        </div>
+        ${phoneFieldHtml({ selectedCode: parts.code, localValue: parts.local })}
+        ${pinFieldHtml({ id: "pin", label: "Create PIN" })}
+        ${pinFieldHtml({ id: "confirm_pin", label: "Confirm PIN" })}
         <button class="btn" type="submit">Continue</button>
         <button class="btn-link" type="button" id="to-login">Already have an account? Log in</button>
         <p class="message" id="message" role="status"></p>
@@ -231,7 +356,11 @@ function renderSignup() {
     </div>
   `;
 
+  bindPinFields();
   document.getElementById("to-login").onclick = () => go("login");
+  // The phone is already filled in, so start where the customer still has work.
+  if (carried) document.getElementById("first_name").focus();
+
   document.getElementById("signup-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = event.currentTarget;
@@ -286,13 +415,103 @@ function renderVerify() {
           <input id="otp" name="otp" inputmode="numeric" maxlength="4" pattern="\\d{4}" placeholder="4 digits" required />
         </div>
         <button class="btn" type="submit">Verify &amp; sign in</button>
+        <div class="resend-row">
+          <button class="btn-link" type="button" id="resend-btn" hidden></button>
+        </div>
         <button class="btn-link" type="button" id="to-signup">Back to sign up</button>
         <p class="message" id="message" role="status"></p>
       </form>
     </div>
   `;
 
-  document.getElementById("to-signup").onclick = () => go("signup");
+  const resendBtn = document.getElementById("resend-btn");
+  const statusMessage = document.getElementById("message");
+  let countdown = null;
+
+  const stopCountdown = () => {
+    if (countdown) clearInterval(countdown);
+    countdown = null;
+  };
+
+  /*
+   * Reflects the server's throttle: a live countdown while cooling down, an
+   * enabled button once it lapses, and the support number once the customer
+   * has used all their attempts.
+   */
+  function applyResendState(state) {
+    stopCountdown();
+    if (!state || state.verified) {
+      resendBtn.hidden = true;
+      return;
+    }
+
+    resendBtn.hidden = false;
+
+    if (state.exhausted) {
+      resendBtn.disabled = true;
+      resendBtn.textContent = `Contact support on ${state.support_phone}`;
+      return;
+    }
+
+    let seconds = state.cooldown_seconds || 0;
+    const label = () =>
+      seconds > 0
+        ? `Resend code in ${seconds}s`
+        : `Resend code (${state.resends_left} left)`;
+
+    resendBtn.disabled = seconds > 0;
+    resendBtn.textContent = label();
+
+    if (seconds > 0) {
+      countdown = setInterval(() => {
+        seconds -= 1;
+        if (seconds <= 0) {
+          stopCountdown();
+          resendBtn.disabled = false;
+        }
+        resendBtn.textContent = label();
+      }, 1000);
+    }
+  }
+
+  async function refreshResendState() {
+    if (!phone) return;
+    try {
+      applyResendState(await api("/customer/otp-status", {
+        method: "POST",
+        body: JSON.stringify({ phone }),
+      }));
+    } catch {
+      // No account yet, or the check failed — leave the button hidden.
+    }
+  }
+
+  resendBtn.addEventListener("click", async () => {
+    resendBtn.disabled = true;
+    statusMessage.textContent = "";
+    statusMessage.classList.remove("success");
+    try {
+      const result = await api("/customer/resend-otp", {
+        method: "POST",
+        body: JSON.stringify({ phone }),
+      });
+      statusMessage.textContent = result.message;
+      statusMessage.classList.add("success");
+      applyResendState(result);
+    } catch (error) {
+      statusMessage.textContent = error.message;
+      // The 429 bodies carry the current throttle, so the button stays honest.
+      applyResendState(error.payload?.support_phone ? error.payload : null);
+      if (!error.payload?.support_phone) refreshResendState();
+    }
+  });
+
+  refreshResendState();
+
+  document.getElementById("to-signup").onclick = () => {
+    stopCountdown();
+    go("signup");
+  };
   document.getElementById("verify-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = event.currentTarget;
@@ -306,49 +525,118 @@ function renderVerify() {
         method: "POST",
         body: JSON.stringify(body),
       });
+      stopCountdown();
       setToken(result.token);
       localStorage.removeItem(PENDING_PHONE_KEY);
       go("home");
     } catch (error) {
       message.textContent = error.message;
+      // An expired code comes back with the throttle attached, so the resend
+      // button can offer the way out straight away.
+      if (error.payload?.expired) applyResendState(error.payload);
     } finally {
       button.disabled = false;
     }
   });
 }
 
+/*
+ * Two steps: confirm the number has an account, then ask for the PIN. An
+ * unknown number never sees a PIN prompt it could not satisfy — it goes to
+ * signup instead.
+ */
 function renderLogin() {
-  app.innerHTML = `
-    <div class="auth-shell">
-      <form class="card" id="login-form">
-        <div class="brand">Queue<span>less</span></div>
-        <h2>Log in</h2>
-        <p class="lead">Use your phone number and 4-digit PIN.</p>
-        ${phoneFieldHtml()}
-        <div class="field">
-          <label for="pin">PIN</label>
-          <input id="pin" name="pin" type="password" inputmode="numeric" maxlength="4" pattern="\\d{4}" required />
-        </div>
-        <button class="btn" type="submit">Log in</button>
-        <button class="btn-link" type="button" id="to-signup">Create an account</button>
-        <p class="message" id="message" role="status"></p>
-      </form>
-    </div>
-  `;
+  let stage = "phone";
+  let knownPhone = null;
+  let greeting = "";
+  let phoneParts = { code: "254", local: "" };
 
-  document.getElementById("to-signup").onclick = () => go("signup");
-  document.getElementById("login-form").addEventListener("submit", async (event) => {
+  function paint() {
+    const onPin = stage === "pin";
+    app.innerHTML = `
+      <div class="auth-shell">
+        <form class="card" id="login-form">
+          <div class="brand">Queue<span>less</span></div>
+          <h2>${onPin ? `Welcome back${greeting ? `, ${escapeHtml(greeting)}` : ""}` : "Log in"}</h2>
+          <p class="lead">
+            ${onPin
+              ? `Enter the 4-digit PIN for <strong>+${escapeHtml(knownPhone)}</strong>.`
+              : "Enter your phone number to continue."}
+          </p>
+          ${onPin
+            ? pinFieldHtml({ id: "pin", label: "PIN" })
+            : phoneFieldHtml({ selectedCode: phoneParts.code, localValue: phoneParts.local })}
+          <button class="btn" type="submit">${onPin ? "Log in" : "Continue"}</button>
+          <button class="btn-link" type="button" id="secondary-action">
+            ${onPin ? "Use a different number" : "Create an account"}
+          </button>
+          <p class="message" id="message" role="status"></p>
+        </form>
+      </div>
+    `;
+
+    if (onPin) {
+      bindPinFields();
+      document.getElementById("pin-0")?.focus();
+      document.getElementById("secondary-action").onclick = () => {
+        stage = "phone";
+        paint();
+      };
+    } else {
+      document.getElementById("secondary-action").onclick = () => go("signup");
+    }
+
+    document.getElementById("login-form").addEventListener("submit", onSubmit);
+  }
+
+  // Re-queried because paint() may have replaced the button mid-flight.
+  const enableButton = () => {
+    const button = document.querySelector("#login-form .btn");
+    if (button) button.disabled = false;
+  };
+
+  async function onSubmit(event) {
     event.preventDefault();
     const form = event.currentTarget;
-    const body = formPhonePayload(new FormData(form));
     const message = document.getElementById("message");
     const button = form.querySelector(".btn");
     message.textContent = "";
+    message.classList.remove("success");
     button.disabled = true;
+
     try {
+      if (stage === "phone") {
+        const payload = formPhonePayload(new FormData(form));
+        phoneParts = splitStoredPhone(payload.phone);
+
+        const status = await api("/customer/phone-status", {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+
+        if (!status.registered) {
+          signupPrefillPhone = status.phone;
+          message.textContent = "That number isn't registered yet. Taking you to sign up…";
+          setTimeout(() => go("signup"), 700);
+          return;
+        }
+        if (status.needs_otp) {
+          localStorage.setItem(PENDING_PHONE_KEY, status.phone);
+          message.textContent = "Finish verifying this number first.";
+          setTimeout(() => go("verify"), 700);
+          return;
+        }
+
+        knownPhone = status.phone;
+        greeting = status.first_name || "";
+        stage = "pin";
+        paint();
+        return;
+      }
+
       const result = await api("/customer/login", {
         method: "POST",
-        body: JSON.stringify(body),
+        body: JSON.stringify({ phone: knownPhone, pin: new FormData(form).get("pin") }),
       });
       setToken(result.token);
       go("home");
@@ -357,13 +645,19 @@ function renderLogin() {
         localStorage.setItem(PENDING_PHONE_KEY, error.payload.phone);
         message.textContent = error.message;
         setTimeout(() => go("verify"), 700);
+      } else if (error.payload?.not_registered) {
+        signupPrefillPhone = error.payload.phone;
+        message.textContent = `${error.message} Taking you to sign up…`;
+        setTimeout(() => go("signup"), 700);
       } else {
         message.textContent = error.message;
       }
     } finally {
-      button.disabled = false;
+      enableButton();
     }
-  });
+  }
+
+  paint();
 }
 
 function resolveImageUrl(imageUrl) {
@@ -505,9 +799,11 @@ function renderDiscoverFrame() {
     ...groups.map((group) => ({
       id: group.id,
       name: group.name,
-      key: categoryKey(group.name),
+      // Admins pick the icon; fall back to guessing from the name for groups
+      // created before icons existed.
+      iconKey: group.icon || CATEGORY_ICONS[categoryKey(group.name)] || "more",
     })),
-    { id: "more", name: "More", key: "more" },
+    { id: "more", name: "More", iconKey: "more" },
   ];
 
   const ordered = orderedHomeBusinesses();
@@ -541,10 +837,9 @@ function renderDiscoverFrame() {
               cat.id === "more"
                 ? false
                 : discoverState.activeGroupId === cat.id;
-            const iconKey = CATEGORY_ICONS[cat.key] || "more";
             return `
               <button class="cat ${active ? "active" : ""}" type="button" data-group="${cat.id}">
-                <span class="glyph">${icon(iconKey)}</span>
+                <span class="glyph">${icon(cat.iconKey)}</span>
                 <span>${escapeHtml(cat.name)}</span>
               </button>
             `;
@@ -698,17 +993,18 @@ async function renderBusinessDetail(id) {
   const index = discoverState.businesses.findIndex((b) => b.id === id);
   const item = enrichBusiness(biz, index >= 0 ? index : 0);
 
-  let alreadyInQueue = false;
+  let myEntry = null;
   try {
     const myQueue = await api("/customer/queue");
-    alreadyInQueue = myQueue.some((entry) => Number(entry.business_id) === Number(item.id));
+    myEntry = myQueue.find((entry) => Number(entry.business_id) === Number(item.id)) || null;
   } catch {
     // If the check fails, leave the button enabled and let join handle conflicts.
   }
+  const alreadyInQueue = Boolean(myEntry);
 
   const queueBadgeColor = item.queueSize <= 3 ? "var(--emerald)" : item.queueSize <= 8 ? "var(--lime-deep)" : "var(--danger)";
   const queueLabel = item.queueSize === 0 ? "No queue" : item.queueSize === 1 ? "1 person" : `${item.queueSize} people`;
-  const joinLabel = alreadyInQueue ? "Already in queue" : "Join Queue";
+  const joinLabel = alreadyInQueue ? `View my place · #${myEntry.position}` : "Join Queue";
 
   app.innerHTML = `
     <div class="detail-shell">
@@ -756,10 +1052,9 @@ async function renderBusinessDetail(id) {
 
         <div class="detail-actions">
           <button
-            class="btn detail-join-btn"
+            class="btn detail-join-btn${alreadyInQueue ? " in-queue" : ""}"
             type="button"
-            ${alreadyInQueue ? "disabled" : ""}
-          >${joinLabel}</button>
+          >${alreadyInQueue ? `${joinLabel} ${icon("chevron")}` : joinLabel}</button>
           <button class="btn btn-ghost detail-book-btn" type="button">Book for later</button>
         </div>
         <p class="message" id="detail-message" role="status"></p>
@@ -783,10 +1078,10 @@ async function renderBusinessDetail(id) {
       message.classList.remove("success");
       try {
         await api(`/customer/businesses/${item.id}/queue`, { method: "POST" });
-        go("queue");
+        goToQueue(item.id);
       } catch (error) {
         if (error.status === 409) {
-          go("queue");
+          goToQueue(item.id);
           return;
         }
         message.textContent = error.message;
@@ -794,7 +1089,10 @@ async function renderBusinessDetail(id) {
       }
     };
   } else {
-    message.textContent = "You're already in this queue.";
+    joinBtn.onclick = () => goToQueue(item.id);
+    message.textContent = `You're #${myEntry.position} in this queue · about ${formatWaitMinutes(
+      myEntry.estimated_wait_minutes
+    )} to go.`;
     message.classList.add("success");
   }
 
@@ -994,12 +1292,30 @@ async function renderBookings() {
 /* ------------------------------------------------------------- live queue */
 
 let queueTimer = null;
+let queueVisibilityHandler = null;
 
 function stopQueuePolling() {
   if (queueTimer) {
-    clearInterval(queueTimer);
+    clearTimeout(queueTimer);
     queueTimer = null;
   }
+  if (queueVisibilityHandler) {
+    document.removeEventListener("visibilitychange", queueVisibilityHandler);
+    queueVisibilityHandler = null;
+  }
+}
+
+/*
+ * Refresh often when the customer is about to be served and rarely when they
+ * are far back, so a long wait costs a handful of requests instead of one
+ * every ten seconds.
+ */
+function queuePollDelay(entries) {
+  if (!entries.length) return 30000;
+  const soonest = Math.min(...entries.map((entry) => entry.position ?? Infinity));
+  if (soonest <= 3) return 10000;
+  if (soonest <= 8) return 20000;
+  return 45000;
 }
 
 function queueMilestone(position) {
@@ -1075,7 +1391,16 @@ function queueNavHtml(entries) {
 }
 
 // Highlights the chip whose card is currently nearest the top of the viewport.
-function bindQueueNav() {
+function highlightQueueCard(entryId) {
+  const card = document.querySelector(`[data-entry="${entryId}"]`);
+  if (!card) return false;
+  card.scrollIntoView({ behavior: "smooth", block: "center" });
+  card.classList.add("flash");
+  setTimeout(() => card.classList.remove("flash"), 900);
+  return true;
+}
+
+function bindQueueNav(focusEntryId = null) {
   const nav = document.querySelector(".queue-nav");
   if (!nav) return null;
 
@@ -1091,12 +1416,7 @@ function bindQueueNav() {
 
   nav.querySelectorAll("[data-nav]").forEach((chip) => {
     chip.addEventListener("click", () => {
-      const card = document.querySelector(`[data-entry="${chip.dataset.nav}"]`);
-      if (!card) return;
-      setActive(chip.dataset.nav);
-      card.scrollIntoView({ behavior: "smooth", block: "center" });
-      card.classList.add("flash");
-      setTimeout(() => card.classList.remove("flash"), 900);
+      if (highlightQueueCard(chip.dataset.nav)) setActive(chip.dataset.nav);
     });
   });
 
@@ -1112,8 +1432,12 @@ function bindQueueNav() {
 
   document.querySelectorAll("[data-entry]").forEach((card) => observer.observe(card));
 
-  const firstChip = nav.querySelector("[data-nav]");
-  if (firstChip) setActive(firstChip.dataset.nav);
+  if (focusEntryId && chips.has(String(focusEntryId))) {
+    setActive(focusEntryId);
+  } else {
+    const firstChip = nav.querySelector("[data-nav]");
+    if (firstChip) setActive(firstChip.dataset.nav);
+  }
 
   return observer;
 }
@@ -1141,6 +1465,13 @@ async function renderQueue() {
 
   paint(`<p class="empty-state">Loading…</p>`);
 
+  // Chained timeouts rather than a fixed interval, so the gap can adapt.
+  function scheduleNext(entries) {
+    if (queueTimer) clearTimeout(queueTimer);
+    if (document.hidden) return;
+    queueTimer = setTimeout(load, queuePollDelay(entries));
+  }
+
   async function load() {
     let entries;
     try {
@@ -1164,6 +1495,8 @@ async function renderQueue() {
       return;
     }
 
+    scheduleNext(entries);
+
     entries.sort((a, b) => {
       const waitDiff =
         (a.estimated_wait_minutes ?? Number.POSITIVE_INFINITY) -
@@ -1175,7 +1508,18 @@ async function renderQueue() {
     // Rebuilding the whole shell keeps the sticky nav in sync with the cards.
     navObserver?.disconnect();
     paint(entries.map(queueCardHtml).join(""), queueNavHtml(entries));
-    navObserver = bindQueueNav();
+
+    // Only jump on the paint right after arriving from a business page; later
+    // polls must not yank the customer's scroll position around.
+    const focusEntry = queueFocusBusinessId
+      ? entries.find((entry) => Number(entry.business_id) === Number(queueFocusBusinessId))
+      : null;
+    queueFocusBusinessId = null;
+
+    navObserver = bindQueueNav(focusEntry?.id);
+    // Done here rather than in the nav so it still runs for a lone queue,
+    // where there is no nav bar to bind.
+    if (focusEntry) highlightQueueCard(focusEntry.id);
 
     document.querySelectorAll("[data-leave]").forEach((btn) => {
       btn.addEventListener("click", async () => {
@@ -1192,8 +1536,18 @@ async function renderQueue() {
     });
   }
 
+  // A backgrounded tab has nobody watching it, so stop polling until it returns.
+  queueVisibilityHandler = () => {
+    if (document.hidden) {
+      if (queueTimer) clearTimeout(queueTimer);
+      queueTimer = null;
+    } else if (viewFromHash() === "queue") {
+      load();
+    }
+  };
+  document.addEventListener("visibilitychange", queueVisibilityHandler);
+
   await load();
-  queueTimer = setInterval(load, 10000);
 }
 
 async function render() {
@@ -1201,12 +1555,15 @@ async function render() {
 
   if (!getToken()) {
     const view = viewFromHash();
-    if (view === "login") return renderLogin();
+    if (view === "signup") return renderSignup();
     if (view === "verify") return renderVerify();
-    return renderSignup();
+    return renderLogin();
   }
 
   const view = viewFromHash();
+  // Drop a pending focus if the customer headed somewhere other than the queue.
+  if (view !== "queue") queueFocusBusinessId = null;
+
   if (view.startsWith("business-")) {
     const id = Number(view.replace("business-", ""));
     if (id) return renderBusinessDetail(id);

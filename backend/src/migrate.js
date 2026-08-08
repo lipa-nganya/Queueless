@@ -42,6 +42,21 @@ export async function migrate() {
       ON customers (phone)
       WHERE phone IS NOT NULL;
 
+    -- Throttling for OTP resends on unverified accounts.
+    ALTER TABLE customers ADD COLUMN IF NOT EXISTS otp_resend_count INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE customers ADD COLUMN IF NOT EXISTS otp_last_sent_at TIMESTAMPTZ;
+
+    ALTER TABLE business_groups ADD COLUMN IF NOT EXISTS icon TEXT;
+
+    -- Runtime configuration an admin can change without a redeploy.
+    CREATE TABLE IF NOT EXISTS settings (
+      key TEXT PRIMARY KEY,
+      value TEXT,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_by INTEGER REFERENCES admins(id)
+    );
+
+
     ALTER TABLE businesses ADD COLUMN IF NOT EXISTS description TEXT;
     ALTER TABLE businesses ADD COLUMN IF NOT EXISTS location TEXT;
     ALTER TABLE businesses ADD COLUMN IF NOT EXISTS phone TEXT;

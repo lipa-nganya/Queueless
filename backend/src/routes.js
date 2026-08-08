@@ -16,8 +16,16 @@ import {
   generateOtp,
   normalizeKenyaPhone,
   otpExpiryDate,
+  sendSms,
+  smsDeliveryStatus,
 } from "./otp.js";
 import { sendAdminInviteEmail } from "./mail.js";
+import {
+  SMS_ENABLED,
+  getBoolSetting,
+  setSetting,
+  smsProviderConfigured,
+} from "./settings.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const uploadsDir = path.resolve(__dirname, "../uploads");
@@ -155,6 +163,98 @@ router.post("/auth/login", async (req, res) => {
   } catch (error) {
     console.error("Login failed:", error);
     return res.status(500).json({ error: "Login failed." });
+  }
+});
+
+/* ---------------------------------------------------------------- settings */
+
+async function settingsPayload() {
+  return {
+    sms_enabled: await getBoolSetting(SMS_ENABLED, false),
+    sms_provider: "Advanta",
+    sms_configured: smsProviderConfigured(),
+    sms_shortcode: process.env.ADVANTA_SHORTCODE || "not set",
+  };
+}
+
+router.get("/settings", requireAdmin, async (_req, res) => {
+  try {
+    return res.json(await settingsPayload());
+  } catch (error) {
+    console.error("Load settings failed:", error);
+    return res.status(500).json({ error: "Could not load settings." });
+  }
+});
+
+router.put("/settings", requireAdmin, async (req, res) => {
+  try {
+    if (typeof req.body?.sms_enabled !== "undefined") {
+      const enabled = req.body.sms_enabled === true || req.body.sms_enabled === "true";
+
+      // Turning this on without credentials would silently break signup, since
+      // customers would stop seeing an OTP anywhere.
+      if (enabled && !smsProviderConfigured()) {
+        return res.status(400).json({
+          error:
+            "Advanta is not configured. Set ADVANTA_API_KEY and ADVANTA_PARTNER_ID before enabling real SMS.",
+        });
+      }
+
+      await setSetting(SMS_ENABLED, enabled, req.admin?.sub ?? null);
+    }
+
+    return res.json(await settingsPayload());
+  } catch (error) {
+    console.error("Update settings failed:", error);
+    return res.status(500).json({ error: "Could not update settings." });
+  }
+});
+
+// Lets an admin confirm Advanta really works before trusting it with signups.
+router.post("/settings/test-sms", requireAdmin, async (req, res) => {
+  try {
+    const phone = normalizeKenyaPhone(req.body?.phone, req.body?.country_code);
+    if (!phone) return res.status(400).json({ error: "Enter a valid phone number." });
+    if (!smsProviderConfigured()) {
+      return res.status(400).json({ error: "Advanta is not configured." });
+    }
+
+    const accepted = await sendSms({
+      phone,
+      message: "Queueless: test message. SMS delivery is working.",
+    });
+    const messageId = accepted?.responses?.[0]?.messageid ?? null;
+    if (!messageId) {
+      return res.json({ ok: true, phone, message: `Advanta accepted the message for ${phone}.` });
+    }
+
+    // Give the provider a few seconds to move it past "Scheduled" before
+    // reporting back, so the admin sees delivery rather than just acceptance.
+    let delivery = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      delivery = await smsDeliveryStatus(messageId);
+      if (delivery.description && delivery.description !== "Scheduled") break;
+    }
+
+    // Advanta can hold a message in "Scheduled" for anything from seconds to
+    // well over half an hour when its queue is backed up, and it still lands.
+    // Queued is therefore not a failure — only report what is actually known.
+    const pending = !delivery || delivery.description === "Scheduled";
+    return res.json({
+      ok: true,
+      delivered: !pending,
+      pending,
+      phone,
+      message_id: messageId,
+      delivery_status: delivery?.description ?? "Unknown",
+      message: pending
+        ? `Advanta accepted the message for ${phone} (ID ${messageId}) and it is queued for delivery. It has not been confirmed on the handset yet — during a backlog this can take anywhere from a few minutes to over half an hour.`
+        : `Delivered to ${phone} (${delivery.description}).`,
+    });
+  } catch (error) {
+    console.error("Test SMS failed:", error);
+    return res.status(502).json({ error: error.message || "Could not send the test SMS." });
   }
 });
 
@@ -421,15 +521,61 @@ router.post("/admins/accept-invite", async (req, res) => {
   }
 });
 
+/*
+ * A queue's length is the admin-maintained walk-in baseline plus everyone
+ * waiting through the app, matching what customers are shown.
+ */
+const QUEUE_TOTALS_CTE = `
+  WITH queue_totals AS (
+    SELECT
+      b.id,
+      b.name,
+      b.image_url,
+      b.avg_wait_minutes,
+      bg.name AS business_group_name,
+      bg.icon AS business_group_icon,
+      b.queue_size + COALESCE(q.waiting, 0) AS waiting_total
+    FROM businesses b
+    INNER JOIN business_groups bg ON bg.id = b.business_group_id
+    LEFT JOIN (
+      SELECT business_id, COUNT(*)::int AS waiting
+      FROM queue_entries
+      WHERE status = 'waiting'
+      GROUP BY business_id
+    ) q ON q.business_id = b.id
+  )
+`;
+
 router.get("/dashboard", requireAdmin, async (_req, res) => {
   try {
-    const result = await query(`
+    const counts = await query(`
+      ${QUEUE_TOTALS_CTE}
       SELECT
         (SELECT COUNT(*)::int FROM customers) AS customers_count,
         (SELECT COUNT(*)::int FROM business_groups) AS business_groups_count,
-        (SELECT COUNT(*)::int FROM businesses) AS businesses_count
+        (SELECT COUNT(*)::int FROM businesses) AS businesses_count,
+        (SELECT COUNT(*)::int FROM queue_totals WHERE waiting_total > 0) AS ongoing_queues_count,
+        (SELECT COALESCE(SUM(waiting_total), 0)::int FROM queue_totals) AS people_waiting_count
     `);
-    return res.json(result.rows[0]);
+
+    const topQueues = await query(`
+      ${QUEUE_TOTALS_CTE}
+      SELECT
+        id,
+        name,
+        image_url,
+        avg_wait_minutes,
+        business_group_name,
+        business_group_icon,
+        waiting_total,
+        (waiting_total * avg_wait_minutes) AS clear_time_minutes
+      FROM queue_totals
+      WHERE waiting_total > 0
+      ORDER BY waiting_total DESC, name ASC
+      LIMIT 3
+    `);
+
+    return res.json({ ...counts.rows[0], top_queues: topQueues.rows });
   } catch (error) {
     console.error("Dashboard failed:", error);
     return res.status(500).json({ error: "Could not load dashboard." });
@@ -463,12 +609,39 @@ router.get("/customers", requireAdmin, async (_req, res) => {
   }
 });
 
+/*
+ * Icon keys the admin can pick from. The SVG for each key lives in the admin
+ * and customer front-ends; only the key is stored.
+ */
+export const GROUP_ICONS = [
+  "scissors",
+  "salon",
+  "clinic",
+  "pharmacy",
+  "bank",
+  "government",
+  "restaurant",
+  "shop",
+  "car",
+  "education",
+  "fitness",
+  "phone",
+  "more",
+];
+
+function normalizeIcon(value) {
+  if (value == null || value === "") return null;
+  const key = String(value).trim().toLowerCase();
+  return GROUP_ICONS.includes(key) ? key : undefined;
+}
+
 router.get("/business-groups", requireAdmin, async (_req, res) => {
   try {
     const result = await query(`
       SELECT
         bg.id,
         bg.name,
+        bg.icon,
         bg.created_at,
         COUNT(b.id)::int AS businesses_count
       FROM business_groups bg
@@ -483,6 +656,10 @@ router.get("/business-groups", requireAdmin, async (_req, res) => {
   }
 });
 
+router.get("/business-group-icons", requireAdmin, (_req, res) => {
+  return res.json(GROUP_ICONS);
+});
+
 router.post("/business-groups", requireAdmin, async (req, res) => {
   try {
     const name = String(req.body?.name || "").trim();
@@ -490,13 +667,18 @@ router.post("/business-groups", requireAdmin, async (req, res) => {
       return res.status(400).json({ error: "Business group name is required." });
     }
 
+    const icon = normalizeIcon(req.body?.icon);
+    if (icon === undefined) {
+      return res.status(400).json({ error: "Choose an icon from the list." });
+    }
+
     const result = await query(
       `
-        INSERT INTO business_groups (name)
-        VALUES ($1)
-        RETURNING id, name, created_at
+        INSERT INTO business_groups (name, icon)
+        VALUES ($1, $2)
+        RETURNING id, name, icon, created_at
       `,
-      [name]
+      [name, icon]
     );
 
     return res.status(201).json(result.rows[0]);
@@ -506,6 +688,43 @@ router.post("/business-groups", requireAdmin, async (req, res) => {
     }
     console.error("Create group failed:", error);
     return res.status(500).json({ error: "Could not create business group." });
+  }
+});
+
+router.put("/business-groups/:id", requireAdmin, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const name = String(req.body?.name || "").trim();
+    if (!Number.isInteger(id) || id < 1) {
+      return res.status(400).json({ error: "Invalid business group." });
+    }
+    if (!name) {
+      return res.status(400).json({ error: "Business group name is required." });
+    }
+
+    const icon = normalizeIcon(req.body?.icon);
+    if (icon === undefined) {
+      return res.status(400).json({ error: "Choose an icon from the list." });
+    }
+
+    const result = await query(
+      `
+        UPDATE business_groups
+        SET name = $1, icon = $2
+        WHERE id = $3
+        RETURNING id, name, icon, created_at
+      `,
+      [name, icon, id]
+    );
+
+    if (!result.rows[0]) return res.status(404).json({ error: "Business group not found." });
+    return res.json(result.rows[0]);
+  } catch (error) {
+    if (error.code === "23505") {
+      return res.status(409).json({ error: "That business group already exists." });
+    }
+    console.error("Update group failed:", error);
+    return res.status(500).json({ error: "Could not update business group." });
   }
 });
 
@@ -676,12 +895,21 @@ router.post("/customer/signup", async (req, res) => {
     }
 
     const existing = await query(
-      "SELECT id, phone_verified_at FROM customers WHERE phone = $1 LIMIT 1",
+      `
+        SELECT id, phone_verified_at, otp_expires_at, otp_resend_count, otp_last_sent_at
+        FROM customers WHERE phone = $1 LIMIT 1
+      `,
       [phone]
     );
 
     if (existing.rows[0]?.phone_verified_at) {
       return res.status(409).json({ error: "This phone number is already registered. Please log in." });
+    }
+
+    // Re-running signup on an unverified number is another code send, so it
+    // has to respect the same cap — otherwise the limit is trivially bypassed.
+    if (existing.rows[0] && resendState(existing.rows[0]).exhausted) {
+      return res.status(429).json({ error: supportMessage, support_phone: SUPPORT_PHONE });
     }
 
     const otp = generateOtp();
@@ -698,7 +926,9 @@ router.post("/customer/signup", async (req, res) => {
               pin_hash = $2,
               otp_code = $3,
               otp_expires_at = $4,
-              phone_verified_at = NULL
+              phone_verified_at = NULL,
+              otp_resend_count = customers.otp_resend_count + 1,
+              otp_last_sent_at = NOW()
           WHERE phone = $5
           RETURNING id, first_name, phone, otp_code, otp_expires_at
         `,
@@ -717,11 +947,15 @@ router.post("/customer/signup", async (req, res) => {
       customer = created.rows[0];
     }
 
-    const delivery = await deliverOtp({
-      phone,
-      otp,
-      firstName,
-    });
+    // The account row already exists, so a provider outage must not fail the
+    // signup — fall back to the admin-visible OTP instead of losing the account.
+    let delivery;
+    try {
+      delivery = await deliverOtp({ phone, otp, firstName });
+    } catch (error) {
+      console.error("OTP delivery failed, falling back to web display:", error);
+      delivery = { mode: "web", sent: false, degraded: true };
+    }
 
     return res.status(201).json({
       phone: customer.phone,
@@ -738,6 +972,135 @@ router.post("/customer/signup", async (req, res) => {
     }
     console.error("Customer signup failed:", error);
     return res.status(500).json({ error: "Could not create account." });
+  }
+});
+
+/* ------------------------------------------------------------ OTP resends */
+
+const SUPPORT_PHONE = "+254712674333";
+const MAX_OTP_RESENDS = 3;
+const OTP_RESEND_COOLDOWN_SECONDS = 120;
+
+const supportMessage = `You've reached the limit of ${MAX_OTP_RESENDS} code resends. Please contact support on ${SUPPORT_PHONE}.`;
+
+function cooldownRemaining(lastSentAt) {
+  if (!lastSentAt) return 0;
+  const elapsed = (Date.now() - new Date(lastSentAt).getTime()) / 1000;
+  return Math.max(0, Math.ceil(OTP_RESEND_COOLDOWN_SECONDS - elapsed));
+}
+
+function resendState(customer) {
+  const used = customer.otp_resend_count || 0;
+  const remaining = cooldownRemaining(customer.otp_last_sent_at);
+  const expired = Boolean(
+    customer.otp_expires_at && new Date(customer.otp_expires_at) < new Date()
+  );
+  const exhausted = used >= MAX_OTP_RESENDS;
+
+  return {
+    verified: Boolean(customer.phone_verified_at),
+    expired,
+    resends_used: used,
+    resends_left: Math.max(0, MAX_OTP_RESENDS - used),
+    cooldown_seconds: remaining,
+    exhausted,
+    can_resend: !customer.phone_verified_at && !exhausted && remaining === 0,
+    support_phone: SUPPORT_PHONE,
+  };
+}
+
+// Drives the verify screen: how long until the customer may ask for a new
+// code, and how many attempts they have left.
+router.post("/customer/otp-status", async (req, res) => {
+  try {
+    const phone = resolvePhone(req.body);
+    if (!phone) return res.status(400).json({ error: "Enter a valid Kenyan phone number." });
+
+    const result = await query(
+      `
+        SELECT phone_verified_at, otp_expires_at, otp_resend_count, otp_last_sent_at
+        FROM customers WHERE phone = $1 LIMIT 1
+      `,
+      [phone]
+    );
+    const customer = result.rows[0];
+    if (!customer) return res.status(404).json({ error: "Account not found. Please sign up first." });
+
+    return res.json({ phone, ...resendState(customer) });
+  } catch (error) {
+    console.error("OTP status failed:", error);
+    return res.status(500).json({ error: "Could not check that number." });
+  }
+});
+
+router.post("/customer/resend-otp", async (req, res) => {
+  try {
+    const phone = resolvePhone(req.body);
+    if (!phone) return res.status(400).json({ error: "Enter a valid Kenyan phone number." });
+
+    const result = await query(
+      `
+        SELECT id, first_name, phone, phone_verified_at, otp_expires_at,
+               otp_resend_count, otp_last_sent_at
+        FROM customers WHERE phone = $1 LIMIT 1
+      `,
+      [phone]
+    );
+    const customer = result.rows[0];
+    if (!customer) return res.status(404).json({ error: "Account not found. Please sign up first." });
+
+    if (customer.phone_verified_at) {
+      return res.status(409).json({ error: "This number is already verified. Please log in." });
+    }
+
+    const state = resendState(customer);
+    if (state.exhausted) {
+      return res.status(429).json({ error: supportMessage, ...state });
+    }
+    if (state.cooldown_seconds > 0) {
+      return res.status(429).json({
+        error: `Please wait ${state.cooldown_seconds}s before requesting another code.`,
+        ...state,
+      });
+    }
+
+    const otp = generateOtp();
+    const updated = await query(
+      `
+        UPDATE customers
+        SET otp_code = $1,
+            otp_expires_at = $2,
+            otp_resend_count = otp_resend_count + 1,
+            otp_last_sent_at = NOW()
+        WHERE id = $3
+        RETURNING phone_verified_at, otp_expires_at, otp_resend_count, otp_last_sent_at
+      `,
+      [otp, otpExpiryDate(10), customer.id]
+    );
+
+    // A provider outage must not consume the customer's remaining attempts
+    // silently, so report the failure while keeping the new code usable.
+    let delivery;
+    try {
+      delivery = await deliverOtp({ phone, otp, firstName: customer.first_name });
+    } catch (error) {
+      console.error("OTP resend delivery failed, falling back to web display:", error);
+      delivery = { mode: "web", sent: false };
+    }
+
+    const next = resendState(updated.rows[0]);
+    return res.json({
+      phone,
+      otp_mode: delivery.mode,
+      ...next,
+      message:
+        delivery.mode === "web"
+          ? "New code generated. Enter the OTP shown in Admin → Customers."
+          : "A new code is on its way to your phone.",
+    });
+  } catch (error) {
+    console.error("OTP resend failed:", error);
+    return res.status(500).json({ error: "Could not resend the code." });
   }
 });
 
@@ -780,7 +1143,14 @@ router.post("/customer/verify-otp", async (req, res) => {
     }
 
     if (customer.otp_expires_at && new Date(customer.otp_expires_at) < new Date()) {
-      return res.status(400).json({ error: "OTP has expired. Sign up again to get a new code." });
+      const state = resendState(customer);
+      return res.status(400).json({
+        error: state.exhausted
+          ? `That code has expired. ${supportMessage}`
+          : "That code has expired. Tap “Resend code” to get a new one.",
+        expired: true,
+        ...state,
+      });
     }
 
     const verified = await query(
@@ -788,7 +1158,9 @@ router.post("/customer/verify-otp", async (req, res) => {
         UPDATE customers
         SET phone_verified_at = NOW(),
             otp_code = NULL,
-            otp_expires_at = NULL
+            otp_expires_at = NULL,
+            otp_resend_count = 0,
+            otp_last_sent_at = NULL
         WHERE id = $1
         RETURNING id, first_name, phone
       `,
@@ -807,6 +1179,35 @@ router.post("/customer/verify-otp", async (req, res) => {
   } catch (error) {
     console.error("Verify OTP failed:", error);
     return res.status(500).json({ error: "Could not verify OTP." });
+  }
+});
+
+/*
+ * Lets the login screen ask for a PIN only once it knows the number has an
+ * account. Reveals no more than the login route already does, since signup is
+ * open and an unknown number is routed there anyway.
+ */
+router.post("/customer/phone-status", async (req, res) => {
+  try {
+    const phone = resolvePhone(req.body);
+    if (!phone) return res.status(400).json({ error: "Enter a valid Kenyan phone number." });
+
+    const result = await query(
+      `SELECT first_name, pin_hash, phone_verified_at FROM customers WHERE phone = $1 LIMIT 1`,
+      [phone]
+    );
+    const customer = result.rows[0];
+
+    if (!customer?.pin_hash) {
+      return res.json({ phone, registered: false });
+    }
+    if (!customer.phone_verified_at) {
+      return res.json({ phone, registered: true, needs_otp: true });
+    }
+    return res.json({ phone, registered: true, first_name: customer.first_name });
+  } catch (error) {
+    console.error("Phone status check failed:", error);
+    return res.status(500).json({ error: "Could not check that number." });
   }
 });
 
@@ -829,8 +1230,18 @@ router.post("/customer/login", async (req, res) => {
       [phone]
     );
 
+    // Signup is open to anyone, so telling the caller a number is unregistered
+    // reveals nothing they could not learn by trying to sign up with it.
     const customer = result.rows[0];
-    if (!customer?.pin_hash) {
+    if (!customer) {
+      return res.status(404).json({
+        error: "That number isn't registered yet.",
+        not_registered: true,
+        phone,
+      });
+    }
+
+    if (!customer.pin_hash) {
       return res.status(401).json({ error: "Invalid phone number or PIN." });
     }
 
@@ -885,7 +1296,7 @@ router.get("/customer/me", requireCustomer, async (req, res) => {
 router.get("/customer/business-groups", requireCustomer, async (_req, res) => {
   try {
     const result = await query(`
-      SELECT id, name, created_at
+      SELECT id, name, icon, created_at
       FROM business_groups
       ORDER BY name ASC
     `);

@@ -123,6 +123,94 @@ select {
   gap: 0.55rem;
 }
 
+.resend-row {
+  display: flex;
+  justify-content: center;
+}
+
+.resend-row .btn-link:disabled {
+  opacity: 0.55;
+  cursor: default;
+  text-decoration: none;
+}
+
+.pin-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+/* Fixed columns, not 1fr: an input's intrinsic min-width is ~20 characters,
+   which a `1fr` track will not shrink below and would overflow the card. */
+.pin-boxes {
+  display: grid;
+  grid-template-columns: repeat(4, 2.9rem);
+  gap: 0.5rem;
+}
+
+/* Beats the shared `.field input` rules on specificity. */
+.field .pin-box {
+  width: 2.9rem;
+  min-width: 0;
+  height: 3rem;
+  padding: 0;
+  border: 1.5px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg-soft);
+  text-align: center;
+  font-family: var(--font);
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--text);
+  caret-color: var(--lime-deep);
+  transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+}
+
+.field .pin-box:focus {
+  border-color: var(--lime-flow);
+  background: var(--bg);
+  box-shadow: 0 0 0 3px rgba(166, 230, 0, 0.25);
+}
+
+/* A filled box reads as done even while masked (needs the blank placeholder). */
+.field .pin-box:not(:placeholder-shown) {
+  border-color: var(--lime-deep);
+  background: var(--bg);
+}
+
+.field .pin-box::-webkit-outer-spin-button,
+.field .pin-box::-webkit-inner-spin-button {
+  appearance: none;
+  margin: 0;
+}
+
+.pin-toggle {
+  display: grid;
+  place-items: center;
+  width: 1.9rem;
+  height: 1.9rem;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.pin-toggle:hover {
+  color: var(--text);
+}
+
+.pin-toggle[aria-pressed="true"] {
+  color: var(--lime-deep);
+}
+
+.pin-toggle:focus-visible {
+  outline: 2px solid var(--lime-flow);
+  outline-offset: -3px;
+  border-radius: 8px;
+}
+
 .btn {
   display: inline-flex;
   align-items: center;
@@ -644,6 +732,25 @@ select {
 
 .detail-join-btn {
   font-size: 0.88rem;
+}
+
+/* Already queued: reads as a way through to the queue, not a second join. */
+.detail-join-btn.in-queue {
+  gap: 0.4rem;
+  background: rgba(0, 196, 140, 0.14);
+  color: var(--emerald);
+  box-shadow: inset 0 0 0 1.5px rgba(0, 196, 140, 0.45);
+}
+
+.detail-join-btn.in-queue:hover {
+  background: rgba(0, 196, 140, 0.22);
+  filter: none;
+}
+
+.detail-join-btn.in-queue svg {
+  width: 15px;
+  height: 15px;
+  transform: rotate(-90deg);
 }
 
 .btn-ghost {
