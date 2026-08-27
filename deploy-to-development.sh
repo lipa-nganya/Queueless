@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Deploys the develop tier: the Railway backend plus both Netlify frontends.
-# All three build from the develop branch, so this pushes first and then
+# Deploys the develop tier: the Railway backend plus all Netlify frontends.
+# They build from the develop branch, so this pushes first and then
 # triggers each provider explicitly rather than relying on the git webhooks.
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
@@ -12,6 +12,8 @@ CUSTOMER_SITE_ID="6c7337a3-6a81-4d75-9de2-1dbb3c7ef40a"
 CUSTOMER_URL="https://queueless.thewolfgang.tech"
 ADMIN_SITE_ID="a63fe2df-41f1-4665-88c2-970c6911cfdb"
 ADMIN_URL="https://admin.queueless.thewolfgang.tech"
+VENDOR_SITE_ID="aaf89a4e-ef96-4d45-bbbc-d6493bcc4ea5"
+VENDOR_URL="https://vendor.queueless.thewolfgang.tech"
 
 RAILWAY_PROJECT="94fe5c8a-1aad-45eb-a004-61da6bfd93d6"
 RAILWAY_ENV="staging"
@@ -29,6 +31,7 @@ Deploys the develop tier:
   backend   Railway  (queueless-dev / staging / Queueless)
   customer  Netlify  (queueless-kenya-dev)
   admin     Netlify  (queueless-kenya-admin)
+  vendor    Netlify  (queueless-kenya-vendor)
 
 Options:
   --skip-push   Redeploy the current remote commit without pushing
@@ -133,12 +136,15 @@ customer_deploy="$(trigger_netlify "$CUSTOMER_SITE_ID")"
 [[ -n "$customer_deploy" ]] && ok "customer build queued" || warn "customer build not confirmed"
 admin_deploy="$(trigger_netlify "$ADMIN_SITE_ID")"
 [[ -n "$admin_deploy" ]] && ok "admin build queued" || warn "admin build not confirmed"
+vendor_deploy="$(trigger_netlify "$VENDOR_SITE_ID")"
+[[ -n "$vendor_deploy" ]] && ok "vendor build queued" || warn "vendor build not confirmed"
 
 if [[ "$WAIT" -eq 0 ]]; then
   step "Deploys triggered (--no-wait)"
   echo "  backend:  $BACKEND_URL"
   echo "  customer: $CUSTOMER_URL"
   echo "  admin:    $ADMIN_URL"
+  echo "  vendor:   $VENDOR_URL"
   exit 0
 fi
 
@@ -190,6 +196,7 @@ wait_for_netlify() {
 step "Waiting for the frontends"
 wait_for_netlify "customer" "$CUSTOMER_SITE_ID" "$customer_deploy" "$CUSTOMER_URL" || status=1
 wait_for_netlify "admin" "$ADMIN_SITE_ID" "$admin_deploy" "$ADMIN_URL" || status=1
+wait_for_netlify "vendor" "$VENDOR_SITE_ID" "$vendor_deploy" "$VENDOR_URL" || status=1
 
 step "Summary"
 if [[ "$status" -eq 0 ]]; then
@@ -200,4 +207,5 @@ fi
 echo "  backend:  $BACKEND_URL"
 echo "  customer: $CUSTOMER_URL"
 echo "  admin:    $ADMIN_URL"
+echo "  vendor:   $VENDOR_URL"
 exit "$status"

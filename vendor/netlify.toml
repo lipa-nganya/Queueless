@@ -1,7 +1,11 @@
+# Config for the vendor site (queueless-kenya-vendor), which builds with
+# base = "vendor" so Netlify reads this file instead of the one at the repo root.
+# Dev URL: https://vendor.queueless.thewolfgang.tech
 [build]
   publish = "."
   command = "echo Static site - no build"
 
+# The vendor UI is a single-page app routed by hash, so every path serves index.html.
 [[redirects]]
   from = "/*"
   to = "/index.html"
