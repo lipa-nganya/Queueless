@@ -9,6 +9,10 @@
 import { query } from "./db.js";
 
 export const SMS_ENABLED = "sms_enabled";
+export const CONTACT_PHONE = "contact_phone";
+export const CONTACT_EMAIL = "contact_email";
+
+const DEFAULT_CONTACT_PHONE = "+254712674333";
 
 const cache = new Map();
 let loaded = false;
@@ -63,6 +67,14 @@ export async function seedSettings() {
   await query(
     `INSERT INTO settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING`,
     [SMS_ENABLED, String(smsFromEnv)]
+  );
+  await query(
+    `INSERT INTO settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING`,
+    [CONTACT_PHONE, DEFAULT_CONTACT_PHONE]
+  );
+  await query(
+    `INSERT INTO settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING`,
+    [CONTACT_EMAIL, ""]
   );
   await loadSettings();
 }

@@ -61,6 +61,46 @@ export function signCustomerToken(customer) {
   );
 }
 
+export function signVendorToken(vendor) {
+  return jwt.sign(
+    {
+      sub: vendor.id,
+      username: vendor.username,
+      email: vendor.email,
+      role: "vendor",
+    },
+    JWT_SECRET,
+    { expiresIn: "12h" }
+  );
+}
+
+export async function vendorLogin(identifier, password) {
+  const loginId = String(identifier || "").trim();
+  if (!loginId || !password) return null;
+
+  const result = await query(
+    `
+      SELECT id, username, email, password_hash, activated_at
+      FROM vendors
+      WHERE username = $1 OR lower(email) = lower($1)
+      LIMIT 1
+    `,
+    [loginId]
+  );
+
+  const vendor = result.rows[0];
+  if (!vendor?.password_hash || !vendor.activated_at) return null;
+
+  const ok = await bcrypt.compare(password, vendor.password_hash);
+  if (!ok) return null;
+
+  return {
+    token: signVendorToken(vendor),
+    username: vendor.username,
+    email: vendor.email,
+  };
+}
+
 function readToken(req) {
   const header = req.headers.authorization || "";
   const [scheme, token] = header.split(" ");
@@ -90,6 +130,19 @@ export function requireCustomer(req, res, next) {
       return res.status(401).json({ error: "Unauthorized" });
     }
     req.customer = payload;
+    return next();
+  } catch {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+}
+
+export function requireVendor(req, res, next) {
+  try {
+    const payload = readToken(req);
+    if (!payload || payload.role !== "vendor") {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    req.vendor = payload;
     return next();
   } catch {
     return res.status(401).json({ error: "Unauthorized" });

@@ -7,8 +7,10 @@ import multer from "multer";
 import { query } from "./db.js";
 import {
   login,
+  vendorLogin,
   requireAdmin,
   requireCustomer,
+  requireVendor,
   signCustomerToken,
 } from "./auth.js";
 import {
@@ -22,7 +24,10 @@ import {
 import { sendAdminInviteEmail } from "./mail.js";
 import {
   SMS_ENABLED,
+  CONTACT_PHONE,
+  CONTACT_EMAIL,
   getBoolSetting,
+  getSetting,
   setSetting,
   smsProviderConfigured,
 } from "./settings.js";
@@ -31,6 +36,110 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const uploadsDir = path.resolve(__dirname, "../uploads");
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const INVITE_TTL_HOURS = 72;
+
+// Kenya bounding box used to bias Photon results toward the country.
+const KENYA_BBOX = "33.909,-4.678,41.899,5.507";
+const NAIROBI = { lat: -1.286389, lon: 36.817223 };
+
+function parseCoord(value, min, max) {
+  if (value === null || value === undefined || value === "") return null;
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < min || n > max) return null;
+  return n;
+}
+
+async function searchPlacesKenya(q, { limit = 8 } = {}) {
+  const queryText = String(q || "").trim();
+  if (queryText.length < 2) return [];
+
+  const url = new URL("https://photon.komoot.io/api/");
+  url.searchParams.set("q", queryText);
+  url.searchParams.set("limit", String(Math.min(12, Math.max(1, limit))));
+  url.searchParams.set("lang", "en");
+  url.searchParams.set("lat", String(NAIROBI.lat));
+  url.searchParams.set("lon", String(NAIROBI.lon));
+  url.searchParams.set("bbox", KENYA_BBOX);
+
+  const response = await fetch(url, {
+    headers: {
+      Accept: "application/json",
+      "User-Agent": "QueuelessKenya/1.0 (Kenya place search)",
+    },
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!response.ok) {
+    throw new Error("Place search is temporarily unavailable.");
+  }
+
+  const payload = await response.json().catch(() => ({}));
+  const features = Array.isArray(payload.features) ? payload.features : [];
+  return features
+    .filter((feature) => {
+      const code = String(feature?.properties?.countrycode || "").toLowerCase();
+      return !code || code === "ke";
+    })
+    .slice(0, limit)
+    .map((feature) => {
+      const [longitude, latitude] = feature.geometry?.coordinates || [];
+      return {
+        label: placeLabel(feature.properties),
+        latitude: Number(latitude),
+        longitude: Number(longitude),
+      };
+    })
+    .filter(
+      (place) =>
+        place.label &&
+        Number.isFinite(place.latitude) &&
+        Number.isFinite(place.longitude)
+    );
+}
+
+async function resolveBusinessCoords(row) {
+  const latitude = parseCoord(row?.latitude, -90, 90);
+  const longitude = parseCoord(row?.longitude, -180, 180);
+  if (latitude != null && longitude != null) {
+    return { ...row, latitude, longitude };
+  }
+
+  const hint = String(row?.location || "").trim();
+  if (hint.length < 2) {
+    return { ...row, latitude: null, longitude: null };
+  }
+
+  try {
+    const place = (await searchPlacesKenya(hint, { limit: 1 }))[0];
+    if (!place) return { ...row, latitude: null, longitude: null };
+
+    if (row?.id) {
+      await query(
+        `
+          UPDATE businesses
+          SET latitude = $1, longitude = $2
+          WHERE id = $3 AND latitude IS NULL AND longitude IS NULL
+        `,
+        [place.latitude, place.longitude, row.id]
+      );
+    }
+
+    return { ...row, latitude: place.latitude, longitude: place.longitude };
+  } catch (error) {
+    console.error("Geocode business failed:", error);
+    return { ...row, latitude: null, longitude: null };
+  }
+}
+
+function placeLabel(props = {}) {
+  const parts = [
+    props.name,
+    props.street,
+    props.locality || props.city || props.county,
+    props.district || props.state,
+  ].filter(Boolean);
+  // Drop consecutive duplicates (Photon often repeats the city).
+  const unique = parts.filter((part, i) => part !== parts[i - 1]);
+  return unique.join(", ") || "Unknown place";
+}
 
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, uploadsDir),
@@ -174,6 +283,8 @@ async function settingsPayload() {
     sms_provider: "Advanta",
     sms_configured: smsProviderConfigured(),
     sms_shortcode: process.env.ADVANTA_SHORTCODE || "not set",
+    contact_phone: (await getSetting(CONTACT_PHONE, "")) || "",
+    contact_email: (await getSetting(CONTACT_EMAIL, "")) || "",
   };
 }
 
@@ -201,6 +312,26 @@ router.put("/settings", requireAdmin, async (req, res) => {
       }
 
       await setSetting(SMS_ENABLED, enabled, req.admin?.sub ?? null);
+    }
+
+    if (typeof req.body?.contact_phone !== "undefined") {
+      const phone = String(req.body.contact_phone || "").trim();
+      if (phone && !normalizeKenyaPhone(phone)) {
+        return res.status(400).json({ error: "Enter a valid contact phone number." });
+      }
+      await setSetting(
+        CONTACT_PHONE,
+        phone ? `+${normalizeKenyaPhone(phone)}` : "",
+        req.admin?.sub ?? null
+      );
+    }
+
+    if (typeof req.body?.contact_email !== "undefined") {
+      const email = String(req.body.contact_email || "").trim().toLowerCase();
+      if (email && !EMAIL_RE.test(email)) {
+        return res.status(400).json({ error: "Enter a valid contact email address." });
+      }
+      await setSetting(CONTACT_EMAIL, email, req.admin?.sub ?? null);
     }
 
     return res.json(await settingsPayload());
@@ -614,19 +745,29 @@ router.get("/customers", requireAdmin, async (_req, res) => {
  * and customer front-ends; only the key is stored.
  */
 export const GROUP_ICONS = [
+  "beauty",
+  "healthcare",
+  "financial",
+  "automotive",
+  "hospitality",
+  "government",
+  "education",
+  "retail",
+  "professional",
+  "travel",
+  "entertainment",
+  "more",
+  // Legacy keys still stored on older groups.
   "scissors",
   "salon",
   "clinic",
   "pharmacy",
   "bank",
-  "government",
   "restaurant",
   "shop",
   "car",
-  "education",
   "fitness",
   "phone",
-  "more",
 ];
 
 function normalizeIcon(value) {
@@ -736,8 +877,11 @@ router.get("/businesses", requireAdmin, async (_req, res) => {
         b.name,
         b.description,
         b.location,
+        b.latitude,
+        b.longitude,
         b.phone,
         b.image_url,
+        b.is_active,
         b.created_at,
         b.business_group_id,
         bg.name AS business_group_name
@@ -752,10 +896,28 @@ router.get("/businesses", requireAdmin, async (_req, res) => {
   }
 });
 
+// Kenya-only place search via Photon (OSM). Proxied so we can set a proper
+// User-Agent and keep autocomplete credentials/keys out of the admin UI later.
+router.get("/places/search", requireAdmin, async (req, res) => {
+  try {
+    const q = String(req.query.q || "").trim();
+    if (q.length < 2) return res.json([]);
+
+    const places = await searchPlacesKenya(q, { limit: 8 });
+    return res.json(places);
+  } catch (error) {
+    console.error("Place search failed:", error);
+    return res.status(502).json({ error: "Could not search places." });
+  }
+});
+
 router.post("/businesses", requireAdmin, async (req, res) => {
   try {
     const name = String(req.body?.name || "").trim();
     const businessGroupId = Number(req.body?.business_group_id);
+    const location = String(req.body?.location || "").trim() || null;
+    let latitude = parseCoord(req.body?.latitude, -90, 90);
+    let longitude = parseCoord(req.body?.longitude, -180, 180);
 
     if (!name) {
       return res.status(400).json({ error: "Business name is required." });
@@ -764,13 +926,19 @@ router.post("/businesses", requireAdmin, async (req, res) => {
       return res.status(400).json({ error: "Select a business group." });
     }
 
+    if ((latitude == null || longitude == null) && location) {
+      const geocoded = await resolveBusinessCoords({ location });
+      latitude = geocoded.latitude;
+      longitude = geocoded.longitude;
+    }
+
     const result = await query(
       `
-        INSERT INTO businesses (name, business_group_id)
-        VALUES ($1, $2)
-        RETURNING id, name, business_group_id, created_at
+        INSERT INTO businesses (name, business_group_id, location, latitude, longitude, is_active)
+        VALUES ($1, $2, $3, $4, $5, false)
+        RETURNING id, name, business_group_id, location, latitude, longitude, is_active, created_at
       `,
-      [name, businessGroupId]
+      [name, businessGroupId, location, latitude, longitude]
     );
 
     const created = result.rows[0];
@@ -801,8 +969,9 @@ router.get("/businesses/:id", requireAdmin, async (req, res) => {
     const result = await query(
       `
         SELECT
-          b.id, b.name, b.description, b.location, b.phone, b.image_url,
-          b.business_group_id, bg.name AS business_group_name, b.created_at
+          b.id, b.name, b.description, b.location, b.latitude, b.longitude,
+          b.phone, b.image_url, b.is_active, b.business_group_id,
+          bg.name AS business_group_name, b.created_at
         FROM businesses b
         INNER JOIN business_groups bg ON bg.id = b.business_group_id
         WHERE b.id = $1
@@ -825,24 +994,39 @@ router.put("/businesses/:id", requireAdmin, async (req, res) => {
     const description = String(req.body?.description || "").trim() || null;
     const location = String(req.body?.location || "").trim() || null;
     const phone = String(req.body?.phone || "").trim() || null;
+    let latitude = location ? parseCoord(req.body?.latitude, -90, 90) : null;
+    let longitude = location ? parseCoord(req.body?.longitude, -180, 180) : null;
     const queueSize = req.body?.queue_size != null ? Number(req.body.queue_size) : undefined;
     const avgWait = req.body?.avg_wait_minutes != null ? Number(req.body.avg_wait_minutes) : undefined;
+    const hasActive = typeof req.body?.is_active !== "undefined";
+    const isActive = hasActive
+      ? req.body.is_active === true || req.body.is_active === "true"
+      : undefined;
 
     if (!name) return res.status(400).json({ error: "Business name is required." });
     if (!Number.isInteger(businessGroupId) || businessGroupId < 1) {
       return res.status(400).json({ error: "Select a business group." });
     }
 
+    if (location && (latitude == null || longitude == null)) {
+      const geocoded = await resolveBusinessCoords({ location });
+      latitude = geocoded.latitude;
+      longitude = geocoded.longitude;
+    }
+
     const result = await query(
       `
         UPDATE businesses
-        SET name = $1, business_group_id = $2, description = $3, location = $4, phone = $5
+        SET name = $1, business_group_id = $2, description = $3, location = $4, phone = $5,
+            latitude = $6, longitude = $7
           ${queueSize != null ? ", queue_size = " + Math.max(0, Math.round(queueSize)) : ""}
           ${avgWait != null ? ", avg_wait_minutes = " + Math.max(1, Math.round(avgWait)) : ""}
-        WHERE id = $6
-        RETURNING id, name, business_group_id, description, location, phone, image_url, queue_size, avg_wait_minutes, created_at
+          ${hasActive ? ", is_active = " + (isActive ? "true" : "false") : ""}
+        WHERE id = $8
+        RETURNING id, name, business_group_id, description, location, latitude, longitude,
+          phone, image_url, is_active, queue_size, avg_wait_minutes, created_at
       `,
-      [name, businessGroupId, description, location, phone, id]
+      [name, businessGroupId, description, location, phone, latitude, longitude, id]
     );
 
     if (!result.rows[0]) return res.status(404).json({ error: "Business not found." });
@@ -908,8 +1092,11 @@ router.post("/customer/signup", async (req, res) => {
 
     // Re-running signup on an unverified number is another code send, so it
     // has to respect the same cap — otherwise the limit is trivially bypassed.
-    if (existing.rows[0] && resendState(existing.rows[0]).exhausted) {
-      return res.status(429).json({ error: supportMessage, support_phone: SUPPORT_PHONE });
+    if (existing.rows[0] && (await resendState(existing.rows[0])).exhausted) {
+      return res.status(429).json({
+        error: await supportMessageText(),
+        support_phone: await supportPhone(),
+      });
     }
 
     const otp = generateOtp();
@@ -977,11 +1164,19 @@ router.post("/customer/signup", async (req, res) => {
 
 /* ------------------------------------------------------------ OTP resends */
 
-const SUPPORT_PHONE = "+254712674333";
+const DEFAULT_SUPPORT_PHONE = "+254712674333";
 const MAX_OTP_RESENDS = 3;
 const OTP_RESEND_COOLDOWN_SECONDS = 120;
 
-const supportMessage = `You've reached the limit of ${MAX_OTP_RESENDS} code resends. Please contact support on ${SUPPORT_PHONE}.`;
+async function supportPhone() {
+  const configured = String((await getSetting(CONTACT_PHONE, "")) || "").trim();
+  return configured || DEFAULT_SUPPORT_PHONE;
+}
+
+async function supportMessageText() {
+  const phone = await supportPhone();
+  return `You've reached the limit of ${MAX_OTP_RESENDS} code resends. Please contact support on ${phone}.`;
+}
 
 function cooldownRemaining(lastSentAt) {
   if (!lastSentAt) return 0;
@@ -989,13 +1184,14 @@ function cooldownRemaining(lastSentAt) {
   return Math.max(0, Math.ceil(OTP_RESEND_COOLDOWN_SECONDS - elapsed));
 }
 
-function resendState(customer) {
+async function resendState(customer) {
   const used = customer.otp_resend_count || 0;
   const remaining = cooldownRemaining(customer.otp_last_sent_at);
   const expired = Boolean(
     customer.otp_expires_at && new Date(customer.otp_expires_at) < new Date()
   );
   const exhausted = used >= MAX_OTP_RESENDS;
+  const phone = await supportPhone();
 
   return {
     verified: Boolean(customer.phone_verified_at),
@@ -1005,7 +1201,7 @@ function resendState(customer) {
     cooldown_seconds: remaining,
     exhausted,
     can_resend: !customer.phone_verified_at && !exhausted && remaining === 0,
-    support_phone: SUPPORT_PHONE,
+    support_phone: phone,
   };
 }
 
@@ -1026,7 +1222,7 @@ router.post("/customer/otp-status", async (req, res) => {
     const customer = result.rows[0];
     if (!customer) return res.status(404).json({ error: "Account not found. Please sign up first." });
 
-    return res.json({ phone, ...resendState(customer) });
+    return res.json({ phone, ...(await resendState(customer)) });
   } catch (error) {
     console.error("OTP status failed:", error);
     return res.status(500).json({ error: "Could not check that number." });
@@ -1053,9 +1249,9 @@ router.post("/customer/resend-otp", async (req, res) => {
       return res.status(409).json({ error: "This number is already verified. Please log in." });
     }
 
-    const state = resendState(customer);
+    const state = await resendState(customer);
     if (state.exhausted) {
-      return res.status(429).json({ error: supportMessage, ...state });
+      return res.status(429).json({ error: await supportMessageText(), ...state });
     }
     if (state.cooldown_seconds > 0) {
       return res.status(429).json({
@@ -1088,7 +1284,7 @@ router.post("/customer/resend-otp", async (req, res) => {
       delivery = { mode: "web", sent: false };
     }
 
-    const next = resendState(updated.rows[0]);
+    const next = await resendState(updated.rows[0]);
     return res.json({
       phone,
       otp_mode: delivery.mode,
@@ -1143,10 +1339,10 @@ router.post("/customer/verify-otp", async (req, res) => {
     }
 
     if (customer.otp_expires_at && new Date(customer.otp_expires_at) < new Date()) {
-      const state = resendState(customer);
+      const state = await resendState(customer);
       return res.status(400).json({
         error: state.exhausted
-          ? `That code has expired. ${supportMessage}`
+          ? `That code has expired. ${await supportMessageText()}`
           : "That code has expired. Tap “Resend code” to get a new one.",
         expired: true,
         ...state,
@@ -1293,6 +1489,18 @@ router.get("/customer/me", requireCustomer, async (req, res) => {
   }
 });
 
+router.get("/customer/contact", requireCustomer, async (_req, res) => {
+  try {
+    return res.json({
+      phone: (await getSetting(CONTACT_PHONE, "")) || "",
+      email: (await getSetting(CONTACT_EMAIL, "")) || "",
+    });
+  } catch (error) {
+    console.error("Customer contact failed:", error);
+    return res.status(500).json({ error: "Could not load contact details." });
+  }
+});
+
 router.get("/customer/business-groups", requireCustomer, async (_req, res) => {
   try {
     const result = await query(`
@@ -1311,11 +1519,12 @@ router.get("/customer/businesses", requireCustomer, async (req, res) => {
   try {
     const groupId = Number(req.query.group_id);
     const params = [];
-    let where = "";
+    const clauses = ["b.is_active = true"];
     if (Number.isInteger(groupId) && groupId > 0) {
       params.push(groupId);
-      where = `WHERE b.business_group_id = $1`;
+      clauses.push(`b.business_group_id = $${params.length}`);
     }
+    const where = `WHERE ${clauses.join(" AND ")}`;
 
     const result = await query(
       `
@@ -1324,6 +1533,8 @@ router.get("/customer/businesses", requireCustomer, async (req, res) => {
           b.name,
           b.description,
           b.location,
+          b.latitude,
+          b.longitude,
           b.phone,
           b.image_url,
           b.queue_size,
@@ -1338,7 +1549,9 @@ router.get("/customer/businesses", requireCustomer, async (req, res) => {
       `,
       params
     );
-    return res.json(result.rows);
+    return res.json(
+      await Promise.all(result.rows.map((row) => resolveBusinessCoords(row)))
+    );
   } catch (error) {
     console.error("Customer businesses failed:", error);
     return res.status(500).json({ error: "Could not load businesses." });
@@ -1355,6 +1568,8 @@ router.get("/customer/businesses/:id", requireCustomer, async (req, res) => {
           b.name,
           b.description,
           b.location,
+          b.latitude,
+          b.longitude,
           b.phone,
           b.image_url,
           b.queue_size,
@@ -1364,12 +1579,12 @@ router.get("/customer/businesses/:id", requireCustomer, async (req, res) => {
           bg.name AS business_group_name
         FROM businesses b
         INNER JOIN business_groups bg ON bg.id = b.business_group_id
-        WHERE b.id = $1
+        WHERE b.id = $1 AND b.is_active = true
       `,
       [id]
     );
     if (!result.rows[0]) return res.status(404).json({ error: "Business not found." });
-    return res.json(result.rows[0]);
+    return res.json(await resolveBusinessCoords(result.rows[0]));
   } catch (error) {
     console.error("Customer business detail failed:", error);
     return res.status(500).json({ error: "Could not load business." });
@@ -1435,7 +1650,10 @@ router.post("/customer/businesses/:id/queue", requireCustomer, async (req, res) 
       return res.status(400).json({ error: "Invalid business." });
     }
 
-    const business = await query("SELECT id FROM businesses WHERE id = $1", [businessId]);
+    const business = await query(
+      "SELECT id FROM businesses WHERE id = $1 AND is_active = true",
+      [businessId]
+    );
     if (!business.rows[0]) return res.status(404).json({ error: "Business not found." });
 
     const existing = await query(
@@ -1532,7 +1750,10 @@ router.post("/customer/businesses/:id/bookings", requireCustomer, async (req, re
       });
     }
 
-    const business = await query("SELECT id FROM businesses WHERE id = $1", [businessId]);
+    const business = await query(
+      "SELECT id FROM businesses WHERE id = $1 AND is_active = true",
+      [businessId]
+    );
     if (!business.rows[0]) return res.status(404).json({ error: "Business not found." });
 
     const clash = await query(
@@ -1609,6 +1830,440 @@ router.post("/customer/bookings/:id/cancel", requireCustomer, async (req, res) =
   } catch (error) {
     console.error("Cancel booking failed:", error);
     return res.status(500).json({ error: "Could not cancel the booking." });
+  }
+});
+
+/* ---------------------------------------------------------------- vendors */
+
+async function vendorOwnsBusiness(vendorId, businessId) {
+  const result = await query(
+    `
+      SELECT 1 FROM vendor_businesses
+      WHERE vendor_id = $1 AND business_id = $2
+      LIMIT 1
+    `,
+    [vendorId, businessId]
+  );
+  return Boolean(result.rows[0]);
+}
+
+async function replaceVendorBusinesses(vendorId, businessIds) {
+  const ids = [
+    ...new Set(
+      (Array.isArray(businessIds) ? businessIds : [])
+        .map((id) => Number(id))
+        .filter((id) => Number.isInteger(id) && id > 0)
+    ),
+  ];
+
+  if (ids.length) {
+    const existing = await query(
+      `SELECT id FROM businesses WHERE id = ANY($1::int[])`,
+      [ids]
+    );
+    if (existing.rows.length !== ids.length) {
+      const err = new Error("One or more businesses were not found.");
+      err.status = 400;
+      throw err;
+    }
+  }
+
+  await query("DELETE FROM vendor_businesses WHERE vendor_id = $1", [vendorId]);
+  for (const businessId of ids) {
+    await query(
+      `
+        INSERT INTO vendor_businesses (vendor_id, business_id)
+        VALUES ($1, $2)
+        ON CONFLICT DO NOTHING
+      `,
+      [vendorId, businessId]
+    );
+  }
+  return ids;
+}
+
+async function vendorWithBusinesses(vendorId) {
+  const vendor = await query(
+    `
+      SELECT id, username, email, created_at, activated_at
+      FROM vendors WHERE id = $1
+    `,
+    [vendorId]
+  );
+  if (!vendor.rows[0]) return null;
+
+  const businesses = await query(
+    `
+      SELECT b.id, b.name, b.is_active
+      FROM vendor_businesses vb
+      INNER JOIN businesses b ON b.id = vb.business_id
+      WHERE vb.vendor_id = $1
+      ORDER BY b.name ASC
+    `,
+    [vendorId]
+  );
+
+  return { ...vendor.rows[0], businesses: businesses.rows };
+}
+
+router.post("/vendor/login", async (req, res) => {
+  try {
+    const username = String(req.body?.username || req.body?.email || "").trim();
+    const password = String(req.body?.password || "");
+    if (!username || !password) {
+      return res.status(400).json({ error: "Username (or email) and password are required." });
+    }
+
+    const session = await vendorLogin(username, password);
+    if (!session) {
+      return res.status(401).json({ error: "Invalid username or password." });
+    }
+    return res.json(session);
+  } catch (error) {
+    console.error("Vendor login failed:", error);
+    return res.status(500).json({ error: "Login failed." });
+  }
+});
+
+router.get("/vendor/me", requireVendor, async (req, res) => {
+  try {
+    const result = await query(
+      `
+        SELECT id, username, email, created_at, activated_at
+        FROM vendors WHERE id = $1
+      `,
+      [req.vendor.sub]
+    );
+    if (!result.rows[0]) return res.status(404).json({ error: "Vendor not found." });
+    return res.json(result.rows[0]);
+  } catch (error) {
+    console.error("Vendor me failed:", error);
+    return res.status(500).json({ error: "Could not load profile." });
+  }
+});
+
+router.get("/vendor/businesses", requireVendor, async (req, res) => {
+  try {
+    const result = await query(
+      `
+        SELECT
+          b.id,
+          b.name,
+          b.location,
+          b.phone,
+          b.image_url,
+          b.queue_size,
+          b.avg_wait_minutes,
+          b.is_active,
+          bg.name AS business_group_name,
+          (
+            SELECT COUNT(*)::int FROM queue_entries qe
+            WHERE qe.business_id = b.id AND qe.status = 'waiting'
+          ) AS app_waiting
+        FROM vendor_businesses vb
+        INNER JOIN businesses b ON b.id = vb.business_id
+        INNER JOIN business_groups bg ON bg.id = b.business_group_id
+        WHERE vb.vendor_id = $1
+        ORDER BY b.name ASC
+      `,
+      [req.vendor.sub]
+    );
+
+    return res.json(
+      result.rows.map((row) => ({
+        ...row,
+        waiting_total: (row.queue_size || 0) + (row.app_waiting || 0),
+      }))
+    );
+  } catch (error) {
+    console.error("Vendor businesses failed:", error);
+    return res.status(500).json({ error: "Could not load businesses." });
+  }
+});
+
+router.get("/vendor/businesses/:id/queue", requireVendor, async (req, res) => {
+  try {
+    const businessId = Number(req.params.id);
+    if (!Number.isInteger(businessId) || businessId < 1) {
+      return res.status(400).json({ error: "Invalid business." });
+    }
+    if (!(await vendorOwnsBusiness(req.vendor.sub, businessId))) {
+      return res.status(403).json({ error: "You do not manage this business." });
+    }
+
+    const business = await query(
+      `
+        SELECT
+          b.id, b.name, b.location, b.queue_size, b.avg_wait_minutes, b.is_active,
+          bg.name AS business_group_name
+        FROM businesses b
+        INNER JOIN business_groups bg ON bg.id = b.business_group_id
+        WHERE b.id = $1
+      `,
+      [businessId]
+    );
+    if (!business.rows[0]) return res.status(404).json({ error: "Business not found." });
+
+    const entries = await query(
+      `
+        SELECT
+          qe.id,
+          qe.business_id,
+          qe.joined_at,
+          qe.booking_id,
+          c.first_name AS customer_first_name,
+          c.phone AS customer_phone,
+          b.name AS business_name,
+          b.image_url,
+          b.location,
+          b.avg_wait_minutes,
+          b.queue_size AS walk_in_baseline,
+          bg.name AS business_group_name,
+          (
+            SELECT COUNT(*)::int
+            FROM queue_entries ahead
+            WHERE ahead.business_id = qe.business_id
+              AND ahead.status = 'waiting'
+              AND ahead.joined_at < qe.joined_at
+          ) AS app_customers_ahead,
+          (
+            SELECT COUNT(*)::int
+            FROM queue_entries total
+            WHERE total.business_id = qe.business_id
+              AND total.status = 'waiting'
+          ) AS app_queue_length
+        FROM queue_entries qe
+        INNER JOIN customers c ON c.id = qe.customer_id
+        INNER JOIN businesses b ON b.id = qe.business_id
+        INNER JOIN business_groups bg ON bg.id = b.business_group_id
+        WHERE qe.business_id = $1 AND qe.status = 'waiting'
+        ORDER BY qe.joined_at ASC
+      `,
+      [businessId]
+    );
+
+    const decorated = entries.rows.map(decorateQueueEntry);
+    const biz = business.rows[0];
+    return res.json({
+      business: {
+        ...biz,
+        waiting_total: (biz.queue_size || 0) + decorated.length,
+        app_waiting: decorated.length,
+      },
+      entries: decorated,
+    });
+  } catch (error) {
+    console.error("Vendor queue failed:", error);
+    return res.status(500).json({ error: "Could not load the queue." });
+  }
+});
+
+async function closeVendorQueueEntry(req, res, status) {
+  try {
+    const entryId = Number(req.params.id);
+    if (!Number.isInteger(entryId) || entryId < 1) {
+      return res.status(400).json({ error: "Invalid queue entry." });
+    }
+
+    const entry = await query(
+      `
+        SELECT qe.id, qe.business_id, qe.status
+        FROM queue_entries qe
+        INNER JOIN vendor_businesses vb
+          ON vb.business_id = qe.business_id AND vb.vendor_id = $2
+        WHERE qe.id = $1
+        LIMIT 1
+      `,
+      [entryId, req.vendor.sub]
+    );
+    if (!entry.rows[0]) return res.status(404).json({ error: "Queue entry not found." });
+    if (entry.rows[0].status !== "waiting") {
+      return res.status(409).json({ error: "That customer is no longer waiting." });
+    }
+
+    const updated = await query(
+      `
+        UPDATE queue_entries
+        SET status = $1, left_at = NOW()
+        WHERE id = $2 AND status = 'waiting'
+        RETURNING id, business_id, status, left_at
+      `,
+      [status, entryId]
+    );
+    if (!updated.rows[0]) {
+      return res.status(409).json({ error: "That customer is no longer waiting." });
+    }
+    return res.json({ ok: true, ...updated.rows[0] });
+  } catch (error) {
+    console.error(`Vendor queue ${status} failed:`, error);
+    return res.status(500).json({ error: "Could not update the queue." });
+  }
+}
+
+router.post("/vendor/queue/:id/serve", requireVendor, (req, res) =>
+  closeVendorQueueEntry(req, res, "served")
+);
+
+router.post("/vendor/queue/:id/no-show", requireVendor, (req, res) =>
+  closeVendorQueueEntry(req, res, "no_show")
+);
+
+router.put("/vendor/businesses/:id/walk-ins", requireVendor, async (req, res) => {
+  try {
+    const businessId = Number(req.params.id);
+    const queueSize = Number(req.body?.queue_size);
+    if (!Number.isInteger(businessId) || businessId < 1) {
+      return res.status(400).json({ error: "Invalid business." });
+    }
+    if (!Number.isFinite(queueSize) || queueSize < 0 || queueSize > 500) {
+      return res.status(400).json({ error: "Walk-in count must be between 0 and 500." });
+    }
+    if (!(await vendorOwnsBusiness(req.vendor.sub, businessId))) {
+      return res.status(403).json({ error: "You do not manage this business." });
+    }
+
+    const result = await query(
+      `
+        UPDATE businesses
+        SET queue_size = $1
+        WHERE id = $2
+        RETURNING id, name, queue_size, avg_wait_minutes
+      `,
+      [Math.round(queueSize), businessId]
+    );
+    if (!result.rows[0]) return res.status(404).json({ error: "Business not found." });
+    return res.json(result.rows[0]);
+  } catch (error) {
+    console.error("Vendor walk-ins update failed:", error);
+    return res.status(500).json({ error: "Could not update walk-ins." });
+  }
+});
+
+/* -------------------------------------------------------- admin vendors */
+
+router.get("/admins/vendors", requireAdmin, async (_req, res) => {
+  try {
+    const vendors = await query(
+      `
+        SELECT id, username, email, created_at, activated_at
+        FROM vendors
+        ORDER BY created_at DESC
+      `
+    );
+
+    const links = await query(
+      `
+        SELECT vb.vendor_id, b.id, b.name, b.is_active
+        FROM vendor_businesses vb
+        INNER JOIN businesses b ON b.id = vb.business_id
+        ORDER BY b.name ASC
+      `
+    );
+
+    const byVendor = new Map();
+    for (const link of links.rows) {
+      if (!byVendor.has(link.vendor_id)) byVendor.set(link.vendor_id, []);
+      byVendor.get(link.vendor_id).push({
+        id: link.id,
+        name: link.name,
+        is_active: link.is_active,
+      });
+    }
+
+    return res.json(
+      vendors.rows.map((vendor) => ({
+        ...vendor,
+        businesses: byVendor.get(vendor.id) || [],
+      }))
+    );
+  } catch (error) {
+    console.error("List vendors failed:", error);
+    return res.status(500).json({ error: "Could not load vendors." });
+  }
+});
+
+router.post("/admins/vendors", requireAdmin, async (req, res) => {
+  try {
+    const username = String(req.body?.username || "").trim().toLowerCase();
+    const email = String(req.body?.email || "").trim().toLowerCase();
+    const password = String(req.body?.password || "");
+    const businessIds = req.body?.business_ids;
+
+    if (!username || username.length < 3) {
+      return res.status(400).json({ error: "Username must be at least 3 characters." });
+    }
+    if (email && !EMAIL_RE.test(email)) {
+      return res.status(400).json({ error: "Enter a valid email address." });
+    }
+    if (!password || password.length < 6) {
+      return res.status(400).json({ error: "Password must be at least 6 characters." });
+    }
+
+    const hash = await bcrypt.hash(password, 10);
+    const created = await query(
+      `
+        INSERT INTO vendors (username, email, password_hash, activated_at)
+        VALUES ($1, $2, $3, NOW())
+        RETURNING id, username, email, created_at, activated_at
+      `,
+      [username, email || null, hash]
+    );
+
+    await replaceVendorBusinesses(created.rows[0].id, businessIds);
+    return res.status(201).json(await vendorWithBusinesses(created.rows[0].id));
+  } catch (error) {
+    if (error.status === 400) return res.status(400).json({ error: error.message });
+    if (error.code === "23505") {
+      return res.status(409).json({ error: "That username or email is already in use." });
+    }
+    console.error("Create vendor failed:", error);
+    return res.status(500).json({ error: "Could not create vendor." });
+  }
+});
+
+router.put("/admins/vendors/:id", requireAdmin, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id < 1) {
+      return res.status(400).json({ error: "Invalid vendor." });
+    }
+
+    const existing = await query("SELECT id FROM vendors WHERE id = $1", [id]);
+    if (!existing.rows[0]) return res.status(404).json({ error: "Vendor not found." });
+
+    const email =
+      typeof req.body?.email !== "undefined"
+        ? String(req.body.email || "").trim().toLowerCase()
+        : undefined;
+    const password =
+      typeof req.body?.password !== "undefined" ? String(req.body.password || "") : undefined;
+
+    if (email !== undefined && email && !EMAIL_RE.test(email)) {
+      return res.status(400).json({ error: "Enter a valid email address." });
+    }
+    if (password !== undefined && password && password.length < 6) {
+      return res.status(400).json({ error: "Password must be at least 6 characters." });
+    }
+
+    if (email !== undefined) {
+      await query(`UPDATE vendors SET email = $1 WHERE id = $2`, [email || null, id]);
+    }
+    if (password) {
+      const hash = await bcrypt.hash(password, 10);
+      await query(`UPDATE vendors SET password_hash = $1 WHERE id = $2`, [hash, id]);
+    }
+    if (typeof req.body?.business_ids !== "undefined") {
+      await replaceVendorBusinesses(id, req.body.business_ids);
+    }
+
+    return res.json(await vendorWithBusinesses(id));
+  } catch (error) {
+    if (error.status === 400) return res.status(400).json({ error: error.message });
+    if (error.code === "23505") {
+      return res.status(409).json({ error: "That email is already in use." });
+    }
+    console.error("Update vendor failed:", error);
+    return res.status(500).json({ error: "Could not update vendor." });
   }
 });
 

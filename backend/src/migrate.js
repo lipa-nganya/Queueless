@@ -64,6 +64,18 @@ export async function migrate() {
     ALTER TABLE businesses ADD COLUMN IF NOT EXISTS queue_size INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE businesses ADD COLUMN IF NOT EXISTS avg_wait_minutes INTEGER NOT NULL DEFAULT 15;
 
+    -- Soft on/off for the customer site. Existing rows stay visible; new ones
+    -- start inactive so an admin must activate them before customers see them.
+    ALTER TABLE businesses ADD COLUMN IF NOT EXISTS is_active BOOLEAN;
+    UPDATE businesses SET is_active = true WHERE is_active IS NULL;
+    ALTER TABLE businesses ALTER COLUMN is_active SET DEFAULT false;
+    ALTER TABLE businesses ALTER COLUMN is_active SET NOT NULL;
+
+    -- Coordinates for customer "X minutes away". Filled when an admin picks
+    -- a Kenya place from Photon autocomplete.
+    ALTER TABLE businesses ADD COLUMN IF NOT EXISTS latitude DOUBLE PRECISION;
+    ALTER TABLE businesses ADD COLUMN IF NOT EXISTS longitude DOUBLE PRECISION;
+
     ALTER TABLE admins ADD COLUMN IF NOT EXISTS email TEXT;
     ALTER TABLE admins ADD COLUMN IF NOT EXISTS invite_token_hash TEXT;
     ALTER TABLE admins ADD COLUMN IF NOT EXISTS invite_expires_at TIMESTAMPTZ;
@@ -109,6 +121,28 @@ export async function migrate() {
     CREATE INDEX IF NOT EXISTS bookings_customer_upcoming
       ON bookings (customer_id, scheduled_for)
       WHERE status = 'booked';
+
+    CREATE TABLE IF NOT EXISTS vendors (
+      id SERIAL PRIMARY KEY,
+      username TEXT NOT NULL UNIQUE,
+      email TEXT,
+      password_hash TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      activated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS vendors_email_unique
+      ON vendors (lower(email))
+      WHERE email IS NOT NULL;
+
+    CREATE TABLE IF NOT EXISTS vendor_businesses (
+      vendor_id INTEGER NOT NULL REFERENCES vendors(id) ON DELETE CASCADE,
+      business_id INTEGER NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+      PRIMARY KEY (vendor_id, business_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS vendor_businesses_business_id
+      ON vendor_businesses (business_id);
   `);
 }
 
@@ -129,5 +163,83 @@ export async function seedAdmin() {
         activated_at = COALESCE(admins.activated_at, NOW())
     `,
     [username, email, hash]
+  );
+}
+
+/** Canonical customer-facing groups from the brand icon sheet. */
+const CANONICAL_GROUPS = [
+  { name: "Beauty & Wellness", icon: "beauty" },
+  { name: "Healthcare", icon: "healthcare" },
+  { name: "Financial Services", icon: "financial" },
+  { name: "Automotive", icon: "automotive" },
+  { name: "Hospitality", icon: "hospitality" },
+  { name: "Government & Public Services", icon: "government" },
+  { name: "Education Services", icon: "education" },
+  { name: "Retail & Telecom", icon: "retail" },
+  { name: "Professional Services", icon: "professional" },
+  { name: "Travel & Transport", icon: "travel" },
+  { name: "Entertainment & Recreation", icon: "entertainment" },
+];
+
+export async function seedBusinessGroups() {
+  for (const group of CANONICAL_GROUPS) {
+    await query(
+      `
+        INSERT INTO business_groups (name, icon)
+        VALUES ($1, $2)
+        ON CONFLICT (name)
+        DO UPDATE SET icon = EXCLUDED.icon
+      `,
+      [group.name, group.icon]
+    );
+  }
+
+  await query(`UPDATE business_groups SET icon = 'beauty' WHERE icon IN ('scissors', 'salon')`);
+  await query(`UPDATE business_groups SET icon = 'healthcare' WHERE icon IN ('clinic', 'pharmacy')`);
+  await query(`UPDATE business_groups SET icon = 'financial' WHERE icon = 'bank'`);
+  await query(`UPDATE business_groups SET icon = 'automotive' WHERE icon = 'car'`);
+  await query(`UPDATE business_groups SET icon = 'hospitality' WHERE icon = 'restaurant'`);
+  await query(`UPDATE business_groups SET icon = 'retail' WHERE icon IN ('shop', 'phone')`);
+  await query(`UPDATE business_groups SET icon = 'entertainment' WHERE icon = 'fitness'`);
+}
+export async function seedVendor() {
+  const username = process.env.VENDOR_USERNAME || "vendor";
+  const password = process.env.VENDOR_PASSWORD || "vendor123";
+  const email = (process.env.VENDOR_EMAIL || "vendor@queueless.co.ke").toLowerCase();
+  const hash = await bcrypt.hash(password, 10);
+
+  const vendor = await query(
+    `
+      INSERT INTO vendors (username, email, password_hash, activated_at)
+      VALUES ($1, $2, $3, NOW())
+      ON CONFLICT (username)
+      DO UPDATE SET
+        password_hash = EXCLUDED.password_hash,
+        email = COALESCE(vendors.email, EXCLUDED.email),
+        activated_at = COALESCE(vendors.activated_at, NOW())
+      RETURNING id
+    `,
+    [username, email, hash]
+  );
+
+  const vendorId = vendor.rows[0]?.id;
+  if (!vendorId) return;
+
+  const linked = await query(
+    "SELECT 1 FROM vendor_businesses WHERE vendor_id = $1 LIMIT 1",
+    [vendorId]
+  );
+  if (linked.rows[0]) return;
+
+  const business = await query("SELECT id FROM businesses ORDER BY id ASC LIMIT 1");
+  if (!business.rows[0]) return;
+
+  await query(
+    `
+      INSERT INTO vendor_businesses (vendor_id, business_id)
+      VALUES ($1, $2)
+      ON CONFLICT DO NOTHING
+    `,
+    [vendorId, business.rows[0].id]
   );
 }

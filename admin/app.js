@@ -1,3 +1,5 @@
+import { GROUP_ICON_KEYS, GROUP_ICON_LABELS, groupIconSvg } from "./group-icons.js";
+
 // Empty origin keeps the same-origin "/api" used when the backend serves this UI.
 const API_ORIGIN = window.QUEUELESS_API_ORIGIN || "";
 const API_BASE = `${API_ORIGIN}/api`;
@@ -13,28 +15,135 @@ function resolveImageUrl(imageUrl) {
 
 const app = document.getElementById("app");
 
-// Keys must match GROUP_ICONS in the backend and the icon set in the customer app.
-const GROUP_ICONS = {
-  scissors: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><path d="M8.2 7.8 20 18M8.2 16.2 20 6"/></svg>`,
-  salon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="3.2"/><path d="M5.5 19.5c1.4-3.2 3.7-4.8 6.5-4.8s5.1 1.6 6.5 4.8"/></svg>`,
-  clinic: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M12 8v8M8 12h8"/></svg>`,
-  pharmacy: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="8"/><path d="M12 8v8M8 12h8"/></svg>`,
-  bank: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 10h16M6 10v8M10 10v8M14 10v8M18 10v8M3 18h18M12 4l9 6H3l9-6Z"/></svg>`,
-  government: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3.5 19 6v5.5c0 4-2.9 7.3-7 8.9-4.1-1.6-7-4.9-7-8.9V6l7-2.5Z"/></svg>`,
-  restaurant: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 3v6a2 2 0 0 0 4 0V3M8 11v10M17 3c-1.2 1.6-2 3.4-2 5.2 0 1.6.8 2.6 2 2.8v10"/></svg>`,
-  shop: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 8h14l-1 12H6L5 8Z"/><path d="M9 8V6a3 3 0 0 1 6 0v2"/></svg>`,
-  car: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 15v-2.5L6 8h12l2 4.5V15H4Z"/><circle cx="7.5" cy="15.5" r="1.5"/><circle cx="16.5" cy="15.5" r="1.5"/></svg>`,
-  education: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m12 5 9 4-9 4-9-4 9-4Z"/><path d="M7 11v4c0 1.4 2.2 2.5 5 2.5s5-1.1 5-2.5v-4"/></svg>`,
-  fitness: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 9v6M7 7v10M17 7v10M20 9v6M7 12h10"/></svg>`,
-  phone: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="7" y="3" width="10" height="18" rx="2.5"/><path d="M11 18h2"/></svg>`,
-  more: `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="6" cy="6" r="1.5"/><circle cx="12" cy="6" r="1.5"/><circle cx="18" cy="6" r="1.5"/><circle cx="6" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="18" cy="12" r="1.5"/><circle cx="6" cy="18" r="1.5"/><circle cx="12" cy="18" r="1.5"/><circle cx="18" cy="18" r="1.5"/></svg>`,
-};
-
 function groupIcon(key) {
-  return GROUP_ICONS[key] || GROUP_ICONS.more;
+  return groupIconSvg(key);
 }
 
 const PIN_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 21s6-5.2 6-10a6 6 0 1 0-12 0c0 4.8 6 10 6 10Z"/><circle cx="12" cy="11" r="2.2"/></svg>`;
+
+/**
+ * Kenya place autocomplete backed by Photon (proxied through /places/search).
+ * Returns a small controller so create/edit can read the picked coordinates.
+ */
+function bindPlaceAutocomplete(input, { listId }) {
+  const state = { latitude: null, longitude: null, pickedLabel: "" };
+  let timer = null;
+  let requestId = 0;
+
+  const wrap = input.closest(".place-field") || input.parentElement;
+  let list = document.getElementById(listId);
+  if (!list) {
+    list = document.createElement("ul");
+    list.id = listId;
+    list.className = "place-suggestions hidden";
+    list.setAttribute("role", "listbox");
+    wrap.classList.add("place-field");
+    wrap.appendChild(list);
+  }
+
+  function hide() {
+    list.classList.add("hidden");
+    list.innerHTML = "";
+  }
+
+  function clearCoords() {
+    state.latitude = null;
+    state.longitude = null;
+    state.pickedLabel = "";
+  }
+
+  function setCoords(place) {
+    state.latitude = place.latitude;
+    state.longitude = place.longitude;
+    state.pickedLabel = place.label;
+  }
+
+  async function search(query) {
+    const id = ++requestId;
+    try {
+      const places = await api(`/places/search?q=${encodeURIComponent(query)}`);
+      if (id !== requestId) return;
+      if (!places.length) {
+        list.innerHTML = `<li class="place-empty">No Kenya places found</li>`;
+        list.classList.remove("hidden");
+        return;
+      }
+      list.innerHTML = places
+        .map(
+          (place, index) => `
+            <li role="option">
+              <button type="button" class="place-option" data-index="${index}">
+                ${PIN_ICON}
+                <span>${escapeHtml(place.label)}</span>
+              </button>
+            </li>
+          `
+        )
+        .join("");
+      list.classList.remove("hidden");
+      list.querySelectorAll(".place-option").forEach((btn) => {
+        btn.addEventListener("mousedown", (event) => {
+          // mousedown fires before blur, so the pick sticks.
+          event.preventDefault();
+          const place = places[Number(btn.dataset.index)];
+          if (!place) return;
+          input.value = place.label;
+          setCoords(place);
+          hide();
+        });
+      });
+    } catch (error) {
+      if (id !== requestId) return;
+      list.innerHTML = `<li class="place-empty">${escapeHtml(error.message || "Search failed")}</li>`;
+      list.classList.remove("hidden");
+    }
+  }
+
+  input.addEventListener("input", () => {
+    const query = input.value.trim();
+    // Typing freely invalidates a previous pick so we never keep stale coords.
+    if (query !== state.pickedLabel) clearCoords();
+    clearTimeout(timer);
+    if (query.length < 2) {
+      hide();
+      return;
+    }
+    timer = setTimeout(() => search(query), 300);
+  });
+
+  input.addEventListener("blur", () => {
+    setTimeout(hide, 150);
+  });
+
+  return {
+    getCoords: () => ({
+      latitude: state.latitude,
+      longitude: state.longitude,
+    }),
+    setFromBusiness: (business) => {
+      input.value = business?.location || "";
+      if (
+        business?.latitude != null &&
+        business?.longitude != null &&
+        Number.isFinite(Number(business.latitude)) &&
+        Number.isFinite(Number(business.longitude))
+      ) {
+        setCoords({
+          label: business.location || "",
+          latitude: Number(business.latitude),
+          longitude: Number(business.longitude),
+        });
+      } else {
+        clearCoords();
+      }
+    },
+    reset: () => {
+      input.value = "";
+      clearCoords();
+      hide();
+    },
+  };
+}
 
 const CUSTOMER_STATUS_LABELS = {
   verified: "Verified",
@@ -49,12 +158,12 @@ function customerStatusLabel(status) {
 function iconPickerHtml(name, selected) {
   return `
     <div class="icon-picker" role="radiogroup" aria-label="Group icon">
-      ${Object.keys(GROUP_ICONS)
+      ${GROUP_ICON_KEYS
         .map(
           (key) => `
-            <label class="icon-option${key === selected ? " selected" : ""}" title="${key}">
+            <label class="icon-option${key === selected ? " selected" : ""}" title="${GROUP_ICON_LABELS[key] || key}">
               <input type="radio" name="${name}" value="${key}"${key === selected ? " checked" : ""} />
-              ${GROUP_ICONS[key]}
+              ${groupIconSvg(key)}
             </label>
           `
         )
@@ -179,6 +288,7 @@ function shell(active, content) {
           <button type="button" data-view="customers" class="${active === "customers" ? "active" : ""}">Customers</button>
           <button type="button" data-view="groups" class="${active === "groups" ? "active" : ""}">Business groups</button>
           <button type="button" data-view="businesses" class="${active === "businesses" ? "active" : ""}">Businesses</button>
+          <button type="button" data-view="vendors" class="${active === "vendors" ? "active" : ""}">Vendors</button>
           <button type="button" data-view="admins" class="${active === "admins" ? "active" : ""}">Admins</button>
           <button type="button" data-view="settings" class="${active === "settings" ? "active" : ""}">Settings</button>
         </nav>
@@ -392,7 +502,7 @@ async function renderGroups() {
       <div class="main-header">
         <div>
           <h2>Business groups</h2>
-          <p>Create categories like Barber Shop, Clinic, or Salon.</p>
+          <p>Create the categories customers browse, using the brand group icons.</p>
         </div>
       </div>
       <section class="panel">
@@ -401,13 +511,13 @@ async function renderGroups() {
           <div class="form-row">
             <div class="field" style="margin-top:0">
               <label for="group-name">Name</label>
-              <input id="group-name" name="name" placeholder="e.g. Barber Shop" required />
+              <input id="group-name" name="name" placeholder="e.g. Beauty & Wellness" required />
             </div>
             <button class="btn btn-primary" type="submit">Create</button>
           </div>
           <div class="field">
             <label>Icon</label>
-            ${iconPickerHtml("icon", "scissors")}
+            ${iconPickerHtml("icon", "beauty")}
           </div>
         </form>
         <p class="message" id="page-message" role="status"></p>
@@ -592,16 +702,22 @@ async function renderBusinesses() {
       </div>
       <section class="panel">
         <h3>Create business</h3>
-        <form class="form-row two" id="business-form">
-          <div class="field" style="margin-top:0">
-            <label for="business-name">Name</label>
-            <input id="business-name" name="name" placeholder="e.g. J's Shaves" required />
+        <form id="business-form">
+          <div class="form-row two">
+            <div class="field" style="margin-top:0">
+              <label for="business-name">Name</label>
+              <input id="business-name" name="name" placeholder="e.g. J's Shaves" required />
+            </div>
+            <div class="field" style="margin-top:0">
+              <label for="business-group">Business group</label>
+              <select id="business-group" name="business_group_id" required>
+                <option value="">Select group</option>
+              </select>
+            </div>
           </div>
-          <div class="field" style="margin-top:0">
-            <label for="business-group">Business group</label>
-            <select id="business-group" name="business_group_id" required>
-              <option value="">Select group</option>
-            </select>
+          <div class="field place-field">
+            <label for="business-location">Location</label>
+            <input id="business-location" name="location" placeholder="Start typing a Kenya place…" autocomplete="off" />
           </div>
           <button class="btn btn-primary" type="submit">Create</button>
         </form>
@@ -647,9 +763,9 @@ async function renderBusinesses() {
                     <option value="">Select group</option>
                   </select>
                 </div>
-                <div class="field">
+                <div class="field place-field">
                   <label for="edit-location">Location</label>
-                  <input id="edit-location" name="location" placeholder="e.g. Tom Mboya St, Nairobi" />
+                  <input id="edit-location" name="location" placeholder="Start typing a Kenya place…" autocomplete="off" />
                 </div>
                 <div class="field">
                   <label for="edit-phone">Phone</label>
@@ -658,6 +774,18 @@ async function renderBusinesses() {
                 <div class="field field-wide">
                   <label for="edit-description">Description</label>
                   <textarea id="edit-description" name="description" rows="3" placeholder="Short description of the business…"></textarea>
+                </div>
+                <div class="field field-wide">
+                  <div class="setting-row" style="padding:0.85rem 0;border:none">
+                    <div class="setting-copy">
+                      <div class="setting-title">Active on customer site</div>
+                      <p class="setting-desc">Inactive businesses stay hidden from customers until you activate them.</p>
+                    </div>
+                    <label class="switch">
+                      <input type="checkbox" id="edit-active" name="is_active" />
+                      <span class="switch-track"><span class="switch-thumb"></span></span>
+                    </label>
+                  </div>
                 </div>
               </div>
               <div class="edit-actions">
@@ -686,6 +814,13 @@ async function renderBusinesses() {
 
   let editingId = null;
   let allGroups = [];
+  let businessesById = new Map();
+  const createPlace = bindPlaceAutocomplete(document.getElementById("business-location"), {
+    listId: "create-place-suggestions",
+  });
+  const editPlace = bindPlaceAutocomplete(document.getElementById("edit-location"), {
+    listId: "edit-place-suggestions",
+  });
 
   function openEditPanel(business) {
     editingId = business.id;
@@ -696,8 +831,9 @@ async function renderBusinesses() {
 
     editForm.elements["name"].value = business.name || "";
     editForm.elements["description"].value = business.description || "";
-    editForm.elements["location"].value = business.location || "";
     editForm.elements["phone"].value = business.phone || "";
+    document.getElementById("edit-active").checked = Boolean(business.is_active);
+    editPlace.setFromBusiness(business);
 
     editGroup.innerHTML =
       `<option value="">Select group</option>` +
@@ -739,6 +875,7 @@ async function renderBusinesses() {
     const btn = editForm.querySelector("button[type=submit]");
     btn.disabled = true;
     try {
+      const coords = editPlace.getCoords();
       const updated = await api(`/businesses/${editingId}`, {
         method: "PUT",
         body: JSON.stringify({
@@ -747,12 +884,16 @@ async function renderBusinesses() {
           description: data.description,
           location: data.location,
           phone: data.phone,
+          latitude: coords.latitude,
+          longitude: coords.longitude,
+          is_active: document.getElementById("edit-active").checked,
         }),
       });
       editMessage.textContent = "Saved.";
       editMessage.classList.add("success");
       await loadBusinesses();
-      // update preview if name changed
+      // Keep the autocomplete state in sync with what the server stored.
+      editPlace.setFromBusiness(updated);
       editForm.elements["name"].value = updated.name;
     } catch (err) {
       editMessage.textContent = err.message;
@@ -802,6 +943,7 @@ async function renderBusinesses() {
 
   async function loadBusinesses() {
     const businesses = await api("/businesses");
+    businessesById = new Map(businesses.map((business) => [Number(business.id), business]));
     if (!businesses.length) {
       table.innerHTML = `<p class="empty">No businesses yet.</p>`;
       return;
@@ -816,6 +958,7 @@ async function renderBusinesses() {
             <th>Business</th>
             <th>Group</th>
             <th>Location</th>
+            <th>Status</th>
             <th>Created</th>
             <th></th>
           </tr>
@@ -847,16 +990,14 @@ async function renderBusinesses() {
                       ? `<span class="cell-location">${PIN_ICON}${escapeHtml(business.location)}</span>`
                       : `<span class="muted">—</span>`}
                   </td>
+                  <td>
+                    <span class="status-pill ${business.is_active ? "status-active" : "status-inactive"}">
+                      ${business.is_active ? "Active" : "Inactive"}
+                    </span>
+                  </td>
                   <td class="muted cell-date">${formatDate(business.created_at)}</td>
                   <td class="row-actions">
-                    <button class="btn btn-secondary btn-sm edit-btn"
-                      data-id="${business.id}"
-                      data-name="${escapeHtml(business.name)}"
-                      data-group="${business.business_group_id}"
-                      data-description="${escapeHtml(business.description || "")}"
-                      data-location="${escapeHtml(business.location || "")}"
-                      data-phone="${escapeHtml(business.phone || "")}"
-                      data-image="${escapeHtml(business.image_url || "")}">
+                    <button class="btn btn-secondary btn-sm edit-btn" data-id="${business.id}">
                       Edit
                     </button>
                   </td>
@@ -870,15 +1011,8 @@ async function renderBusinesses() {
 
     table.querySelectorAll(".edit-btn").forEach((btn) => {
       btn.addEventListener("click", () => {
-        openEditPanel({
-          id: Number(btn.dataset.id),
-          name: btn.dataset.name,
-          business_group_id: Number(btn.dataset.group),
-          description: btn.dataset.description,
-          location: btn.dataset.location,
-          phone: btn.dataset.phone,
-          image_url: btn.dataset.image,
-        });
+        const business = businessesById.get(Number(btn.dataset.id));
+        if (business) openEditPanel(business);
       });
     });
   }
@@ -887,6 +1021,7 @@ async function renderBusinesses() {
     event.preventDefault();
     const form = event.currentTarget;
     const data = Object.fromEntries(new FormData(form).entries());
+    const coords = createPlace.getCoords();
     message.textContent = "";
     message.classList.remove("success");
 
@@ -896,11 +1031,15 @@ async function renderBusinesses() {
         body: JSON.stringify({
           name: data.name,
           business_group_id: Number(data.business_group_id),
+          location: data.location,
+          latitude: coords.latitude,
+          longitude: coords.longitude,
         }),
       });
       form.reset();
+      createPlace.reset();
       await loadGroupsIntoSelect();
-      message.textContent = "Business created.";
+      message.textContent = "Business created as inactive. Activate it when ready for customers.";
       message.classList.add("success");
       await loadBusinesses();
     } catch (error) {
@@ -942,6 +1081,257 @@ async function publicApi(path, options = {}) {
     throw new Error(data.error || "Request failed.");
   }
   return data;
+}
+
+async function renderVendors() {
+  app.innerHTML = shell(
+    "vendors",
+    `
+      <div class="main-header">
+        <div>
+          <h2>Vendors</h2>
+          <p>Create vendor logins and assign the businesses they manage.</p>
+        </div>
+      </div>
+      <section class="panel">
+        <h3>Create vendor</h3>
+        <form id="vendor-form">
+          <div class="form-row two">
+            <div class="field" style="margin-top:0">
+              <label for="vendor-username">Username</label>
+              <input id="vendor-username" name="username" placeholder="e.g. js_shaves" required minlength="3" />
+            </div>
+            <div class="field" style="margin-top:0">
+              <label for="vendor-email">Email (optional)</label>
+              <input id="vendor-email" name="email" type="email" placeholder="owner@business.com" />
+            </div>
+            <div class="field" style="margin-top:0">
+              <label for="vendor-password">Password</label>
+              <input id="vendor-password" name="password" type="password" required minlength="6" autocomplete="new-password" />
+            </div>
+          </div>
+          <div class="field">
+            <label>Businesses</label>
+            <div class="check-grid" id="vendor-businesses"></div>
+          </div>
+          <button class="btn btn-primary" type="submit">Create vendor</button>
+        </form>
+        <p class="message" id="page-message" role="status"></p>
+      </section>
+      <div class="table-wrap" id="vendors-table"></div>
+
+      <div id="vendor-edit-overlay" class="edit-overlay hidden" role="dialog" aria-modal="true" aria-label="Edit vendor">
+        <div class="edit-drawer">
+          <div class="edit-drawer-header">
+            <h3>Edit vendor</h3>
+            <button type="button" class="btn-icon" id="vendor-edit-close" aria-label="Close">✕</button>
+          </div>
+          <form id="vendor-edit-form">
+            <div class="field">
+              <label>Username</label>
+              <input id="vendor-edit-username" disabled />
+            </div>
+            <div class="field">
+              <label for="vendor-edit-email">Email</label>
+              <input id="vendor-edit-email" name="email" type="email" />
+            </div>
+            <div class="field">
+              <label for="vendor-edit-password">New password (optional)</label>
+              <input id="vendor-edit-password" name="password" type="password" minlength="6" autocomplete="new-password" />
+            </div>
+            <div class="field">
+              <label>Businesses</label>
+              <div class="check-grid" id="vendor-edit-businesses"></div>
+            </div>
+            <div class="edit-actions">
+              <p class="message" id="vendor-edit-message" role="status"></p>
+              <button class="btn btn-primary" type="submit">Save changes</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    `
+  );
+  bindShellNav();
+
+  const message = document.getElementById("page-message");
+  const table = document.getElementById("vendors-table");
+  const createChecks = document.getElementById("vendor-businesses");
+  const editOverlay = document.getElementById("vendor-edit-overlay");
+  const editForm = document.getElementById("vendor-edit-form");
+  const editMessage = document.getElementById("vendor-edit-message");
+  const editChecks = document.getElementById("vendor-edit-businesses");
+  let allBusinesses = [];
+  let editingId = null;
+  let vendorsById = new Map();
+
+  function businessChecksHtml(containerId, selectedIds = []) {
+    const selected = new Set(selectedIds.map(Number));
+    if (!allBusinesses.length) {
+      return `<p class="muted">Create a business first.</p>`;
+    }
+    return allBusinesses
+      .map(
+        (business) => `
+          <label class="check-chip">
+            <input type="checkbox" name="${containerId}" value="${business.id}" ${selected.has(Number(business.id)) ? "checked" : ""} />
+            <span>${escapeHtml(business.name)}</span>
+          </label>
+        `
+      )
+      .join("");
+  }
+
+  function selectedBusinessIds(root) {
+    return [...root.querySelectorAll("input[type=checkbox]:checked")].map((el) => Number(el.value));
+  }
+
+  function openEdit(vendor) {
+    editingId = vendor.id;
+    editMessage.textContent = "";
+    editMessage.classList.remove("success");
+    document.getElementById("vendor-edit-username").value = vendor.username || "";
+    document.getElementById("vendor-edit-email").value = vendor.email || "";
+    document.getElementById("vendor-edit-password").value = "";
+    editChecks.innerHTML = businessChecksHtml(
+      "edit-biz",
+      (vendor.businesses || []).map((b) => b.id)
+    );
+    editOverlay.classList.remove("hidden");
+    document.body.style.overflow = "hidden";
+  }
+
+  function closeEdit() {
+    editOverlay.classList.add("hidden");
+    document.body.style.overflow = "";
+    editingId = null;
+  }
+
+  document.getElementById("vendor-edit-close").addEventListener("click", closeEdit);
+  editOverlay.addEventListener("click", (e) => {
+    if (e.target === editOverlay) closeEdit();
+  });
+
+  async function loadVendors() {
+    const vendors = await api("/admins/vendors");
+    vendorsById = new Map(vendors.map((v) => [Number(v.id), v]));
+    if (!vendors.length) {
+      table.innerHTML = `<p class="empty">No vendors yet.</p>`;
+      return;
+    }
+
+    table.innerHTML = `
+      <table>
+        <thead>
+          <tr>
+            <th>Vendor</th>
+            <th>Businesses</th>
+            <th>Created</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          ${vendors
+            .map(
+              (vendor) => `
+                <tr>
+                  <td>
+                    <div class="cell-text">
+                      <span class="cell-title">${escapeHtml(vendor.username)}</span>
+                      <span class="cell-sub">${escapeHtml(vendor.email || "No email")}</span>
+                    </div>
+                  </td>
+                  <td>
+                    ${
+                      vendor.businesses?.length
+                        ? vendor.businesses
+                            .map((b) => `<span class="group-chip">${escapeHtml(b.name)}</span>`)
+                            .join(" ")
+                        : `<span class="muted">None assigned</span>`
+                    }
+                  </td>
+                  <td class="muted cell-date">${formatDate(vendor.created_at)}</td>
+                  <td class="row-actions">
+                    <button class="btn btn-secondary btn-sm vendor-edit-btn" data-id="${vendor.id}">Edit</button>
+                  </td>
+                </tr>
+              `
+            )
+            .join("")}
+        </tbody>
+      </table>
+    `;
+
+    table.querySelectorAll(".vendor-edit-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const vendor = vendorsById.get(Number(btn.dataset.id));
+        if (vendor) openEdit(vendor);
+      });
+    });
+  }
+
+  document.getElementById("vendor-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const data = Object.fromEntries(new FormData(form).entries());
+    message.textContent = "";
+    message.classList.remove("success");
+    try {
+      await api("/admins/vendors", {
+        method: "POST",
+        body: JSON.stringify({
+          username: data.username,
+          email: data.email,
+          password: data.password,
+          business_ids: selectedBusinessIds(createChecks),
+        }),
+      });
+      form.reset();
+      createChecks.innerHTML = businessChecksHtml("create-biz");
+      message.textContent = "Vendor created.";
+      message.classList.add("success");
+      await loadVendors();
+    } catch (error) {
+      message.textContent = error.message;
+    }
+  });
+
+  editForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!editingId) return;
+    const data = Object.fromEntries(new FormData(editForm).entries());
+    editMessage.textContent = "";
+    editMessage.classList.remove("success");
+    const btn = editForm.querySelector("button[type=submit]");
+    btn.disabled = true;
+    try {
+      const payload = {
+        email: data.email,
+        business_ids: selectedBusinessIds(editChecks),
+      };
+      if (data.password) payload.password = data.password;
+      await api(`/admins/vendors/${editingId}`, {
+        method: "PUT",
+        body: JSON.stringify(payload),
+      });
+      editMessage.textContent = "Saved.";
+      editMessage.classList.add("success");
+      await loadVendors();
+      closeEdit();
+    } catch (error) {
+      editMessage.textContent = error.message;
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  try {
+    allBusinesses = await api("/businesses");
+    createChecks.innerHTML = businessChecksHtml("create-biz");
+    await loadVendors();
+  } catch (error) {
+    message.textContent = error.message;
+  }
 }
 
 async function renderAdmins() {
@@ -1263,6 +1653,23 @@ async function renderSettings() {
       </div>
     </div>
 
+    <h3 style="margin-top:2rem">Customer support</h3>
+    <p class="setting-desc" style="margin:0 0 1rem">
+      These details appear on the customer Profile under Contact us, and the
+      phone number is also used when a customer needs support during signup.
+    </p>
+    <form id="contact-form" class="form-row two">
+      <div class="field" style="margin-top:0">
+        <label for="contact-phone">Contact phone</label>
+        <input id="contact-phone" name="contact_phone" value="${escapeHtml(settings.contact_phone || "")}" placeholder="+254712674333" inputmode="tel" />
+      </div>
+      <div class="field" style="margin-top:0">
+        <label for="contact-email">Contact email</label>
+        <input id="contact-email" name="contact_email" type="email" value="${escapeHtml(settings.contact_email || "")}" placeholder="support@queueless.co.ke" />
+      </div>
+      <button class="btn btn-primary" type="submit">Save contact</button>
+    </form>
+
     <p class="message" id="page-message" role="status"></p>
   `;
 
@@ -1301,6 +1708,31 @@ async function renderSettings() {
       setMessage(error.message);
     } finally {
       toggle.disabled = false;
+    }
+  });
+
+  document.getElementById("contact-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const data = Object.fromEntries(new FormData(form).entries());
+    const button = form.querySelector("button[type=submit]");
+    button.disabled = true;
+    setMessage("");
+    try {
+      const saved = await api("/settings", {
+        method: "PUT",
+        body: JSON.stringify({
+          contact_phone: data.contact_phone,
+          contact_email: data.contact_email,
+        }),
+      });
+      form.elements.contact_phone.value = saved.contact_phone || "";
+      form.elements.contact_email.value = saved.contact_email || "";
+      setMessage("Contact details saved. Customers will see them on Profile.", "success");
+    } catch (error) {
+      setMessage(error.message);
+    } finally {
+      button.disabled = false;
     }
   });
 
@@ -1348,6 +1780,10 @@ async function render() {
   }
   if (view === "businesses") {
     await renderBusinesses();
+    return;
+  }
+  if (view === "vendors") {
+    await renderVendors();
     return;
   }
   if (view === "admins") {

@@ -1,4 +1,13 @@
+/**
+ * Admin invite email.
+ *
+ * Resend is preferred because it delivers over HTTPS: hosts such as Railway
+ * block outbound SMTP ports, so nodemailer can only reach a mail server from
+ * a local machine. SMTP is kept as the fallback for development.
+ */
 import nodemailer from "nodemailer";
+
+const RESEND_URL = "https://api.resend.com/emails";
 
 function env(name, fallback = "") {
   return String(process.env[name] ?? fallback).trim();
@@ -17,8 +26,46 @@ function smtpFrom() {
   return env("email_smtp_from") || smtpUser();
 }
 
-function mailConfigured() {
+function resendConfigured() {
+  return Boolean(env("RESEND_API_KEY") && mailFrom());
+}
+
+function smtpConfigured() {
   return Boolean(env("email_smtp_host") && smtpUser() && smtpPass());
+}
+
+/** Resend only accepts senders on a domain verified in the account. */
+function mailFrom() {
+  return env("MAIL_FROM") || smtpFrom();
+}
+
+/**
+ * Resend reports per-message problems in the body rather than only the status,
+ * so a 200 alone is not proof the message was accepted.
+ */
+async function sendViaResend({ to, subject, text, html }) {
+  const response = await fetch(RESEND_URL, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${env("RESEND_API_KEY")}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      from: `${env("MAIL_FROM_NAME", "Queueless Admin")} <${mailFrom()}>`,
+      to: [to],
+      subject,
+      text,
+      html,
+    }),
+    signal: AbortSignal.timeout(15000),
+  });
+
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || payload?.error) {
+    const detail = payload?.error?.message || payload?.message || `HTTP ${response.status}`;
+    throw new Error(detail);
+  }
+  return payload;
 }
 
 function createTransporter() {
@@ -29,6 +76,12 @@ function createTransporter() {
     host: env("email_smtp_host", "smtp.gmail.com"),
     port,
     secure,
+    // Hosts that block outbound SMTP drop the packets rather than refusing
+    // them, so the default timeouts leave the invite request hanging for two
+    // minutes before the caller can fall back to showing the link.
+    connectionTimeout: 8000,
+    greetingTimeout: 8000,
+    socketTimeout: 15000,
     auth: {
       user: smtpUser(),
       pass: smtpPass(),
@@ -75,34 +128,37 @@ export async function sendAdminInviteEmail({ to, inviteUrl, invitedBy }) {
     </div>
   `;
 
-  if (!mailConfigured()) {
+  if (!resendConfigured() && !smtpConfigured()) {
     console.log(`[mail:web] Admin invite for ${to}: ${inviteUrl}`);
     return { mode: "web", inviteUrl };
   }
 
-  const transporter = createTransporter();
-  const fromName = env("MAIL_FROM_NAME", "Queueless Admin");
-  const fromAddress = smtpFrom();
-
   try {
-    await transporter.sendMail({
-      from: `"${fromName}" <${fromAddress}>`,
-      to,
-      subject,
-      text,
-      html,
-    });
+    if (resendConfigured()) {
+      await sendViaResend({ to, subject, text, html });
+    } else {
+      await createTransporter().sendMail({
+        from: `"${env("MAIL_FROM_NAME", "Queueless Admin")}" <${smtpFrom()}>`,
+        to,
+        subject,
+        text,
+        html,
+      });
+    }
   } catch (error) {
     console.error("Invite email send failed:", error);
-    return {
-      mode: "failed",
-      inviteUrl,
-      error:
-        error.code === "EAUTH"
-          ? "SMTP rejected the credentials. Check email_smtp_user and email_smtp_pass (16-character Gmail app password, 2-Step Verification enabled)."
-          : "Could not send the invite email.",
-    };
+    return { mode: "failed", inviteUrl, error: inviteError(error) };
   }
 
   return { mode: "email" };
+}
+
+function inviteError(error) {
+  if (error.code === "EAUTH") {
+    return "SMTP rejected the credentials. Check email_smtp_user and email_smtp_pass (16-character Gmail app password, 2-Step Verification enabled).";
+  }
+  if (error.code === "ETIMEDOUT" || error.code === "ESOCKET" || error.name === "TimeoutError") {
+    return "Could not reach the mail server. Hosts such as Railway block outbound SMTP ports, so send through Resend or share the invite link manually.";
+  }
+  return error.message || "Could not send the invite email.";
 }

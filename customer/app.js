@@ -1,3 +1,5 @@
+import { groupIconSvg, resolveGroupIconKey, ICON_ALIASES, GROUP_ICON_KEYS } from "./group-icons.js";
+
 // Deployed builds read the backend origin from config.js; locally the API runs on :4000.
 const API_ORIGIN =
   window.QUEUELESS_API_ORIGIN ||
@@ -16,11 +18,24 @@ const COUNTRY_CODES = [
 ];
 
 const CATEGORY_ICONS = {
-  barbershop: "scissors",
-  barber: "scissors",
-  salon: "salon",
-  clinic: "clinic",
-  bank: "bank",
+  barbershop: "beauty",
+  barber: "beauty",
+  salon: "beauty",
+  beautywellness: "beauty",
+  clinic: "healthcare",
+  healthcare: "healthcare",
+  bank: "financial",
+  financialservices: "financial",
+  automotive: "automotive",
+  hospitality: "hospitality",
+  governmentpublicservices: "government",
+  government: "government",
+  educationservices: "education",
+  education: "education",
+  retailtelecom: "retail",
+  professionalservices: "professional",
+  traveltransport: "travel",
+  entertainmentrecreation: "entertainment",
   more: "more",
 };
 
@@ -28,16 +43,6 @@ const DEMO_QUEUE = [3, 7, 12, 2, 5, 9, 1, 6];
 const DEMO_WAIT = [15, 25, 35, 20, 18, 30, 10, 22];
 const DEMO_RATING = [4.8, 4.7, 4.6, 4.5, 4.4, 4.9, 4.3, 4.8];
 const DEMO_REVIEWS = [126, 98, 74, 63, 41, 112, 55, 88];
-const DEMO_PLACES = [
-  "Westlands, Nairobi",
-  "Kilimani",
-  "Lavington",
-  "CBD",
-  "Karen",
-  "Parklands",
-  "Ngong Road",
-  "South B",
-];
 const DEMO_IMAGES = [
   "https://images.unsplash.com/photo-1585747863301-d0cb0cf594bb?auto=format&fit=crop&w=600&q=70",
   "https://images.unsplash.com/photo-1622286342621-4bd786c2447c?auto=format&fit=crop&w=600&q=70",
@@ -49,6 +54,11 @@ const DEMO_IMAGES = [
   "https://images.unsplash.com/photo-1556742049-0cfed4f6a45d?auto=format&fit=crop&w=600&q=70",
 ];
 
+const LOCATION_KEY = "queueless_customer_location";
+const WALK_KMH = 5;
+const DRIVE_KMH = 25;
+const WALK_MAX_KM = 1.5;
+
 const app = document.getElementById("app");
 let discoverState = {
   groups: [],
@@ -57,7 +67,120 @@ let discoverState = {
   activeGroupId: null,
   search: "",
   me: null,
+  userLocation: readStoredLocation(),
+  locationError: null,
 };
+
+function readCoord(value) {
+  if (value === null || value === undefined || value === "") return NaN;
+  const n = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(n) ? n : NaN;
+}
+
+function readStoredLocation() {
+  try {
+    const raw = sessionStorage.getItem(LOCATION_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (
+      Number.isFinite(parsed?.latitude) &&
+      Number.isFinite(parsed?.longitude)
+    ) {
+      return {
+        latitude: Number(parsed.latitude),
+        longitude: Number(parsed.longitude),
+        label: parsed.label || "Your location",
+      };
+    }
+  } catch {
+    // Ignore corrupt storage and ask again.
+  }
+  return null;
+}
+
+function storeUserLocation(location) {
+  discoverState.userLocation = location;
+  discoverState.locationError = null;
+  if (!location) {
+    sessionStorage.removeItem(LOCATION_KEY);
+    return;
+  }
+  sessionStorage.setItem(LOCATION_KEY, JSON.stringify(location));
+}
+
+function distanceKm(lat1, lon1, lat2, lon2) {
+  const toRad = (deg) => (deg * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  return 2 * 6371 * Math.asin(Math.sqrt(a));
+}
+
+function travelAway(business, origin) {
+  // Number(null) is 0, which would send every unmapped shop to Null Island
+  // and show the same multi-day "drive" on every card.
+  const lat = readCoord(business?.latitude);
+  const lon = readCoord(business?.longitude);
+  const originLat = readCoord(origin?.latitude);
+  const originLon = readCoord(origin?.longitude);
+  if (![lat, lon, originLat, originLon].every(Number.isFinite)) {
+    return null;
+  }
+  const km = distanceKm(originLat, originLon, lat, lon);
+  if (km <= WALK_MAX_KM) {
+    return {
+      minutes: Math.max(1, Math.round((km / WALK_KMH) * 60)),
+      mode: "walk",
+      label: `${Math.max(1, Math.round((km / WALK_KMH) * 60))} min walk`,
+    };
+  }
+  return {
+    minutes: Math.max(1, Math.round((km / DRIVE_KMH) * 60)),
+    mode: "drive",
+    label: `${Math.max(1, Math.round((km / DRIVE_KMH) * 60))} min drive`,
+  };
+}
+
+function requestUserLocation() {
+  return new Promise((resolve) => {
+    if (!navigator.geolocation) {
+      discoverState.locationError = "Location is not supported on this device.";
+      resolve(null);
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const location = {
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+          label: "Near you",
+        };
+        storeUserLocation(location);
+        resolve(location);
+      },
+      (error) => {
+        discoverState.locationError =
+          error.code === error.PERMISSION_DENIED
+            ? "Location permission denied"
+            : "Could not get your location";
+        resolve(null);
+      },
+      { enableHighAccuracy: false, timeout: 10000, maximumAge: 120000 }
+    );
+  });
+}
+
+function locationButtonLabel() {
+  if (discoverState.userLocation?.label) {
+    return `${icon("pin")} ${escapeHtml(discoverState.userLocation.label)} ${icon("chevron")}`;
+  }
+  if (discoverState.locationError) {
+    return `${icon("pin")} ${escapeHtml(discoverState.locationError)} ${icon("chevron")}`;
+  }
+  return `${icon("pin")} Use my location ${icon("chevron")}`;
+}
 
 function getToken() {
   return localStorage.getItem(TOKEN_KEY);
@@ -273,20 +396,20 @@ function escapeHtml(value) {
 }
 
 function icon(name) {
+  const groupKeys = new Set([
+    ...GROUP_ICON_KEYS,
+    "more",
+    ...Object.keys(ICON_ALIASES),
+  ]);
+  if (groupKeys.has(name)) return groupIconSvg(name);
+
   const icons = {
-    scissors: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><path d="M8.2 7.8 20 18M8.2 16.2 20 6"/></svg>`,
-    salon: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="3.2"/><path d="M5.5 19.5c1.4-3.2 3.7-4.8 6.5-4.8s5.1 1.6 6.5 4.8"/></svg>`,
-    clinic: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M12 8v8M8 12h8"/></svg>`,
-    bank: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 10h16M6 10v8M10 10v8M14 10v8M18 10v8M3 18h18M12 4l9 6H3l9-6Z"/></svg>`,
-    pharmacy: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="8"/><path d="M12 8v8M8 12h8"/></svg>`,
-    government: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3.5 19 6v5.5c0 4-2.9 7.3-7 8.9-4.1-1.6-7-4.9-7-8.9V6l7-2.5Z"/></svg>`,
-    restaurant: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 3v6a2 2 0 0 0 4 0V3M8 11v10M17 3c-1.2 1.6-2 3.4-2 5.2 0 1.6.8 2.6 2 2.8v10"/></svg>`,
-    shop: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 8h14l-1 12H6L5 8Z"/><path d="M9 8V6a3 3 0 0 1 6 0v2"/></svg>`,
-    car: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 15v-2.5L6 8h12l2 4.5V15H4Z"/><circle cx="7.5" cy="15.5" r="1.5"/><circle cx="16.5" cy="15.5" r="1.5"/></svg>`,
-    education: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m12 5 9 4-9 4-9-4 9-4Z"/><path d="M7 11v4c0 1.4 2.2 2.5 5 2.5s5-1.1 5-2.5v-4"/></svg>`,
-    fitness: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 9v6M7 7v10M17 7v10M20 9v6M7 12h10"/></svg>`,
-    phone: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="7" y="3" width="10" height="18" rx="2.5"/><path d="M11 18h2"/></svg>`,
-    more: `<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><circle cx="6" cy="6" r="1.5"/><circle cx="12" cy="6" r="1.5"/><circle cx="18" cy="6" r="1.5"/><circle cx="6" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="18" cy="12" r="1.5"/><circle cx="6" cy="18" r="1.5"/><circle cx="12" cy="18" r="1.5"/><circle cx="18" cy="18" r="1.5"/></svg>`,
+    call: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.37 1.9.72 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.35 1.85.59 2.81.72A2 2 0 0 1 22 16.92Z"/></svg>`,
+    mail: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m4 7 8 6 8-6"/></svg>`,
+    doc: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8l-5-5Z"/><path d="M14 3v5h5M9 13h6M9 17h6"/></svg>`,
+    shield: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5 19 6v5.5c0 4-2.9 7.3-7 8.9-4.1-1.6-7-4.9-7-8.9V6l7-2.5Z"/><path d="m9 12 2 2 4-4"/></svg>`,
+    chevronRight: `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m9 6 6 6-6 6"/></svg>`,
+    more: `<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><circle cx="6" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="18" cy="12" r="1.5"/></svg>`,
     search: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4 4"/></svg>`,
     filter: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16M7 12h10M10 18h4"/></svg>`,
     pin: `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 21s6-5.2 6-10a6 6 0 1 0-12 0c0 4.8 6 10 6 10Z"/><circle cx="12" cy="11" r="2.2"/></svg>`,
@@ -678,15 +801,17 @@ function enrichBusiness(business, index) {
   const i = index % DEMO_IMAGES.length;
   const queueSize = business.queue_size ?? DEMO_QUEUE[i];
   const avgWait = business.avg_wait_minutes ?? DEMO_WAIT[i];
+  const away = travelAway(business, discoverState.userLocation);
   return {
     ...business,
-    place: business.location || DEMO_PLACES[i % DEMO_PLACES.length],
+    place: business.location || "",
     rating: business.rating || DEMO_RATING[i],
     reviews: business.review_count || DEMO_REVIEWS[i],
     queueSize,
     avgWait,
     myEstimate: Math.round((queueSize + 1) * avgWait),
     thumb: resolveImageUrl(business.image_url) || DEMO_IMAGES[i],
+    away,
   };
 }
 
@@ -769,7 +894,16 @@ function renderBusinessCards(list) {
               <img class="biz-thumb" src="${escapeHtml(item.thumb)}" alt="${escapeHtml(item.name)}" loading="lazy" onerror="this.src='data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2270%22 height=%2270%22 fill=%22%23eef0f3%22%3E%3Crect width=%2270%22 height=%2270%22/%3E%3C/svg%3E'" />
               <div class="biz-meta">
                 <h3>${escapeHtml(item.name)}</h3>
-                <div class="place">${icon("pin")} ${escapeHtml(item.place)}</div>
+                ${
+                  item.place
+                    ? `<div class="place">${icon("pin")} ${escapeHtml(item.place)}</div>`
+                    : ""
+                }
+                ${
+                  item.away
+                    ? `<div class="away-line">${escapeHtml(item.away.label)}</div>`
+                    : ""
+                }
                 ${
                   entry
                     ? `<div class="queue-position-line">Your position · ${entry.people_ahead} ahead</div>`
@@ -794,17 +928,11 @@ function bindBizCards() {
 }
 
 function renderDiscoverFrame() {
-  const groups = discoverState.groups.slice(0, 4);
-  const categories = [
-    ...groups.map((group) => ({
-      id: group.id,
-      name: group.name,
-      // Admins pick the icon; fall back to guessing from the name for groups
-      // created before icons existed.
-      iconKey: group.icon || CATEGORY_ICONS[categoryKey(group.name)] || "more",
-    })),
-    { id: "more", name: "More", iconKey: "more" },
-  ];
+  const categories = discoverState.groups.map((group) => ({
+    id: group.id,
+    name: group.name,
+    iconKey: group.icon || CATEGORY_ICONS[categoryKey(group.name)] || "more",
+  }));
 
   const ordered = orderedHomeBusinesses();
   const joinedCount = ordered.filter((business) => business.myQueueEntry).length;
@@ -819,7 +947,7 @@ function renderDiscoverFrame() {
       <div class="home-top">
         <div>
           <h1>Discover Services</h1>
-          <button class="location" type="button">${icon("pin")} Nairobi, Kenya ${icon("chevron")}</button>
+          <button class="location" type="button" id="use-location">${locationButtonLabel()}</button>
         </div>
         <button class="icon-btn" type="button" aria-label="Notifications">${icon("bell")}<span class="dot"></span></button>
       </div>
@@ -858,6 +986,16 @@ function renderDiscoverFrame() {
 
   bindTabs();
   bindBizCards();
+
+  document.getElementById("use-location")?.addEventListener("click", async () => {
+    const button = document.getElementById("use-location");
+    if (button) {
+      button.disabled = true;
+      button.innerHTML = `${icon("pin")} Locating…`;
+    }
+    await requestUserLocation();
+    renderDiscoverFrame();
+  });
 
   document.getElementById("search-input").addEventListener("input", (event) => {
     discoverState.search = event.target.value;
@@ -901,10 +1039,20 @@ async function renderHome() {
     discoverState.businesses = businesses;
     discoverState.myQueue = Array.isArray(myQueue) ? myQueue : [];
     if (!discoverState.activeGroupId && groups.length) {
-      const barber = groups.find((group) =>
-        /barber/i.test(group.name)
+      const beauty = groups.find((group) =>
+        /beauty/i.test(group.name)
       );
-      discoverState.activeGroupId = (barber || groups[0]).id;
+      discoverState.activeGroupId = (beauty || groups[0]).id;
+    }
+    // Soft-ask once per session so cards can show travel time without blocking
+    // the first paint.
+    if (!discoverState.userLocation && !discoverState.locationError) {
+      requestUserLocation().then(() => {
+        if (viewFromHash() === "home" || !viewFromHash() || viewFromHash() === "login") {
+          // Only refresh if we're still on home-like views that show cards.
+          if (document.getElementById("biz-list-wrap")) renderDiscoverFrame();
+        }
+      });
     }
     renderDiscoverFrame();
   } catch (error) {
@@ -929,7 +1077,7 @@ async function renderHome() {
 
 async function renderProfile() {
   app.innerHTML = `
-    <div class="placeholder-page">
+    <div class="profile-page">
       <h1>Profile</h1>
       <p class="empty-state">Loading…</p>
       ${tabbar("profile")}
@@ -938,13 +1086,81 @@ async function renderProfile() {
   bindTabs();
 
   try {
-    const me = await api("/customer/me");
+    const [me, contact] = await Promise.all([
+      api("/customer/me"),
+      api("/customer/contact").catch(() => ({ phone: "", email: "" })),
+    ]);
+
+    const phone = String(contact.phone || "").trim();
+    const email = String(contact.email || "").trim();
+    const telHref = phone ? `tel:${phone.replace(/\s+/g, "")}` : "";
+    const mailHref = email ? `mailto:${email}` : "";
+
     app.innerHTML = `
-      <div class="placeholder-page">
+      <div class="profile-page">
         <h1>Profile</h1>
-        <p><strong>${escapeHtml(me.first_name)}</strong></p>
-        <p style="margin-top:.35rem;color:var(--text-dim)">+${escapeHtml(me.phone)}</p>
-        <button class="btn" style="margin-top:1.5rem;max-width:12rem" type="button" id="logout">Sign out</button>
+        <div class="profile-identity">
+          <div class="profile-avatar" aria-hidden="true">${escapeHtml((me.first_name || "?").slice(0, 1).toUpperCase())}</div>
+          <div>
+            <p class="profile-name">${escapeHtml(me.first_name)}</p>
+            <p class="profile-phone">+${escapeHtml(me.phone)}</p>
+          </div>
+        </div>
+
+        <section class="profile-section">
+          <h2>Contact us</h2>
+          <p class="profile-section-desc">Reach the Queueless team for help with your account or queues.</p>
+          <div class="profile-contact-row">
+            ${phone
+              ? `<a class="profile-contact" href="${escapeHtml(telHref)}">
+                  <span class="profile-contact-icon">${icon("call")}</span>
+                  <span>
+                    <span class="profile-contact-label">Call</span>
+                    <span class="profile-contact-value">${escapeHtml(phone)}</span>
+                  </span>
+                </a>`
+              : `<div class="profile-contact muted">
+                  <span class="profile-contact-icon">${icon("call")}</span>
+                  <span>
+                    <span class="profile-contact-label">Call</span>
+                    <span class="profile-contact-value">Not available yet</span>
+                  </span>
+                </div>`}
+            ${email
+              ? `<a class="profile-contact" href="${escapeHtml(mailHref)}">
+                  <span class="profile-contact-icon">${icon("mail")}</span>
+                  <span>
+                    <span class="profile-contact-label">Email</span>
+                    <span class="profile-contact-value">${escapeHtml(email)}</span>
+                  </span>
+                </a>`
+              : `<div class="profile-contact muted">
+                  <span class="profile-contact-icon">${icon("mail")}</span>
+                  <span>
+                    <span class="profile-contact-label">Email</span>
+                    <span class="profile-contact-value">Not available yet</span>
+                  </span>
+                </div>`}
+          </div>
+        </section>
+
+        <section class="profile-section">
+          <h2>Legal</h2>
+          <div class="profile-links">
+            <button type="button" class="profile-link" data-go="terms">
+              <span class="profile-link-icon">${icon("doc")}</span>
+              <span>Terms of use</span>
+              <span class="profile-link-chevron">${icon("chevronRight")}</span>
+            </button>
+            <button type="button" class="profile-link" data-go="privacy">
+              <span class="profile-link-icon">${icon("shield")}</span>
+              <span>Privacy policy</span>
+              <span class="profile-link-chevron">${icon("chevronRight")}</span>
+            </button>
+          </div>
+        </section>
+
+        <button class="btn profile-logout" type="button" id="logout">Sign out</button>
         ${tabbar("profile")}
       </div>
     `;
@@ -953,10 +1169,131 @@ async function renderProfile() {
       clearToken();
       go("login");
     };
+    app.querySelectorAll("[data-go]").forEach((btn) => {
+      btn.addEventListener("click", () => go(btn.dataset.go));
+    });
   } catch (error) {
     clearToken();
     go("login");
   }
+}
+
+function legalPageShell(title, bodyHtml) {
+  return `
+    <div class="legal-page">
+      <header class="legal-header">
+        <button type="button" class="legal-back" id="legal-back" aria-label="Back to profile">←</button>
+        <h1>${escapeHtml(title)}</h1>
+      </header>
+      <article class="legal-body">
+        ${bodyHtml}
+      </article>
+      ${tabbar("profile")}
+    </div>
+  `;
+}
+
+function renderTerms() {
+  app.innerHTML = legalPageShell(
+    "Terms of use",
+    `
+      <p class="legal-updated">Last updated: 14 August 2026</p>
+      <p>Welcome to Queueless. These Terms of Use govern your access to and use of the Queueless mobile and web application operated in Kenya (“Queueless”, “we”, “us”). By creating an account or using the service, you agree to these terms.</p>
+
+      <h2>1. Who we are</h2>
+      <p>Queueless is a queue and booking platform that helps customers join live queues and make advance bookings at participating businesses across Kenya.</p>
+
+      <h2>2. Eligibility</h2>
+      <p>You must be at least 18 years old, or have the consent of a parent or guardian, to create an account. You must provide a valid Kenyan mobile number and keep your account details accurate.</p>
+
+      <h2>3. Your account</h2>
+      <ul>
+        <li>You are responsible for keeping your 4-digit PIN confidential.</li>
+        <li>You must not share your account or impersonate another person.</li>
+        <li>We may suspend or close accounts that abuse the service, attempt fraud, or violate these terms.</li>
+      </ul>
+
+      <h2>4. Queues and bookings</h2>
+      <ul>
+        <li>Joining a queue or placing a booking does not guarantee an exact service time. Estimates are based on information provided by the business and may change.</li>
+        <li>Businesses set their own service rules, opening hours, and capacity. Queueless does not provide the underlying service (for example, a haircut or clinic visit).</li>
+        <li>You may leave a queue or cancel a booking through the app, subject to any limits shown at the time.</li>
+        <li>Bookings can only be made up to 24 hours in advance.</li>
+      </ul>
+
+      <h2>5. Acceptable use</h2>
+      <p>You agree not to misuse Queueless, including by attempting to disrupt the service, scrape data without permission, spam businesses or other users, or use the platform for unlawful purposes under Kenyan law.</p>
+
+      <h2>6. Service availability</h2>
+      <p>We aim to keep Queueless available, but we do not guarantee uninterrupted access. Maintenance, network issues, or third-party outages (for example SMS delivery) may affect the service.</p>
+
+      <h2>7. Limitation of liability</h2>
+      <p>To the fullest extent permitted by Kenyan law, Queueless is not liable for delays, missed appointments, or losses arising from business decisions, queue estimates, or circumstances outside our reasonable control. Nothing in these terms excludes liability for fraud or for death or personal injury caused by our negligence where such exclusion is not allowed.</p>
+
+      <h2>8. Changes</h2>
+      <p>We may update these terms from time to time. Continued use of Queueless after changes are posted on this page constitutes acceptance of the updated terms.</p>
+
+      <h2>9. Contact</h2>
+      <p>Questions about these terms can be sent through Contact us on your Profile page.</p>
+    `
+  );
+  bindTabs();
+  document.getElementById("legal-back").onclick = () => go("profile");
+}
+
+function renderPrivacy() {
+  app.innerHTML = legalPageShell(
+    "Privacy policy",
+    `
+      <p class="legal-updated">Last updated: 14 August 2026</p>
+      <p>This Privacy Policy explains how Queueless collects, uses, and protects personal data when you use our customer application in Kenya. We handle personal data in line with the Data Protection Act, 2019 of Kenya.</p>
+
+      <h2>1. Data we collect</h2>
+      <ul>
+        <li><strong>Account data:</strong> first name, mobile phone number, and a hashed PIN.</li>
+        <li><strong>Verification data:</strong> one-time passcodes sent to your phone and related delivery timestamps.</li>
+        <li><strong>Service data:</strong> queues you join, bookings you make, and related timestamps and statuses.</li>
+        <li><strong>Technical data:</strong> basic device and usage information needed to operate and secure the app.</li>
+      </ul>
+
+      <h2>2. How we use your data</h2>
+      <ul>
+        <li>To create and secure your account, including phone verification via SMS.</li>
+        <li>To place you in queues, manage bookings, and show your position and estimates.</li>
+        <li>To provide customer support when you contact us.</li>
+        <li>To improve reliability, prevent abuse, and meet legal obligations.</li>
+      </ul>
+
+      <h2>3. Sharing</h2>
+      <p>We share information only as needed to run the service:</p>
+      <ul>
+        <li>Participating businesses see the queue and booking details required to serve you.</li>
+        <li>SMS and email providers process messages on our behalf (for example verification codes and support).</li>
+        <li>We may disclose information if required by Kenyan law or a lawful request from authorities.</li>
+      </ul>
+      <p>We do not sell your personal data.</p>
+
+      <h2>4. Retention</h2>
+      <p>We keep account and service records for as long as your account remains active and for a reasonable period afterwards to resolve disputes, meet legal requirements, and maintain security logs. You may ask us to delete your account through Contact us on Profile.</p>
+
+      <h2>5. Security</h2>
+      <p>We use industry-standard measures to protect your data, including hashing PINs and restricting access to personal information. No method of transmission or storage is completely secure, so we cannot guarantee absolute security.</p>
+
+      <h2>6. Your rights</h2>
+      <p>Under the Data Protection Act, 2019 you may have the right to access, correct, or request deletion of your personal data, and to object to or restrict certain processing. To exercise these rights, use Contact us on your Profile page.</p>
+
+      <h2>7. Children</h2>
+      <p>Queueless is not directed at children under 18 without parental or guardian involvement. If you believe we hold data for a child without appropriate consent, contact us so we can delete it.</p>
+
+      <h2>8. Changes</h2>
+      <p>We may update this policy from time to time. The “Last updated” date at the top of this page will change when we do. Significant changes will be highlighted in the app where practical.</p>
+
+      <h2>9. Contact</h2>
+      <p>For privacy questions or requests, use the phone or email shown under Contact us on your Profile page.</p>
+    `
+  );
+  bindTabs();
+  document.getElementById("legal-back").onclick = () => go("profile");
 }
 
 async function renderBusinessDetail(id) {
@@ -1021,6 +1358,11 @@ async function renderBusinessDetail(id) {
           <div class="detail-row">
             ${icon("pin")}
             <span>${escapeHtml(item.place)}</span>
+          </div>` : ""}
+        ${item.away ? `
+          <div class="detail-row away-detail">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l2.5 2.5"/></svg>
+            <span>${escapeHtml(item.away.label)} away</span>
           </div>` : ""}
         ${item.phone ? `
           <div class="detail-row">
@@ -1571,6 +1913,8 @@ async function render() {
   if (view === "bookings") return renderBookings();
   if (view === "queue") return renderQueue();
   if (view === "profile") return renderProfile();
+  if (view === "terms") return renderTerms();
+  if (view === "privacy") return renderPrivacy();
   if (view === "login" || view === "signup" || view === "verify") {
     return renderHome();
   }

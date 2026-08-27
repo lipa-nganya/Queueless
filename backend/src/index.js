@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
-import { migrate, seedAdmin } from "./migrate.js";
+import { migrate, seedAdmin, seedVendor, seedBusinessGroups } from "./migrate.js";
 import { seedSettings } from "./settings.js";
 import routes from "./routes.js";
 
@@ -18,8 +18,10 @@ const port = Number(process.env.PORT || 4000);
 const defaultOrigins = [
   "http://localhost:3000",
   "http://localhost:4000",
+  "http://localhost:3500",
   "http://127.0.0.1:3000",
   "http://127.0.0.1:4000",
+  "http://127.0.0.1:3500",
 ];
 const allowedOrigins = new Set(
   (process.env.CORS_ORIGINS || "")
@@ -60,6 +62,8 @@ app.use(express.static(adminDir));
 async function start() {
   await migrate();
   await seedAdmin();
+  await seedBusinessGroups();
+  await seedVendor();
   await seedSettings();
 
   app.listen(port, () => {

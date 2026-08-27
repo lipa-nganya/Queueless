@@ -34,7 +34,7 @@ if [[ -f "$PID_FILE" ]]; then
 fi
 
 # Fallback: free the app ports even if PID file is missing/stale
-for port in 3000 4000; do
+for port in 3000 3500 4000; do
   if command -v lsof >/dev/null 2>&1; then
     pids="$(lsof -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null || true)"
     if [[ -n "${pids:-}" ]]; then

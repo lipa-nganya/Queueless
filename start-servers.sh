@@ -8,6 +8,7 @@ LOG_DIR="$RUNTIME_DIR/logs"
 
 ADMIN_URL="http://localhost:4000/"
 CUSTOMER_URL="http://localhost:3000/"
+VENDOR_URL="http://localhost:3500/"
 
 # Open URL in Google Chrome, or reload the existing tab if already open.
 open_or_refresh_chrome() {
@@ -53,6 +54,7 @@ open_frontends() {
   echo "Opening frontends in Google Chrome..."
   open_or_refresh_chrome "$ADMIN_URL"
   open_or_refresh_chrome "$CUSTOMER_URL"
+  open_or_refresh_chrome "$VENDOR_URL"
 }
 
 mkdir -p "$RUNTIME_DIR" "$LOG_DIR"
@@ -70,6 +72,7 @@ if [[ -f "$PID_FILE" ]]; then
     echo "Servers already appear to be running."
     echo "  Admin:    $ADMIN_URL"
     echo "  Customer: $CUSTOMER_URL"
+    echo "  Vendor:   $VENDOR_URL"
     open_frontends
     exit 0
   fi
@@ -100,6 +103,11 @@ if [[ ! -d "$ROOT/customer/node_modules" ]]; then
   (cd "$ROOT/customer" && npm install)
 fi
 
+if [[ ! -d "$ROOT/vendor/node_modules" ]]; then
+  echo "Installing vendor dependencies..."
+  (cd "$ROOT/vendor" && npm install)
+fi
+
 : > "$PID_FILE"
 
 echo "Starting admin + API on :4000..."
@@ -116,10 +124,18 @@ echo "Starting customer app on :3000..."
   echo $! >> "$PID_FILE"
 )
 
+echo "Starting vendor app on :3500..."
+(
+  cd "$ROOT/vendor"
+  nohup node server.js >"$LOG_DIR/vendor.log" 2>&1 &
+  echo $! >> "$PID_FILE"
+)
+
 # Wait briefly for HTTP readiness
 for _ in $(seq 1 20); do
   if curl -sf "http://localhost:4000/health" >/dev/null \
-    && curl -sf "http://localhost:3000/" >/dev/null; then
+    && curl -sf "http://localhost:3000/" >/dev/null \
+    && curl -sf "http://localhost:3500/" >/dev/null; then
     break
   fi
   sleep 0.5
@@ -129,6 +145,7 @@ echo
 echo "Servers started."
 echo "  Admin:    $ADMIN_URL"
 echo "  Customer: $CUSTOMER_URL"
+echo "  Vendor:   $VENDOR_URL"
 echo "  pgAdmin:  http://localhost:5050/"
 echo "Logs: $LOG_DIR/"
 open_frontends
