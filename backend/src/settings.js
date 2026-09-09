@@ -9,6 +9,7 @@
 import { query } from "./db.js";
 
 export const SMS_ENABLED = "sms_enabled";
+export const WHATSAPP_ENABLED = "whatsapp_enabled";
 export const CONTACT_PHONE = "contact_phone";
 export const CONTACT_EMAIL = "contact_email";
 
@@ -76,6 +77,12 @@ export async function seedSettings() {
     `INSERT INTO settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING`,
     [CONTACT_EMAIL, ""]
   );
+  // Default on when Meta credentials are present so local join alerts work
+  // immediately after configuring .env.
+  await query(
+    `INSERT INTO settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING`,
+    [WHATSAPP_ENABLED, String(whatsappProviderConfigured())]
+  );
   await loadSettings();
 }
 
@@ -90,4 +97,8 @@ export function smsProviderConfigured() {
       process.env.ADVANTA_PARTNER_ID &&
       process.env.ADVANTA_SHORTCODE
   );
+}
+
+export function whatsappProviderConfigured() {
+  return Boolean(process.env.WHATSAPP_TOKEN && process.env.WHATSAPP_PHONE_NUMBER_ID);
 }

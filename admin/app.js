@@ -763,14 +763,6 @@ async function renderBusinesses() {
                     <option value="">Select group</option>
                   </select>
                 </div>
-                <div class="field place-field">
-                  <label for="edit-location">Location</label>
-                  <input id="edit-location" name="location" placeholder="Start typing a Kenya place…" autocomplete="off" />
-                </div>
-                <div class="field">
-                  <label for="edit-phone">Phone</label>
-                  <input id="edit-phone" name="phone" placeholder="e.g. 0712 345 678" />
-                </div>
                 <div class="field field-wide">
                   <label for="edit-description">Description</label>
                   <textarea id="edit-description" name="description" rows="3" placeholder="Short description of the business…"></textarea>
@@ -794,6 +786,59 @@ async function renderBusinesses() {
               </div>
             </form>
           </div>
+
+          <section class="branches-panel" style="margin-top:1.25rem;padding-top:1rem;border-top:1px solid rgba(255,255,255,0.08)">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:1rem;margin-bottom:0.75rem">
+              <div>
+                <h4 style="margin:0">Branches</h4>
+                <p class="muted" style="margin:0.25rem 0 0">Add locations for this business. Vendors see every branch.</p>
+              </div>
+            </div>
+            <div id="branches-list" class="branches-list"></div>
+            <form id="branch-form" style="margin-top:1rem">
+              <h4 id="branch-form-title" style="margin:0 0 0.75rem">Add branch</h4>
+              <input type="hidden" id="branch-edit-id" value="" />
+              <div class="field-grid">
+                <div class="field">
+                  <label for="branch-name">Branch name</label>
+                  <input id="branch-name" name="name" placeholder="e.g. Westlands" required />
+                </div>
+                <div class="field">
+                  <label for="branch-phone">Phone</label>
+                  <input id="branch-phone" name="phone" placeholder="e.g. 0712 345 678" />
+                </div>
+                <div class="field place-field field-wide">
+                  <label for="branch-location">Location</label>
+                  <input id="branch-location" name="location" placeholder="Start typing a Kenya place…" autocomplete="off" />
+                </div>
+                <div class="field field-wide">
+                  <label for="branch-operating-hours">Operating hours</label>
+                  <textarea
+                    id="branch-operating-hours"
+                    name="operating_hours"
+                    rows="2"
+                    placeholder="e.g. Mon-Fri: 8:00 AM-6:00 PM"
+                  ></textarea>
+                </div>
+                <div class="field field-wide">
+                  <div class="setting-row" style="padding:0.5rem 0;border:none">
+                    <div class="setting-copy">
+                      <div class="setting-title">Branch active</div>
+                    </div>
+                    <label class="switch">
+                      <input type="checkbox" id="branch-active" name="is_active" checked />
+                      <span class="switch-track"><span class="switch-thumb"></span></span>
+                    </label>
+                  </div>
+                </div>
+              </div>
+              <div class="edit-actions" style="margin-top:0.75rem">
+                <p class="message" id="branch-message" role="status"></p>
+                <button class="btn btn-secondary" type="button" id="branch-cancel" hidden>Cancel</button>
+                <button class="btn btn-primary" type="submit" id="branch-submit">Add branch</button>
+              </div>
+            </form>
+          </section>
         </div>
       </div>
     `
@@ -815,12 +860,116 @@ async function renderBusinesses() {
   let editingId = null;
   let allGroups = [];
   let businessesById = new Map();
+  let currentBranches = [];
   const createPlace = bindPlaceAutocomplete(document.getElementById("business-location"), {
     listId: "create-place-suggestions",
   });
-  const editPlace = bindPlaceAutocomplete(document.getElementById("edit-location"), {
-    listId: "edit-place-suggestions",
+  const branchPlace = bindPlaceAutocomplete(document.getElementById("branch-location"), {
+    listId: "branch-place-suggestions",
   });
+  const branchForm = document.getElementById("branch-form");
+  const branchMessage = document.getElementById("branch-message");
+  const branchesList = document.getElementById("branches-list");
+  const branchCancel = document.getElementById("branch-cancel");
+  const branchSubmit = document.getElementById("branch-submit");
+  const branchFormTitle = document.getElementById("branch-form-title");
+
+  function resetBranchForm() {
+    branchForm.reset();
+    document.getElementById("branch-edit-id").value = "";
+    document.getElementById("branch-active").checked = true;
+    branchPlace.reset();
+    branchFormTitle.textContent = "Add branch";
+    branchSubmit.textContent = "Add branch";
+    branchCancel.hidden = true;
+    branchMessage.textContent = "";
+    branchMessage.classList.remove("success");
+  }
+
+  function renderBranchesList(branches = []) {
+    currentBranches = branches;
+    if (!branches.length) {
+      branchesList.innerHTML = `<p class="empty">No branches yet.</p>`;
+      return;
+    }
+    branchesList.innerHTML = `
+      <table>
+        <thead>
+          <tr>
+            <th>Branch</th>
+            <th>Location</th>
+            <th>Status</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          ${branches
+            .map(
+              (branch) => `
+                <tr>
+                  <td>
+                    <div class="cell-text">
+                      <span class="cell-title">${escapeHtml(branch.name)}</span>
+                      <span class="cell-sub">${escapeHtml(branch.phone || "No phone")}</span>
+                    </div>
+                  </td>
+                  <td>
+                    ${
+                      branch.location
+                        ? `<span class="cell-location">${PIN_ICON}${escapeHtml(branch.location)}</span>`
+                        : `<span class="muted">—</span>`
+                    }
+                  </td>
+                  <td>
+                    <span class="status-pill ${branch.is_active ? "status-active" : "status-inactive"}">
+                      ${branch.is_active ? "Active" : "Inactive"}
+                    </span>
+                  </td>
+                  <td class="row-actions">
+                    <button class="btn btn-secondary btn-sm branch-edit-btn" data-id="${branch.id}" type="button">Edit</button>
+                    <button class="btn btn-secondary btn-sm branch-delete-btn" data-id="${branch.id}" type="button">Delete</button>
+                  </td>
+                </tr>
+              `
+            )
+            .join("")}
+        </tbody>
+      </table>
+    `;
+
+    branchesList.querySelectorAll(".branch-edit-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const branch = currentBranches.find((item) => Number(item.id) === Number(btn.dataset.id));
+        if (!branch) return;
+        document.getElementById("branch-edit-id").value = String(branch.id);
+        document.getElementById("branch-name").value = branch.name || "";
+        document.getElementById("branch-phone").value = branch.phone || "";
+        document.getElementById("branch-operating-hours").value = branch.operating_hours || "";
+        document.getElementById("branch-active").checked = Boolean(branch.is_active);
+        branchPlace.setFromBusiness(branch);
+        branchFormTitle.textContent = "Edit branch";
+        branchSubmit.textContent = "Save branch";
+        branchCancel.hidden = false;
+        branchMessage.textContent = "";
+      });
+    });
+
+    branchesList.querySelectorAll(".branch-delete-btn").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        if (!editingId) return;
+        if (!confirm("Delete this branch?")) return;
+        try {
+          await api(`/businesses/${editingId}/branches/${btn.dataset.id}`, { method: "DELETE" });
+          await loadBusinesses();
+          const refreshed = businessesById.get(editingId);
+          renderBranchesList(refreshed?.branches || []);
+          resetBranchForm();
+        } catch (error) {
+          branchMessage.textContent = error.message;
+        }
+      });
+    });
+  }
 
   function openEditPanel(business) {
     editingId = business.id;
@@ -828,12 +977,11 @@ async function renderBusinesses() {
     editMessage.classList.remove("success");
     editImageMessage.textContent = "";
     editImageMessage.classList.remove("success");
+    resetBranchForm();
 
     editForm.elements["name"].value = business.name || "";
     editForm.elements["description"].value = business.description || "";
-    editForm.elements["phone"].value = business.phone || "";
     document.getElementById("edit-active").checked = Boolean(business.is_active);
-    editPlace.setFromBusiness(business);
 
     editGroup.innerHTML =
       `<option value="">Select group</option>` +
@@ -850,6 +998,7 @@ async function renderBusinesses() {
       editImagePlaceholder.classList.remove("hidden");
     }
 
+    renderBranchesList(business.branches || []);
     editOverlay.classList.remove("hidden");
     document.body.style.overflow = "hidden";
     editForm.elements["name"].focus();
@@ -860,6 +1009,7 @@ async function renderBusinesses() {
     document.body.style.overflow = "";
     editingId = null;
     editImageInput.value = "";
+    resetBranchForm();
   }
 
   document.getElementById("edit-close").addEventListener("click", closeEditPanel);
@@ -875,30 +1025,71 @@ async function renderBusinesses() {
     const btn = editForm.querySelector("button[type=submit]");
     btn.disabled = true;
     try {
-      const coords = editPlace.getCoords();
       const updated = await api(`/businesses/${editingId}`, {
         method: "PUT",
         body: JSON.stringify({
           name: data.name,
           business_group_id: Number(data.business_group_id),
           description: data.description,
-          location: data.location,
-          phone: data.phone,
-          latitude: coords.latitude,
-          longitude: coords.longitude,
           is_active: document.getElementById("edit-active").checked,
         }),
       });
       editMessage.textContent = "Saved.";
       editMessage.classList.add("success");
       await loadBusinesses();
-      // Keep the autocomplete state in sync with what the server stored.
-      editPlace.setFromBusiness(updated);
       editForm.elements["name"].value = updated.name;
+      const refreshed = businessesById.get(editingId);
+      renderBranchesList(refreshed?.branches || []);
     } catch (err) {
       editMessage.textContent = err.message;
     } finally {
       btn.disabled = false;
+    }
+  });
+
+  branchCancel.addEventListener("click", resetBranchForm);
+
+  branchForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    if (!editingId) return;
+    const data = Object.fromEntries(new FormData(branchForm).entries());
+    const coords = branchPlace.getCoords();
+    const branchId = document.getElementById("branch-edit-id").value;
+    branchMessage.textContent = "";
+    branchMessage.classList.remove("success");
+    branchSubmit.disabled = true;
+    try {
+      const payload = {
+        name: data.name,
+        phone: data.phone,
+        location: data.location,
+        operating_hours: data.operating_hours,
+        latitude: coords.latitude,
+        longitude: coords.longitude,
+        is_active: document.getElementById("branch-active").checked,
+      };
+      if (branchId) {
+        await api(`/businesses/${editingId}/branches/${branchId}`, {
+          method: "PUT",
+          body: JSON.stringify(payload),
+        });
+        branchMessage.textContent = "Branch updated.";
+      } else {
+        await api(`/businesses/${editingId}/branches`, {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+        branchMessage.textContent = "Branch added.";
+      }
+      branchMessage.classList.add("success");
+      await loadBusinesses();
+      const refreshed = businessesById.get(editingId);
+      renderBranchesList(refreshed?.branches || []);
+      resetBranchForm();
+    } catch (error) {
+      branchMessage.textContent = error.message;
+    } finally {
+      branchSubmit.disabled = false;
     }
   });
 
@@ -957,7 +1148,7 @@ async function renderBusinesses() {
           <tr>
             <th>Business</th>
             <th>Group</th>
-            <th>Location</th>
+            <th>Branches</th>
             <th>Status</th>
             <th>Created</th>
             <th></th>
@@ -976,6 +1167,9 @@ async function renderBusinesses() {
                       <div class="cell-text">
                         <span class="cell-title">${escapeHtml(business.name)}</span>
                         <span class="cell-sub">${escapeHtml(business.phone || "No phone")}</span>
+                        ${business.operating_hours
+                          ? `<span class="cell-sub">${escapeHtml(business.operating_hours).replaceAll("\n", "<br />")}</span>`
+                          : ""}
                       </div>
                     </div>
                   </td>
@@ -986,9 +1180,13 @@ async function renderBusinesses() {
                     </span>
                   </td>
                   <td>
-                    ${business.location
-                      ? `<span class="cell-location">${PIN_ICON}${escapeHtml(business.location)}</span>`
-                      : `<span class="muted">—</span>`}
+                    ${
+                      (business.branches || []).length
+                        ? `<span class="cell-sub">${(business.branches || [])
+                            .map((branch) => escapeHtml(branch.name))
+                            .join(", ")}</span>`
+                        : `<span class="muted">—</span>`
+                    }
                   </td>
                   <td>
                     <span class="status-pill ${business.is_active ? "status-active" : "status-inactive"}">
@@ -1106,6 +1304,10 @@ async function renderVendors() {
               <input id="vendor-email" name="email" type="email" placeholder="owner@business.com" />
             </div>
             <div class="field" style="margin-top:0">
+              <label for="vendor-phone">WhatsApp phone</label>
+              <input id="vendor-phone" name="phone" placeholder="07XXXXXXXX" inputmode="tel" />
+            </div>
+            <div class="field" style="margin-top:0">
               <label for="vendor-password">Password</label>
               <input id="vendor-password" name="password" type="password" required minlength="6" autocomplete="new-password" />
             </div>
@@ -1134,6 +1336,10 @@ async function renderVendors() {
             <div class="field">
               <label for="vendor-edit-email">Email</label>
               <input id="vendor-edit-email" name="email" type="email" />
+            </div>
+            <div class="field">
+              <label for="vendor-edit-phone">WhatsApp phone</label>
+              <input id="vendor-edit-phone" name="phone" placeholder="07XXXXXXXX" inputmode="tel" />
             </div>
             <div class="field">
               <label for="vendor-edit-password">New password (optional)</label>
@@ -1192,6 +1398,7 @@ async function renderVendors() {
     editMessage.classList.remove("success");
     document.getElementById("vendor-edit-username").value = vendor.username || "";
     document.getElementById("vendor-edit-email").value = vendor.email || "";
+    document.getElementById("vendor-edit-phone").value = vendor.phone || "";
     document.getElementById("vendor-edit-password").value = "";
     editChecks.innerHTML = businessChecksHtml(
       "edit-biz",
@@ -1238,7 +1445,7 @@ async function renderVendors() {
                   <td>
                     <div class="cell-text">
                       <span class="cell-title">${escapeHtml(vendor.username)}</span>
-                      <span class="cell-sub">${escapeHtml(vendor.email || "No email")}</span>
+                      <span class="cell-sub">${escapeHtml(vendor.phone || vendor.email || "No WhatsApp phone")}</span>
                     </div>
                   </td>
                   <td>
@@ -1282,6 +1489,7 @@ async function renderVendors() {
         body: JSON.stringify({
           username: data.username,
           email: data.email,
+          phone: data.phone,
           password: data.password,
           business_ids: selectedBusinessIds(createChecks),
         }),
@@ -1307,6 +1515,7 @@ async function renderVendors() {
     try {
       const payload = {
         email: data.email,
+        phone: data.phone,
         business_ids: selectedBusinessIds(editChecks),
       };
       if (data.password) payload.password = data.password;
@@ -1621,6 +1830,7 @@ async function renderSettings() {
   }
 
   const configured = settings.sms_configured;
+  const waConfigured = settings.whatsapp_configured;
 
   panel.innerHTML = `
     <h3>Notifications</h3>
@@ -1653,10 +1863,44 @@ async function renderSettings() {
       </div>
     </div>
 
+    <div class="setting-row" style="margin-top:1.5rem">
+      <div class="setting-copy">
+        <div class="setting-title">WhatsApp queue alerts</div>
+        <p class="setting-desc">
+          When on, vendors and admin contact phones get a WhatsApp message
+          whenever a customer joins a queue (via ${escapeHtml(settings.whatsapp_provider)}).
+          ${settings.whatsapp_template
+            ? `Using template <code>${escapeHtml(settings.whatsapp_template)}</code>.`
+            : "Sending as plain text (Meta may require an approved template for production)."}
+        </p>
+        ${waConfigured
+          ? ""
+          : `<p class="setting-warn">WhatsApp is not configured. Set <code>WHATSAPP_TOKEN</code> and <code>WHATSAPP_PHONE_NUMBER_ID</code> in the backend env.</p>`}
+      </div>
+      <label class="switch" title="${waConfigured ? "" : "WhatsApp is not configured"}">
+        <input type="checkbox" id="wa-toggle" ${settings.whatsapp_enabled ? "checked" : ""} ${waConfigured ? "" : "disabled"} />
+        <span class="switch-track"><span class="switch-thumb"></span></span>
+      </label>
+    </div>
+
+    <div class="setting-test ${settings.whatsapp_enabled && waConfigured ? "" : "hidden"}" id="wa-test">
+      <div class="field" style="margin-top:0">
+        <label for="test-wa-phone">Send a test WhatsApp</label>
+        <div class="form-row two">
+          <input id="test-wa-phone" placeholder="07XXXXXXXX" inputmode="tel" />
+          <button class="btn btn-secondary" type="button" id="test-wa-btn">Send test</button>
+        </div>
+        <p class="setting-desc" style="margin-top:0.5rem">
+          Use an allowlisted number (Meta → Step 1 → To), e.g. <code>0727893741</code>.
+          Tests send Meta's <code>hello_world</code> template from the +1 555 test line.
+        </p>
+      </div>
+    </div>
+
     <h3 style="margin-top:2rem">Customer support</h3>
     <p class="setting-desc" style="margin:0 0 1rem">
-      These details appear on the customer Profile under Contact us, and the
-      phone number is also used when a customer needs support during signup.
+      These details appear on the customer Profile under Contact us. The phone
+      number is also used as the admin WhatsApp recipient for queue alerts.
     </p>
     <form id="contact-form" class="form-row two">
       <div class="field" style="margin-top:0">
@@ -1676,6 +1920,8 @@ async function renderSettings() {
   const message = document.getElementById("page-message");
   const toggle = document.getElementById("sms-toggle");
   const testBox = document.getElementById("sms-test");
+  const waToggle = document.getElementById("wa-toggle");
+  const waTestBox = document.getElementById("wa-test");
 
   // "pending" is neither success nor failure: Advanta has taken the message
   // but delivery is not confirmed yet, so it must not be shown as an error.
@@ -1708,6 +1954,31 @@ async function renderSettings() {
       setMessage(error.message);
     } finally {
       toggle.disabled = false;
+    }
+  });
+
+  waToggle?.addEventListener("change", async () => {
+    const wanted = waToggle.checked;
+    waToggle.disabled = true;
+    setMessage("");
+    try {
+      const saved = await api("/settings", {
+        method: "PUT",
+        body: JSON.stringify({ whatsapp_enabled: wanted }),
+      });
+      waToggle.checked = saved.whatsapp_enabled;
+      waTestBox.classList.toggle("hidden", !(saved.whatsapp_enabled && saved.whatsapp_configured));
+      setMessage(
+        saved.whatsapp_enabled
+          ? "WhatsApp queue alerts are on."
+          : "WhatsApp queue alerts are off.",
+        "success"
+      );
+    } catch (error) {
+      waToggle.checked = !wanted;
+      setMessage(error.message);
+    } finally {
+      waToggle.disabled = false;
     }
   });
 
@@ -1749,6 +2020,25 @@ async function renderSettings() {
       });
       // Green only on confirmed delivery; amber while it is still queued.
       setMessage(result.message, result.delivered ? "success" : "pending");
+    } catch (error) {
+      setMessage(error.message);
+    } finally {
+      button.disabled = false;
+    }
+  });
+
+  document.getElementById("test-wa-btn")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    const phone = document.getElementById("test-wa-phone").value.trim();
+    if (!phone) return setMessage("Enter a phone number to test.");
+    button.disabled = true;
+    setMessage("Sending WhatsApp…", "pending");
+    try {
+      const result = await api("/settings/test-whatsapp", {
+        method: "POST",
+        body: JSON.stringify({ phone }),
+      });
+      setMessage(result.message, "success");
     } catch (error) {
       setMessage(error.message);
     } finally {

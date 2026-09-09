@@ -60,6 +60,7 @@ export async function migrate() {
     ALTER TABLE businesses ADD COLUMN IF NOT EXISTS description TEXT;
     ALTER TABLE businesses ADD COLUMN IF NOT EXISTS location TEXT;
     ALTER TABLE businesses ADD COLUMN IF NOT EXISTS phone TEXT;
+    ALTER TABLE businesses ADD COLUMN IF NOT EXISTS operating_hours TEXT;
     ALTER TABLE businesses ADD COLUMN IF NOT EXISTS image_url TEXT;
     ALTER TABLE businesses ADD COLUMN IF NOT EXISTS queue_size INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE businesses ADD COLUMN IF NOT EXISTS avg_wait_minutes INTEGER NOT NULL DEFAULT 15;
@@ -143,6 +144,82 @@ export async function migrate() {
 
     CREATE INDEX IF NOT EXISTS vendor_businesses_business_id
       ON vendor_businesses (business_id);
+
+    ALTER TABLE vendors ADD COLUMN IF NOT EXISTS phone TEXT;
+    ALTER TABLE admins ADD COLUMN IF NOT EXISTS phone TEXT;
+
+    -- Branches are physical sites under a brand business. Existing businesses
+    -- are backfilled as a single "Main" branch below.
+    CREATE TABLE IF NOT EXISTS business_branches (
+      id SERIAL PRIMARY KEY,
+      business_id INTEGER NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      location TEXT,
+      latitude DOUBLE PRECISION,
+      longitude DOUBLE PRECISION,
+      phone TEXT,
+      operating_hours TEXT,
+      queue_size INTEGER NOT NULL DEFAULT 0,
+      avg_wait_minutes INTEGER NOT NULL DEFAULT 15,
+      is_active BOOLEAN NOT NULL DEFAULT true,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (business_id, name)
+    );
+
+    CREATE INDEX IF NOT EXISTS business_branches_business_id
+      ON business_branches (business_id);
+
+    INSERT INTO business_branches (
+      business_id, name, location, latitude, longitude, phone, operating_hours,
+      queue_size, avg_wait_minutes, is_active
+    )
+    SELECT
+      b.id,
+      'Main',
+      b.location,
+      b.latitude,
+      b.longitude,
+      b.phone,
+      b.operating_hours,
+      COALESCE(b.queue_size, 0),
+      COALESCE(b.avg_wait_minutes, 15),
+      COALESCE(b.is_active, true)
+    FROM businesses b
+    WHERE NOT EXISTS (
+      SELECT 1 FROM business_branches bb WHERE bb.business_id = b.id
+    );
+
+    ALTER TABLE queue_entries ADD COLUMN IF NOT EXISTS branch_id INTEGER
+      REFERENCES business_branches(id) ON DELETE CASCADE;
+    ALTER TABLE bookings ADD COLUMN IF NOT EXISTS branch_id INTEGER
+      REFERENCES business_branches(id) ON DELETE CASCADE;
+
+    UPDATE queue_entries qe
+    SET branch_id = bb.id
+    FROM business_branches bb
+    WHERE bb.business_id = qe.business_id
+      AND qe.branch_id IS NULL
+      AND bb.id = (
+        SELECT MIN(bb2.id) FROM business_branches bb2 WHERE bb2.business_id = qe.business_id
+      );
+
+    UPDATE bookings bk
+    SET branch_id = bb.id
+    FROM business_branches bb
+    WHERE bb.business_id = bk.business_id
+      AND bk.branch_id IS NULL
+      AND bb.id = (
+        SELECT MIN(bb2.id) FROM business_branches bb2 WHERE bb2.business_id = bk.business_id
+      );
+
+    DROP INDEX IF EXISTS queue_entries_one_active;
+    CREATE UNIQUE INDEX IF NOT EXISTS queue_entries_one_active_per_branch
+      ON queue_entries (branch_id, customer_id)
+      WHERE status = 'waiting' AND branch_id IS NOT NULL;
+
+    CREATE INDEX IF NOT EXISTS queue_entries_branch_waiting
+      ON queue_entries (branch_id, joined_at)
+      WHERE status = 'waiting';
   `);
 }
 
@@ -150,19 +227,23 @@ export async function seedAdmin() {
   const username = process.env.ADMIN_USERNAME || "admin";
   const password = process.env.ADMIN_PASSWORD || "admin123";
   const email = (process.env.ADMIN_EMAIL || "admin@queueless.co.ke").toLowerCase();
+  const phone = process.env.ADMIN_WHATSAPP
+    ? String(process.env.ADMIN_WHATSAPP).replace(/\D/g, "") || null
+    : null;
   const hash = await bcrypt.hash(password, 10);
 
   await query(
     `
-      INSERT INTO admins (username, email, password_hash, activated_at)
-      VALUES ($1, $2, $3, NOW())
+      INSERT INTO admins (username, email, password_hash, activated_at, phone)
+      VALUES ($1, $2, $3, NOW(), $4)
       ON CONFLICT (username)
       DO UPDATE SET
         password_hash = EXCLUDED.password_hash,
         email = COALESCE(admins.email, EXCLUDED.email),
+        phone = COALESCE(EXCLUDED.phone, admins.phone),
         activated_at = COALESCE(admins.activated_at, NOW())
     `,
-    [username, email, hash]
+    [username, email, hash, phone]
   );
 }
 
@@ -206,20 +287,23 @@ export async function seedVendor() {
   const username = process.env.VENDOR_USERNAME || "vendor";
   const password = process.env.VENDOR_PASSWORD || "vendor123";
   const email = (process.env.VENDOR_EMAIL || "vendor@queueless.co.ke").toLowerCase();
+  const phoneRaw = process.env.VENDOR_WHATSAPP || process.env.WHATSAPP_NOTIFY_PHONES || "";
+  const phone = String(phoneRaw).split(",")[0].replace(/\D/g, "") || null;
   const hash = await bcrypt.hash(password, 10);
 
   const vendor = await query(
     `
-      INSERT INTO vendors (username, email, password_hash, activated_at)
-      VALUES ($1, $2, $3, NOW())
+      INSERT INTO vendors (username, email, phone, password_hash, activated_at)
+      VALUES ($1, $2, $3, $4, NOW())
       ON CONFLICT (username)
       DO UPDATE SET
         password_hash = EXCLUDED.password_hash,
         email = COALESCE(vendors.email, EXCLUDED.email),
+        phone = COALESCE(EXCLUDED.phone, vendors.phone),
         activated_at = COALESCE(vendors.activated_at, NOW())
       RETURNING id
     `,
-    [username, email, hash]
+    [username, email, phone, hash]
   );
 
   const vendorId = vendor.rows[0]?.id;

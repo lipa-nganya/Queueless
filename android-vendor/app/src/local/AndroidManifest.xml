@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Local flavor may call the host machine over cleartext HTTP (emulator 10.0.2.2). -->
+    <application android:usesCleartextTraffic="true" />
+</manifest>
