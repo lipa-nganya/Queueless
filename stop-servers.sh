@@ -46,6 +46,11 @@ for port in 3000 3500 4000; do
   fi
 done
 
+if pgrep -f "[n]grok http" >/dev/null 2>&1; then
+  echo "Stopping ngrok..."
+  pkill -f "[n]grok http" 2>/dev/null || true
+fi
+
 echo "Stopping Postgres + pgAdmin..."
 (
   cd "$ROOT"

@@ -57,7 +57,17 @@ app.use(
 app.get("/health", (_req, res) => {
   res.json({ ok: true });
 });
-app.use(express.static(adminDir));
+// HTML must stay fresh for SPA shell updates; JS/CSS can be cached briefly.
+app.use(
+  express.static(adminDir, {
+    maxAge: process.env.NODE_ENV === "production" ? "5m" : 0,
+    setHeaders(res, filePath) {
+      if (filePath.endsWith(".html")) {
+        res.setHeader("Cache-Control", "no-cache");
+      }
+    },
+  })
+);
 
 async function start() {
   await migrate();

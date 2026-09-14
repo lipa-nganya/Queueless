@@ -17,6 +17,9 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import tech.thewolfgang.queueless.vendor.data.VendorRepository
+import tech.thewolfgang.queueless.vendor.ui.branches.BranchesPickerScreen
+import tech.thewolfgang.queueless.vendor.ui.branches.BranchesScreen
+import tech.thewolfgang.queueless.vendor.ui.branches.BranchesViewModel
 import tech.thewolfgang.queueless.vendor.ui.businesses.BusinessesScreen
 import tech.thewolfgang.queueless.vendor.ui.businesses.BusinessesViewModel
 import tech.thewolfgang.queueless.vendor.ui.login.LoginScreen
@@ -26,6 +29,9 @@ import tech.thewolfgang.queueless.vendor.ui.profile.ProfileScreen
 import tech.thewolfgang.queueless.vendor.ui.profile.ProfileViewModel
 import tech.thewolfgang.queueless.vendor.ui.queue.QueueScreen
 import tech.thewolfgang.queueless.vendor.ui.queue.QueueViewModel
+import tech.thewolfgang.queueless.vendor.ui.services.ServicesPickerScreen
+import tech.thewolfgang.queueless.vendor.ui.services.ServicesScreen
+import tech.thewolfgang.queueless.vendor.ui.services.ServicesViewModel
 import tech.thewolfgang.queueless.vendor.ui.theme.Navy
 import tech.thewolfgang.queueless.vendor.ui.theme.QueuelessTheme
 
@@ -55,9 +61,15 @@ private object Routes {
     const val Queue = "queue/{businessId}"
     const val Profiles = "profiles"
     const val Profile = "profile/{businessId}"
+    const val ServicesPicker = "services"
+    const val Services = "services/{businessId}"
+    const val BranchesPicker = "branches"
+    const val Branches = "branches/{businessId}"
 
     fun queue(businessId: Int) = "queue/$businessId"
     fun profile(businessId: Int) = "profile/$businessId"
+    fun services(businessId: Int) = "services/$businessId"
+    fun branches(businessId: Int) = "branches/$businessId"
 }
 
 @Composable
@@ -95,6 +107,30 @@ private fun VendorNav(repository: VendorRepository) {
         }
     }
 
+    fun goServices(businessId: Int? = null) {
+        if (businessId != null) {
+            navController.navigate(Routes.services(businessId)) {
+                launchSingleTop = true
+            }
+        } else {
+            navController.navigate(Routes.ServicesPicker) {
+                launchSingleTop = true
+            }
+        }
+    }
+
+    fun goBranches(businessId: Int? = null) {
+        if (businessId != null) {
+            navController.navigate(Routes.branches(businessId)) {
+                launchSingleTop = true
+            }
+        } else {
+            navController.navigate(Routes.BranchesPicker) {
+                launchSingleTop = true
+            }
+        }
+    }
+
     NavHost(navController = navController, startDestination = startDestination) {
         composable(Routes.Login) {
             val vm: LoginViewModel = viewModel(factory = LoginViewModel.factory(repository))
@@ -115,6 +151,8 @@ private fun VendorNav(repository: VendorRepository) {
             BusinessesScreen(
                 viewModel = vm,
                 onOpenQueue = { id -> navController.navigate(Routes.queue(id)) },
+                onOpenBranches = { goBranches() },
+                onOpenServices = { goServices() },
                 onOpenProfile = { goProfile() },
                 onSignOut = ::signOut,
                 onUnauthorized = ::onUnauthorized,
@@ -132,6 +170,8 @@ private fun VendorNav(repository: VendorRepository) {
             QueueScreen(
                 viewModel = vm,
                 onBack = { navController.popBackStack() },
+                onOpenBranches = { goBranches(businessId) },
+                onOpenServices = { goServices(businessId) },
                 onOpenProfile = { goProfile(businessId) },
                 onSignOut = ::signOut,
                 onUnauthorized = ::onUnauthorized,
@@ -151,6 +191,8 @@ private fun VendorNav(repository: VendorRepository) {
                     }
                 },
                 onOpenQueue = ::goQueueHome,
+                onOpenBranches = { goBranches() },
+                onOpenServices = { goServices() },
                 onSignOut = ::signOut,
                 onUnauthorized = ::onUnauthorized,
             )
@@ -171,6 +213,93 @@ private fun VendorNav(repository: VendorRepository) {
                         launchSingleTop = true
                     }
                 },
+                onOpenBranches = { goBranches(businessId) },
+                onOpenServices = { goServices(businessId) },
+                onSignOut = ::signOut,
+                onUnauthorized = ::onUnauthorized,
+            )
+        }
+
+        composable(Routes.ServicesPicker) {
+            val vm: BusinessesViewModel = viewModel(
+                key = "services-picker",
+                factory = BusinessesViewModel.factory(repository),
+            )
+            ServicesPickerScreen(
+                viewModel = vm,
+                onOpenServices = { id ->
+                    navController.navigate(Routes.services(id)) {
+                        popUpTo(Routes.ServicesPicker) { inclusive = true }
+                    }
+                },
+                onOpenQueue = ::goQueueHome,
+                onOpenBranches = { goBranches() },
+                onOpenProfile = { goProfile() },
+                onSignOut = ::signOut,
+                onUnauthorized = ::onUnauthorized,
+            )
+        }
+
+        composable(
+            route = Routes.Services,
+            arguments = listOf(navArgument("businessId") { type = NavType.IntType }),
+        ) { entry ->
+            val businessId = entry.arguments?.getInt("businessId") ?: return@composable
+            val vm: ServicesViewModel = viewModel(
+                factory = ServicesViewModel.factory(businessId, repository),
+            )
+            ServicesScreen(
+                viewModel = vm,
+                onOpenQueue = {
+                    navController.navigate(Routes.queue(businessId)) {
+                        launchSingleTop = true
+                    }
+                },
+                onOpenBranches = { goBranches(businessId) },
+                onOpenProfile = { goProfile(businessId) },
+                onSignOut = ::signOut,
+                onUnauthorized = ::onUnauthorized,
+            )
+        }
+
+        composable(Routes.BranchesPicker) {
+            val vm: BusinessesViewModel = viewModel(
+                key = "branches-picker",
+                factory = BusinessesViewModel.factory(repository),
+            )
+            BranchesPickerScreen(
+                viewModel = vm,
+                onOpenBranches = { id ->
+                    navController.navigate(Routes.branches(id)) {
+                        popUpTo(Routes.BranchesPicker) { inclusive = true }
+                    }
+                },
+                onOpenQueue = ::goQueueHome,
+                onOpenServices = { goServices() },
+                onOpenProfile = { goProfile() },
+                onSignOut = ::signOut,
+                onUnauthorized = ::onUnauthorized,
+            )
+        }
+
+        composable(
+            route = Routes.Branches,
+            arguments = listOf(navArgument("businessId") { type = NavType.IntType }),
+        ) { entry ->
+            val businessId = entry.arguments?.getInt("businessId") ?: return@composable
+            val vm: BranchesViewModel = viewModel(
+                factory = BranchesViewModel.factory(businessId, repository),
+            )
+            BranchesScreen(
+                viewModel = vm,
+                onOpenQueue = {
+                    navController.navigate(Routes.queue(businessId)) {
+                        launchSingleTop = true
+                    }
+                },
+                onOpenServices = { goServices(businessId) },
+                onOpenHours = { id -> goProfile(id) },
+                onOpenProfile = { goProfile(businessId) },
                 onSignOut = ::signOut,
                 onUnauthorized = ::onUnauthorized,
             )

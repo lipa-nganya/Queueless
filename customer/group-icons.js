@@ -3,7 +3,7 @@
  * White/navy primary strokes; lime accents via .accent (lime on light UI, navy on lime chips).
  */
 const svg = (body) =>
-  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${body}</svg>`;
+  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${body}</svg>`;
 
 export const GROUP_ICON_LABELS = {
   beauty: "Beauty & Wellness",

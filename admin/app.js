@@ -1,4 +1,5 @@
 import { GROUP_ICON_KEYS, GROUP_ICON_LABELS, groupIconSvg } from "./group-icons.js";
+import { accessibilityIconSvg } from "./accessibility-icons.js";
 
 // Empty origin keeps the same-origin "/api" used when the backend serves this UI.
 const API_ORIGIN = window.QUEUELESS_API_ORIGIN || "";
@@ -21,6 +22,173 @@ function groupIcon(key) {
 
 const PIN_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 21s6-5.2 6-10a6 6 0 1 0-12 0c0 4.8 6 10 6 10Z"/><circle cx="12" cy="11" r="2.2"/></svg>`;
 
+const WEEK_DAYS = [
+  { key: "mon", label: "Monday", short: "Mon" },
+  { key: "tue", label: "Tuesday", short: "Tue" },
+  { key: "wed", label: "Wednesday", short: "Wed" },
+  { key: "thu", label: "Thursday", short: "Thu" },
+  { key: "fri", label: "Friday", short: "Fri" },
+  { key: "sat", label: "Saturday", short: "Sat" },
+  { key: "sun", label: "Sunday", short: "Sun" },
+];
+
+const ACCESSIBILITY_OPTIONS = [
+  { id: "wheelchair", label: "Wheelchair Accessible", description: "Step-free entrance and spaces/routes usable by wheelchair users" },
+  { id: "blind_low_vision", label: "Blind & Low-Vision Friendly", description: "Staff/environment can reasonably assist blind or low-vision customers" },
+  { id: "deaf_hard_of_hearing", label: "Deaf & Hard-of-Hearing Friendly", description: "Communication accommodations are available beyond spoken communication" },
+  { id: "sign_language", label: "Sign Language Available", description: "At least one staff member or service option can communicate in sign language" },
+  { id: "autism_friendly", label: "Autism-Friendly", description: "Accommodations are available for autistic customers, such as reduced sensory stimulation or flexible service" },
+  { id: "quiet_low_sensory", label: "Quiet / Low-Sensory Space Available", description: "A quieter waiting or service area is available" },
+  { id: "accessible_seating", label: "Accessible Seating Available", description: "Seating accommodates customers with mobility needs" },
+  { id: "accessible_restroom", label: "Accessible Restroom Available", description: "An accessible toilet/restroom is available on the premises" },
+  { id: "assistance_animals", label: "Assistance Animals Welcome", description: "Customers using trained assistance/service animals are accommodated" },
+  { id: "support_person", label: "Support Person Welcome", description: "A customer may be accompanied by a caregiver, interpreter, aide, or other support person" },
+];
+
+function accessibilityEditorHtml(selectedIds = []) {
+  const selected = new Set(Array.isArray(selectedIds) ? selectedIds : []);
+  return `
+    <div class="a11y-options" role="group" aria-label="Accessibility options">
+      ${ACCESSIBILITY_OPTIONS.map(
+        (option) => `
+          <label class="a11y-option">
+            <input type="checkbox" name="accessibility_options" value="${option.id}" ${selected.has(option.id) ? "checked" : ""} />
+            <span class="a11y-icon" aria-hidden="true">${accessibilityIconSvg(option.id)}</span>
+            <span class="a11y-copy">
+              <strong>${escapeHtml(option.label)}</strong>
+              <small>${escapeHtml(option.description)}</small>
+            </span>
+          </label>
+        `
+      ).join("")}
+    </div>
+  `;
+}
+
+function readAccessibilityOptions(root) {
+  if (!root) return [];
+  return [...root.querySelectorAll('input[name="accessibility_options"]:checked')].map((el) => el.value);
+}
+
+function setAccessibilityOptions(root, selectedIds = []) {
+  if (!root) return;
+  const selected = new Set(Array.isArray(selectedIds) ? selectedIds : []);
+  root.querySelectorAll('input[name="accessibility_options"]').forEach((input) => {
+    input.checked = selected.has(input.value);
+  });
+}
+
+function defaultHoursSchedule() {
+  return WEEK_DAYS.map((d) => ({
+    day: d.key,
+    open: d.key !== "sat" && d.key !== "sun",
+    start: "08:00",
+    end: "18:00",
+  }));
+}
+
+function parseHoursSchedule(value) {
+  if (Array.isArray(value) && value.length) {
+    const byDay = new Map(defaultHoursSchedule().map((d) => [d.day, { ...d }]));
+    for (const item of value) {
+      const key = String(item?.day || "").toLowerCase();
+      if (!byDay.has(key)) continue;
+      byDay.set(key, {
+        day: key,
+        open: Boolean(item.open),
+        start: item.start || "08:00",
+        end: item.end || "18:00",
+      });
+    }
+    return WEEK_DAYS.map((d) => byDay.get(d.key));
+  }
+  const raw = String(value || "").trim();
+  if (raw.startsWith("[")) {
+    try {
+      return parseHoursSchedule(JSON.parse(raw));
+    } catch {
+      /* fall through */
+    }
+  }
+  return defaultHoursSchedule();
+}
+
+function formatHoursDisplay(branchOrValue) {
+  if (branchOrValue && typeof branchOrValue === "object" && !Array.isArray(branchOrValue)) {
+    if (branchOrValue.operating_hours_display) return branchOrValue.operating_hours_display;
+    if (Array.isArray(branchOrValue.operating_schedule)) {
+      return parseHoursSchedule(branchOrValue.operating_schedule)
+        .map((day) => {
+          const short = WEEK_DAYS.find((d) => d.key === day.day)?.short || day.day;
+          return day.open ? `${short} ${day.start}–${day.end}` : `${short} Closed`;
+        })
+        .join("\n");
+    }
+    if (!branchOrValue.operating_hours) return "";
+    return formatHoursDisplay(branchOrValue.operating_hours);
+  }
+  const raw = String(branchOrValue || "").trim();
+  if (!raw) return "";
+  if (raw.startsWith("[")) {
+    return parseHoursSchedule(raw)
+      .map((day) => {
+        const short = WEEK_DAYS.find((d) => d.key === day.day)?.short || day.day;
+        return day.open ? `${short} ${day.start}–${day.end}` : `${short} Closed`;
+      })
+      .join("\n");
+  }
+  return raw;
+}
+
+function mountHoursEditor(root, schedule = defaultHoursSchedule()) {
+  const days = parseHoursSchedule(schedule);
+  root.innerHTML = days
+    .map((day) => {
+      const meta = WEEK_DAYS.find((d) => d.key === day.day);
+      return `
+        <div class="hours-day-row" data-day="${day.day}">
+          <div class="hours-day-label">${meta?.label || day.day}</div>
+          <label class="hours-day-toggle-wrap">
+            <input type="checkbox" class="hours-day-toggle" ${day.open ? "checked" : ""} />
+            <span class="hours-day-toggle-text">${day.open ? "Open" : "Closed"}</span>
+          </label>
+          <input class="hours-start" type="time" value="${day.start}" ${day.open ? "" : "disabled"} />
+          <span class="hours-sep">to</span>
+          <input class="hours-end" type="time" value="${day.end}" ${day.open ? "" : "disabled"} />
+        </div>
+      `;
+    })
+    .join("");
+
+  root.querySelectorAll(".hours-day-row").forEach((row) => {
+    const toggle = row.querySelector(".hours-day-toggle");
+    const label = row.querySelector(".hours-day-toggle-text");
+    const start = row.querySelector(".hours-start");
+    const end = row.querySelector(".hours-end");
+    const sync = () => {
+      const open = toggle.checked;
+      label.textContent = open ? "Open" : "Closed";
+      start.disabled = !open;
+      end.disabled = !open;
+      row.classList.toggle("is-closed", !open);
+    };
+    toggle.addEventListener("change", sync);
+    sync();
+  });
+}
+
+function readHoursSchedule(root) {
+  return WEEK_DAYS.map((day) => {
+    const row = root.querySelector(`.hours-day-row[data-day="${day.key}"]`);
+    return {
+      day: day.key,
+      open: Boolean(row?.querySelector(".hours-day-toggle")?.checked),
+      start: row?.querySelector(".hours-start")?.value || "08:00",
+      end: row?.querySelector(".hours-end")?.value || "18:00",
+    };
+  });
+}
+
 /**
  * Kenya place autocomplete backed by Photon (proxied through /places/search).
  * Returns a small controller so create/edit can read the picked coordinates.
@@ -31,14 +199,38 @@ function bindPlaceAutocomplete(input, { listId }) {
   let requestId = 0;
 
   const wrap = input.closest(".place-field") || input.parentElement;
+  wrap.classList.add("place-field");
+
+  let inputWrap = input.closest(".place-input-wrap");
+  if (!inputWrap) {
+    inputWrap = document.createElement("div");
+    inputWrap.className = "place-input-wrap";
+    input.parentNode.insertBefore(inputWrap, input);
+    inputWrap.appendChild(input);
+  }
+
+  let clearBtn = inputWrap.querySelector(".place-clear");
+  if (!clearBtn) {
+    clearBtn = document.createElement("button");
+    clearBtn.type = "button";
+    clearBtn.className = "place-clear hidden";
+    clearBtn.setAttribute("aria-label", "Clear location");
+    clearBtn.innerHTML =
+      '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+    inputWrap.appendChild(clearBtn);
+  }
+
   let list = document.getElementById(listId);
   if (!list) {
     list = document.createElement("ul");
     list.id = listId;
     list.className = "place-suggestions hidden";
     list.setAttribute("role", "listbox");
-    wrap.classList.add("place-field");
     wrap.appendChild(list);
+  }
+
+  function syncClearButton() {
+    clearBtn.classList.toggle("hidden", !input.value.trim());
   }
 
   function hide() {
@@ -56,6 +248,14 @@ function bindPlaceAutocomplete(input, { listId }) {
     state.latitude = place.latitude;
     state.longitude = place.longitude;
     state.pickedLabel = place.label;
+  }
+
+  function clearAll() {
+    input.value = "";
+    clearCoords();
+    hide();
+    syncClearButton();
+    input.focus();
   }
 
   async function search(query) {
@@ -89,6 +289,7 @@ function bindPlaceAutocomplete(input, { listId }) {
           if (!place) return;
           input.value = place.label;
           setCoords(place);
+          syncClearButton();
           hide();
         });
       });
@@ -99,10 +300,16 @@ function bindPlaceAutocomplete(input, { listId }) {
     }
   }
 
+  clearBtn.addEventListener("mousedown", (event) => {
+    event.preventDefault();
+    clearAll();
+  });
+
   input.addEventListener("input", () => {
     const query = input.value.trim();
     // Typing freely invalidates a previous pick so we never keep stale coords.
     if (query !== state.pickedLabel) clearCoords();
+    syncClearButton();
     clearTimeout(timer);
     if (query.length < 2) {
       hide();
@@ -114,6 +321,8 @@ function bindPlaceAutocomplete(input, { listId }) {
   input.addEventListener("blur", () => {
     setTimeout(hide, 150);
   });
+
+  syncClearButton();
 
   return {
     getCoords: () => ({
@@ -136,11 +345,10 @@ function bindPlaceAutocomplete(input, { listId }) {
       } else {
         clearCoords();
       }
+      syncClearButton();
     },
     reset: () => {
-      input.value = "";
-      clearCoords();
-      hide();
+      clearAll();
     },
   };
 }
@@ -228,6 +436,39 @@ async function api(path, options = {}) {
 
 function formatDate(value) {
   return new Date(value).toLocaleString();
+}
+
+/** Format ISO timestamp for <input type="datetime-local"> in Africa/Nairobi. */
+function toDatetimeLocalValue(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return "";
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Africa/Nairobi",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(date);
+  const get = (type) => parts.find((part) => part.type === type)?.value || "";
+  return `${get("year")}-${get("month")}-${get("day")}T${get("hour")}:${get("minute")}`;
+}
+
+function formatTrialEndsAt(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return "";
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Africa/Nairobi",
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  }).format(date);
 }
 
 function renderLogin() {
@@ -715,132 +956,11 @@ async function renderBusinesses() {
               </select>
             </div>
           </div>
-          <div class="field place-field">
-            <label for="business-location">Location</label>
-            <input id="business-location" name="location" placeholder="Start typing a Kenya place…" autocomplete="off" />
-          </div>
           <button class="btn btn-primary" type="submit">Create</button>
         </form>
         <p class="message" id="page-message" role="status"></p>
       </section>
       <div class="table-wrap" id="businesses-table"></div>
-
-      <!-- Edit panel (hidden by default) -->
-      <div id="edit-overlay" class="edit-overlay hidden" role="dialog" aria-modal="true" aria-label="Edit business">
-        <div class="edit-drawer edit-drawer-wide">
-          <div class="edit-drawer-header">
-            <h3>Edit business</h3>
-            <button type="button" class="btn-icon" id="edit-close" aria-label="Close">✕</button>
-          </div>
-
-          <div class="edit-columns">
-            <div class="edit-image-section">
-              <h4>Business image</h4>
-              <div class="image-preview-wrap">
-                <img id="edit-image-preview" src="" alt="" class="hidden" />
-                <span id="edit-image-placeholder" class="image-placeholder">No image</span>
-              </div>
-              <label class="btn image-upload-btn" for="edit-image-input">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5" />
-                  <path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3" />
-                </svg>
-                Upload image
-                <input id="edit-image-input" type="file" accept="image/*" style="display:none" />
-              </label>
-              <p class="message" id="edit-image-message" role="status"></p>
-            </div>
-
-            <form id="edit-form">
-              <div class="field-grid">
-                <div class="field">
-                  <label for="edit-name">Name</label>
-                  <input id="edit-name" name="name" required />
-                </div>
-                <div class="field">
-                  <label for="edit-group">Business group</label>
-                  <select id="edit-group" name="business_group_id" required>
-                    <option value="">Select group</option>
-                  </select>
-                </div>
-                <div class="field field-wide">
-                  <label for="edit-description">Description</label>
-                  <textarea id="edit-description" name="description" rows="3" placeholder="Short description of the business…"></textarea>
-                </div>
-                <div class="field field-wide">
-                  <div class="setting-row" style="padding:0.85rem 0;border:none">
-                    <div class="setting-copy">
-                      <div class="setting-title">Active on customer site</div>
-                      <p class="setting-desc">Inactive businesses stay hidden from customers until you activate them.</p>
-                    </div>
-                    <label class="switch">
-                      <input type="checkbox" id="edit-active" name="is_active" />
-                      <span class="switch-track"><span class="switch-thumb"></span></span>
-                    </label>
-                  </div>
-                </div>
-              </div>
-              <div class="edit-actions">
-                <p class="message" id="edit-message" role="status"></p>
-                <button class="btn btn-primary" type="submit">Save changes</button>
-              </div>
-            </form>
-          </div>
-
-          <section class="branches-panel" style="margin-top:1.25rem;padding-top:1rem;border-top:1px solid rgba(255,255,255,0.08)">
-            <div style="display:flex;align-items:center;justify-content:space-between;gap:1rem;margin-bottom:0.75rem">
-              <div>
-                <h4 style="margin:0">Branches</h4>
-                <p class="muted" style="margin:0.25rem 0 0">Add locations for this business. Vendors see every branch.</p>
-              </div>
-            </div>
-            <div id="branches-list" class="branches-list"></div>
-            <form id="branch-form" style="margin-top:1rem">
-              <h4 id="branch-form-title" style="margin:0 0 0.75rem">Add branch</h4>
-              <input type="hidden" id="branch-edit-id" value="" />
-              <div class="field-grid">
-                <div class="field">
-                  <label for="branch-name">Branch name</label>
-                  <input id="branch-name" name="name" placeholder="e.g. Westlands" required />
-                </div>
-                <div class="field">
-                  <label for="branch-phone">Phone</label>
-                  <input id="branch-phone" name="phone" placeholder="e.g. 0712 345 678" />
-                </div>
-                <div class="field place-field field-wide">
-                  <label for="branch-location">Location</label>
-                  <input id="branch-location" name="location" placeholder="Start typing a Kenya place…" autocomplete="off" />
-                </div>
-                <div class="field field-wide">
-                  <label for="branch-operating-hours">Operating hours</label>
-                  <textarea
-                    id="branch-operating-hours"
-                    name="operating_hours"
-                    rows="2"
-                    placeholder="e.g. Mon-Fri: 8:00 AM-6:00 PM"
-                  ></textarea>
-                </div>
-                <div class="field field-wide">
-                  <div class="setting-row" style="padding:0.5rem 0;border:none">
-                    <div class="setting-copy">
-                      <div class="setting-title">Branch active</div>
-                    </div>
-                    <label class="switch">
-                      <input type="checkbox" id="branch-active" name="is_active" checked />
-                      <span class="switch-track"><span class="switch-thumb"></span></span>
-                    </label>
-                  </div>
-                </div>
-              </div>
-              <div class="edit-actions" style="margin-top:0.75rem">
-                <p class="message" id="branch-message" role="status"></p>
-                <button class="btn btn-secondary" type="button" id="branch-cancel" hidden>Cancel</button>
-                <button class="btn btn-primary" type="submit" id="branch-submit">Add branch</button>
-              </div>
-            </form>
-          </section>
-        </div>
-      </div>
     `
   );
   bindShellNav();
@@ -848,279 +968,7 @@ async function renderBusinesses() {
   const message = document.getElementById("page-message");
   const table = document.getElementById("businesses-table");
   const select = document.getElementById("business-group");
-  const editOverlay = document.getElementById("edit-overlay");
-  const editForm = document.getElementById("edit-form");
-  const editMessage = document.getElementById("edit-message");
-  const editGroup = document.getElementById("edit-group");
-  const editImageInput = document.getElementById("edit-image-input");
-  const editImageMessage = document.getElementById("edit-image-message");
-  const editImagePreview = document.getElementById("edit-image-preview");
-  const editImagePlaceholder = document.getElementById("edit-image-placeholder");
-
-  let editingId = null;
   let allGroups = [];
-  let businessesById = new Map();
-  let currentBranches = [];
-  const createPlace = bindPlaceAutocomplete(document.getElementById("business-location"), {
-    listId: "create-place-suggestions",
-  });
-  const branchPlace = bindPlaceAutocomplete(document.getElementById("branch-location"), {
-    listId: "branch-place-suggestions",
-  });
-  const branchForm = document.getElementById("branch-form");
-  const branchMessage = document.getElementById("branch-message");
-  const branchesList = document.getElementById("branches-list");
-  const branchCancel = document.getElementById("branch-cancel");
-  const branchSubmit = document.getElementById("branch-submit");
-  const branchFormTitle = document.getElementById("branch-form-title");
-
-  function resetBranchForm() {
-    branchForm.reset();
-    document.getElementById("branch-edit-id").value = "";
-    document.getElementById("branch-active").checked = true;
-    branchPlace.reset();
-    branchFormTitle.textContent = "Add branch";
-    branchSubmit.textContent = "Add branch";
-    branchCancel.hidden = true;
-    branchMessage.textContent = "";
-    branchMessage.classList.remove("success");
-  }
-
-  function renderBranchesList(branches = []) {
-    currentBranches = branches;
-    if (!branches.length) {
-      branchesList.innerHTML = `<p class="empty">No branches yet.</p>`;
-      return;
-    }
-    branchesList.innerHTML = `
-      <table>
-        <thead>
-          <tr>
-            <th>Branch</th>
-            <th>Location</th>
-            <th>Status</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          ${branches
-            .map(
-              (branch) => `
-                <tr>
-                  <td>
-                    <div class="cell-text">
-                      <span class="cell-title">${escapeHtml(branch.name)}</span>
-                      <span class="cell-sub">${escapeHtml(branch.phone || "No phone")}</span>
-                    </div>
-                  </td>
-                  <td>
-                    ${
-                      branch.location
-                        ? `<span class="cell-location">${PIN_ICON}${escapeHtml(branch.location)}</span>`
-                        : `<span class="muted">—</span>`
-                    }
-                  </td>
-                  <td>
-                    <span class="status-pill ${branch.is_active ? "status-active" : "status-inactive"}">
-                      ${branch.is_active ? "Active" : "Inactive"}
-                    </span>
-                  </td>
-                  <td class="row-actions">
-                    <button class="btn btn-secondary btn-sm branch-edit-btn" data-id="${branch.id}" type="button">Edit</button>
-                    <button class="btn btn-secondary btn-sm branch-delete-btn" data-id="${branch.id}" type="button">Delete</button>
-                  </td>
-                </tr>
-              `
-            )
-            .join("")}
-        </tbody>
-      </table>
-    `;
-
-    branchesList.querySelectorAll(".branch-edit-btn").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const branch = currentBranches.find((item) => Number(item.id) === Number(btn.dataset.id));
-        if (!branch) return;
-        document.getElementById("branch-edit-id").value = String(branch.id);
-        document.getElementById("branch-name").value = branch.name || "";
-        document.getElementById("branch-phone").value = branch.phone || "";
-        document.getElementById("branch-operating-hours").value = branch.operating_hours || "";
-        document.getElementById("branch-active").checked = Boolean(branch.is_active);
-        branchPlace.setFromBusiness(branch);
-        branchFormTitle.textContent = "Edit branch";
-        branchSubmit.textContent = "Save branch";
-        branchCancel.hidden = false;
-        branchMessage.textContent = "";
-      });
-    });
-
-    branchesList.querySelectorAll(".branch-delete-btn").forEach((btn) => {
-      btn.addEventListener("click", async () => {
-        if (!editingId) return;
-        if (!confirm("Delete this branch?")) return;
-        try {
-          await api(`/businesses/${editingId}/branches/${btn.dataset.id}`, { method: "DELETE" });
-          await loadBusinesses();
-          const refreshed = businessesById.get(editingId);
-          renderBranchesList(refreshed?.branches || []);
-          resetBranchForm();
-        } catch (error) {
-          branchMessage.textContent = error.message;
-        }
-      });
-    });
-  }
-
-  function openEditPanel(business) {
-    editingId = business.id;
-    editMessage.textContent = "";
-    editMessage.classList.remove("success");
-    editImageMessage.textContent = "";
-    editImageMessage.classList.remove("success");
-    resetBranchForm();
-
-    editForm.elements["name"].value = business.name || "";
-    editForm.elements["description"].value = business.description || "";
-    document.getElementById("edit-active").checked = Boolean(business.is_active);
-
-    editGroup.innerHTML =
-      `<option value="">Select group</option>` +
-      allGroups.map((g) => `<option value="${g.id}"${g.id === business.business_group_id ? " selected" : ""}>${escapeHtml(g.name)}</option>`).join("");
-
-    if (business.image_url) {
-      editImagePreview.src = resolveImageUrl(business.image_url);
-      editImagePreview.alt = business.name;
-      editImagePreview.classList.remove("hidden");
-      editImagePlaceholder.classList.add("hidden");
-    } else {
-      editImagePreview.src = "";
-      editImagePreview.classList.add("hidden");
-      editImagePlaceholder.classList.remove("hidden");
-    }
-
-    renderBranchesList(business.branches || []);
-    editOverlay.classList.remove("hidden");
-    document.body.style.overflow = "hidden";
-    editForm.elements["name"].focus();
-  }
-
-  function closeEditPanel() {
-    editOverlay.classList.add("hidden");
-    document.body.style.overflow = "";
-    editingId = null;
-    editImageInput.value = "";
-    resetBranchForm();
-  }
-
-  document.getElementById("edit-close").addEventListener("click", closeEditPanel);
-  editOverlay.addEventListener("click", (e) => { if (e.target === editOverlay) closeEditPanel(); });
-  document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeEditPanel(); });
-
-  editForm.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    if (!editingId) return;
-    const data = Object.fromEntries(new FormData(editForm).entries());
-    editMessage.textContent = "";
-    editMessage.classList.remove("success");
-    const btn = editForm.querySelector("button[type=submit]");
-    btn.disabled = true;
-    try {
-      const updated = await api(`/businesses/${editingId}`, {
-        method: "PUT",
-        body: JSON.stringify({
-          name: data.name,
-          business_group_id: Number(data.business_group_id),
-          description: data.description,
-          is_active: document.getElementById("edit-active").checked,
-        }),
-      });
-      editMessage.textContent = "Saved.";
-      editMessage.classList.add("success");
-      await loadBusinesses();
-      editForm.elements["name"].value = updated.name;
-      const refreshed = businessesById.get(editingId);
-      renderBranchesList(refreshed?.branches || []);
-    } catch (err) {
-      editMessage.textContent = err.message;
-    } finally {
-      btn.disabled = false;
-    }
-  });
-
-  branchCancel.addEventListener("click", resetBranchForm);
-
-  branchForm.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    if (!editingId) return;
-    const data = Object.fromEntries(new FormData(branchForm).entries());
-    const coords = branchPlace.getCoords();
-    const branchId = document.getElementById("branch-edit-id").value;
-    branchMessage.textContent = "";
-    branchMessage.classList.remove("success");
-    branchSubmit.disabled = true;
-    try {
-      const payload = {
-        name: data.name,
-        phone: data.phone,
-        location: data.location,
-        operating_hours: data.operating_hours,
-        latitude: coords.latitude,
-        longitude: coords.longitude,
-        is_active: document.getElementById("branch-active").checked,
-      };
-      if (branchId) {
-        await api(`/businesses/${editingId}/branches/${branchId}`, {
-          method: "PUT",
-          body: JSON.stringify(payload),
-        });
-        branchMessage.textContent = "Branch updated.";
-      } else {
-        await api(`/businesses/${editingId}/branches`, {
-          method: "POST",
-          body: JSON.stringify(payload),
-        });
-        branchMessage.textContent = "Branch added.";
-      }
-      branchMessage.classList.add("success");
-      await loadBusinesses();
-      const refreshed = businessesById.get(editingId);
-      renderBranchesList(refreshed?.branches || []);
-      resetBranchForm();
-    } catch (error) {
-      branchMessage.textContent = error.message;
-    } finally {
-      branchSubmit.disabled = false;
-    }
-  });
-
-  editImageInput.addEventListener("change", async () => {
-    const file = editImageInput.files?.[0];
-    if (!file || !editingId) return;
-    editImageMessage.textContent = "";
-    editImageMessage.classList.remove("success");
-    const formData = new FormData();
-    formData.append("image", file);
-    const token = getToken();
-    try {
-      const response = await fetch(`${API_BASE}/businesses/${editingId}/image`, {
-        method: "POST",
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-        body: formData,
-      });
-      const result = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(result.error || "Upload failed.");
-      editImagePreview.src = resolveImageUrl(result.image_url) + "?t=" + Date.now();
-      editImagePreview.classList.remove("hidden");
-      editImagePlaceholder.classList.add("hidden");
-      editImageMessage.textContent = "Image updated.";
-      editImageMessage.classList.add("success");
-      await loadBusinesses();
-    } catch (err) {
-      editImageMessage.textContent = err.message;
-    } finally {
-      editImageInput.value = "";
-    }
-  });
 
   async function loadGroupsIntoSelect() {
     allGroups = await api("/business-groups");
@@ -1134,7 +982,6 @@ async function renderBusinesses() {
 
   async function loadBusinesses() {
     const businesses = await api("/businesses");
-    businessesById = new Map(businesses.map((business) => [Number(business.id), business]));
     if (!businesses.length) {
       table.innerHTML = `<p class="empty">No businesses yet.</p>`;
       return;
@@ -1167,9 +1014,6 @@ async function renderBusinesses() {
                       <div class="cell-text">
                         <span class="cell-title">${escapeHtml(business.name)}</span>
                         <span class="cell-sub">${escapeHtml(business.phone || "No phone")}</span>
-                        ${business.operating_hours
-                          ? `<span class="cell-sub">${escapeHtml(business.operating_hours).replaceAll("\n", "<br />")}</span>`
-                          : ""}
                       </div>
                     </div>
                   </td>
@@ -1195,7 +1039,7 @@ async function renderBusinesses() {
                   </td>
                   <td class="muted cell-date">${formatDate(business.created_at)}</td>
                   <td class="row-actions">
-                    <button class="btn btn-secondary btn-sm edit-btn" data-id="${business.id}">
+                    <button class="btn btn-secondary btn-sm edit-btn" data-id="${business.id}" type="button">
                       Edit
                     </button>
                   </td>
@@ -1209,8 +1053,7 @@ async function renderBusinesses() {
 
     table.querySelectorAll(".edit-btn").forEach((btn) => {
       btn.addEventListener("click", () => {
-        const business = businessesById.get(Number(btn.dataset.id));
-        if (business) openEditPanel(business);
+        location.hash = `businesses/${btn.dataset.id}`;
       });
     });
   }
@@ -1219,27 +1062,25 @@ async function renderBusinesses() {
     event.preventDefault();
     const form = event.currentTarget;
     const data = Object.fromEntries(new FormData(form).entries());
-    const coords = createPlace.getCoords();
     message.textContent = "";
     message.classList.remove("success");
 
     try {
-      await api("/businesses", {
+      const created = await api("/businesses", {
         method: "POST",
         body: JSON.stringify({
           name: data.name,
           business_group_id: Number(data.business_group_id),
-          location: data.location,
-          latitude: coords.latitude,
-          longitude: coords.longitude,
         }),
       });
       form.reset();
-      createPlace.reset();
       await loadGroupsIntoSelect();
-      message.textContent = "Business created as inactive. Activate it when ready for customers.";
+      message.textContent = "Business created as inactive. Add a branch location, then activate when ready.";
       message.classList.add("success");
       await loadBusinesses();
+      if (created?.id) {
+        location.hash = `businesses/${created.id}`;
+      }
     } catch (error) {
       message.textContent = error.message;
     }
@@ -1255,6 +1096,619 @@ async function renderBusinesses() {
     message.textContent = error.message;
   }
 }
+
+async function renderEditBusiness(businessId) {
+  app.innerHTML = shell(
+    "businesses",
+    `
+      <div class="main-header">
+        <div>
+          <button type="button" class="btn btn-secondary btn-sm" id="back-to-businesses">← Back to businesses</button>
+          <h2 style="margin-top:0.85rem">Edit business</h2>
+          <p id="edit-business-subtitle">Update brand details and manage branches.</p>
+        </div>
+      </div>
+
+      <p class="message" id="page-message" role="status"></p>
+
+      <section class="panel">
+        <h3>Business details</h3>
+        <div class="edit-page-grid">
+          <div class="edit-image-section">
+            <h4>Business image</h4>
+            <div class="image-preview-wrap">
+              <img id="edit-image-preview" src="" alt="" class="hidden" />
+              <span id="edit-image-placeholder" class="image-placeholder">No image</span>
+            </div>
+            <label class="btn image-upload-btn" for="edit-image-input">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5" />
+                <path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3" />
+              </svg>
+              Upload image
+              <input id="edit-image-input" type="file" accept="image/*" style="display:none" />
+            </label>
+            <p class="message" id="edit-image-message" role="status"></p>
+          </div>
+
+          <form id="edit-form">
+            <div class="field-grid">
+              <div class="field">
+                <label for="edit-name">Name</label>
+                <input id="edit-name" name="name" required />
+              </div>
+              <div class="field">
+                <label for="edit-group">Business group</label>
+                <select id="edit-group" name="business_group_id" required>
+                  <option value="">Select group</option>
+                </select>
+              </div>
+              <div class="field field-wide">
+                <label for="edit-description">Description</label>
+                <textarea id="edit-description" name="description" rows="3" placeholder="Short description of the business…"></textarea>
+              </div>
+              <div class="field field-wide">
+                <div class="setting-row" style="padding:0.85rem 0;border:none">
+                  <div class="setting-copy">
+                    <div class="setting-title">Active on customer site</div>
+                    <p class="setting-desc">Inactive businesses stay hidden from customers until you activate them.</p>
+                  </div>
+                  <label class="switch">
+                    <input type="checkbox" id="edit-active" name="is_active" />
+                    <span class="switch-track"><span class="switch-thumb"></span></span>
+                  </label>
+                </div>
+              </div>
+            </div>
+            <div class="edit-actions">
+              <p class="message" id="edit-message" role="status"></p>
+              <button class="btn btn-primary" type="submit">Save changes</button>
+            </div>
+          </form>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h3>Branches</h3>
+        <p class="muted" style="margin-top:-0.35rem">Add locations for this business. Vendors see every branch.</p>
+        <div id="branches-list" class="branches-list" style="margin-top:1rem"></div>
+      </section>
+
+      <section class="panel">
+        <h3 id="branch-form-title">Add branch</h3>
+        <form id="branch-form">
+          <input type="hidden" id="branch-edit-id" value="" />
+          <div class="field-grid">
+            <div class="field">
+              <label for="branch-name">Branch name</label>
+              <input id="branch-name" name="name" placeholder="e.g. Westlands" required />
+            </div>
+            <div class="field">
+              <label for="branch-phone">Phone</label>
+              <input id="branch-phone" name="phone" placeholder="e.g. 0712 345 678" />
+            </div>
+            <div class="field place-field field-wide">
+              <label for="branch-location">Location</label>
+              <input id="branch-location" name="location" placeholder="Start typing a Kenya place…" autocomplete="off" />
+            </div>
+            <div class="field field-wide">
+              <label>Business hours</label>
+              <p class="muted" style="margin:0 0 0.55rem">Toggle each day on or off, then pick start and end times.</p>
+              <div id="branch-hours" class="hours-editor"></div>
+            </div>
+            <div class="field field-wide">
+              <label>Accessibility</label>
+              <p class="muted" style="margin:0 0 0.55rem">Select the options this branch can offer customers.</p>
+              <div id="branch-accessibility">${accessibilityEditorHtml()}</div>
+            </div>
+            <div class="field field-wide">
+              <div class="setting-row" style="padding:0.5rem 0;border:none">
+                <div class="setting-copy">
+                  <div class="setting-title">Branch active</div>
+                </div>
+                <label class="switch">
+                  <input type="checkbox" id="branch-active" name="is_active" checked />
+                  <span class="switch-track"><span class="switch-thumb"></span></span>
+                </label>
+              </div>
+            </div>
+          </div>
+          <div class="edit-actions" style="margin-top:0.75rem">
+            <p class="message" id="branch-message" role="status"></p>
+            <button class="btn btn-secondary" type="button" id="branch-cancel" hidden>Cancel</button>
+            <button class="btn btn-primary" type="submit" id="branch-submit">Add branch</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="panel">
+        <h3>Services</h3>
+        <p class="muted" style="margin-top:-0.35rem">Services offered across all branches, each with a service period.</p>
+        <div id="services-list" class="services-list" style="margin-top:1rem"></div>
+      </section>
+
+      <section class="panel">
+        <h3 id="service-form-title">Add service</h3>
+        <form id="service-form">
+          <input type="hidden" id="service-edit-id" value="" />
+          <div class="field-grid">
+            <div class="field">
+              <label for="service-name">Service name</label>
+              <input id="service-name" name="name" placeholder="e.g. Account opening" required />
+            </div>
+            <div class="field">
+              <label for="service-period">Service period (minutes)</label>
+              <input id="service-period" name="duration_minutes" type="number" min="1" max="1440" value="15" required />
+            </div>
+            <div class="field field-wide">
+              <label for="service-description">Description</label>
+              <textarea id="service-description" name="description" rows="2" placeholder="Optional short description"></textarea>
+            </div>
+            <div class="field field-wide">
+              <div class="setting-row" style="padding:0.5rem 0;border:none">
+                <div class="setting-copy">
+                  <div class="setting-title">Service active</div>
+                </div>
+                <label class="switch">
+                  <input type="checkbox" id="service-active" name="is_active" checked />
+                  <span class="switch-track"><span class="switch-thumb"></span></span>
+                </label>
+              </div>
+            </div>
+          </div>
+          <div class="edit-actions" style="margin-top:0.75rem">
+            <p class="message" id="service-message" role="status"></p>
+            <button class="btn btn-secondary" type="button" id="service-cancel" hidden>Cancel</button>
+            <button class="btn btn-primary" type="submit" id="service-submit">Add service</button>
+          </div>
+        </form>
+      </section>
+    `
+  );
+  bindShellNav();
+
+  const pageMessage = document.getElementById("page-message");
+  const editForm = document.getElementById("edit-form");
+  const editMessage = document.getElementById("edit-message");
+  const editGroup = document.getElementById("edit-group");
+  const editImageInput = document.getElementById("edit-image-input");
+  const editImageMessage = document.getElementById("edit-image-message");
+  const editImagePreview = document.getElementById("edit-image-preview");
+  const editImagePlaceholder = document.getElementById("edit-image-placeholder");
+  const branchForm = document.getElementById("branch-form");
+  const branchMessage = document.getElementById("branch-message");
+  const branchesList = document.getElementById("branches-list");
+  const branchCancel = document.getElementById("branch-cancel");
+  const branchSubmit = document.getElementById("branch-submit");
+  const branchFormTitle = document.getElementById("branch-form-title");
+  const branchHours = document.getElementById("branch-hours");
+  const branchAccessibility = document.getElementById("branch-accessibility");
+  const branchPlace = bindPlaceAutocomplete(document.getElementById("branch-location"), {
+    listId: "branch-place-suggestions",
+  });
+  mountHoursEditor(branchHours, defaultHoursSchedule());
+  setAccessibilityOptions(branchAccessibility, []);
+  const serviceForm = document.getElementById("service-form");
+  const serviceMessage = document.getElementById("service-message");
+  const servicesList = document.getElementById("services-list");
+  const serviceCancel = document.getElementById("service-cancel");
+  const serviceSubmit = document.getElementById("service-submit");
+  const serviceFormTitle = document.getElementById("service-form-title");
+
+  let business = null;
+  let currentBranches = [];
+  let currentServices = [];
+  let allGroups = [];
+
+  document.getElementById("back-to-businesses").addEventListener("click", () => {
+    location.hash = "businesses";
+  });
+
+  function resetBranchForm() {
+    branchForm.reset();
+    document.getElementById("branch-edit-id").value = "";
+    document.getElementById("branch-active").checked = true;
+    branchPlace.reset();
+    mountHoursEditor(branchHours, defaultHoursSchedule());
+    setAccessibilityOptions(branchAccessibility, []);
+    branchFormTitle.textContent = "Add branch";
+    branchSubmit.textContent = "Add branch";
+    branchCancel.hidden = true;
+    branchMessage.textContent = "";
+    branchMessage.classList.remove("success");
+  }
+
+  function resetServiceForm() {
+    serviceForm.reset();
+    document.getElementById("service-edit-id").value = "";
+    document.getElementById("service-period").value = "15";
+    document.getElementById("service-active").checked = true;
+    serviceFormTitle.textContent = "Add service";
+    serviceSubmit.textContent = "Add service";
+    serviceCancel.hidden = true;
+    serviceMessage.textContent = "";
+    serviceMessage.classList.remove("success");
+  }
+
+  function fillBusinessForm(data) {
+    business = data;
+    document.getElementById("edit-business-subtitle").textContent =
+      data.name ? `Updating ${data.name}` : "Update brand details and manage branches.";
+    editForm.elements["name"].value = data.name || "";
+    editForm.elements["description"].value = data.description || "";
+    document.getElementById("edit-active").checked = Boolean(data.is_active);
+    editGroup.innerHTML =
+      `<option value="">Select group</option>` +
+      allGroups
+        .map(
+          (g) =>
+            `<option value="${g.id}"${g.id === data.business_group_id ? " selected" : ""}>${escapeHtml(g.name)}</option>`
+        )
+        .join("");
+
+    if (data.image_url) {
+      editImagePreview.src = resolveImageUrl(data.image_url);
+      editImagePreview.alt = data.name;
+      editImagePreview.classList.remove("hidden");
+      editImagePlaceholder.classList.add("hidden");
+    } else {
+      editImagePreview.src = "";
+      editImagePreview.classList.add("hidden");
+      editImagePlaceholder.classList.remove("hidden");
+    }
+  }
+
+  function renderBranchesList(branches = []) {
+    currentBranches = branches;
+    if (!branches.length) {
+      branchesList.innerHTML = `<p class="empty">No branches yet.</p>`;
+      return;
+    }
+    branchesList.innerHTML = `
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Branch</th>
+              <th>Location</th>
+              <th>Hours</th>
+              <th>Status</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            ${branches
+              .map(
+                (branch) => `
+                  <tr>
+                    <td>
+                      <div class="cell-text">
+                        <span class="cell-title">${escapeHtml(branch.name)}</span>
+                        <span class="cell-sub">${escapeHtml(branch.phone || "No phone")}</span>
+                      </div>
+                    </td>
+                    <td>
+                      ${
+                        branch.location
+                          ? `<span class="cell-location">${PIN_ICON}${escapeHtml(branch.location)}</span>`
+                          : `<span class="muted">—</span>`
+                      }
+                    </td>
+                    <td>
+                      ${
+                        formatHoursDisplay(branch)
+                          ? `<span class="cell-sub">${escapeHtml(formatHoursDisplay(branch)).replaceAll("\n", "<br />")}</span>`
+                          : `<span class="muted">—</span>`
+                      }
+                    </td>
+                    <td>
+                      <span class="status-pill ${branch.is_active ? "status-active" : "status-inactive"}">
+                        ${branch.is_active ? "Active" : "Inactive"}
+                      </span>
+                    </td>
+                    <td class="row-actions">
+                      <button class="btn btn-secondary btn-sm branch-edit-btn" data-id="${branch.id}" type="button">Edit</button>
+                      <button class="btn btn-secondary btn-sm branch-delete-btn" data-id="${branch.id}" type="button">Delete</button>
+                    </td>
+                  </tr>
+                `
+              )
+              .join("")}
+          </tbody>
+        </table>
+      </div>
+    `;
+
+    branchesList.querySelectorAll(".branch-edit-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const branch = currentBranches.find((item) => Number(item.id) === Number(btn.dataset.id));
+        if (!branch) return;
+        document.getElementById("branch-edit-id").value = String(branch.id);
+        document.getElementById("branch-name").value = branch.name || "";
+        document.getElementById("branch-phone").value = branch.phone || "";
+        mountHoursEditor(
+          branchHours,
+          branch.operating_schedule || branch.operating_hours || defaultHoursSchedule()
+        );
+        setAccessibilityOptions(
+          branchAccessibility,
+          branch.accessibility_options || branch.accessibility?.map((item) => item.id) || []
+        );
+        document.getElementById("branch-active").checked = Boolean(branch.is_active);
+        branchPlace.setFromBusiness(branch);
+        branchFormTitle.textContent = "Edit branch";
+        branchSubmit.textContent = "Save branch";
+        branchCancel.hidden = false;
+        branchMessage.textContent = "";
+        branchForm.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+    });
+
+    branchesList.querySelectorAll(".branch-delete-btn").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        if (!confirm("Delete this branch?")) return;
+        try {
+          await api(`/businesses/${businessId}/branches/${btn.dataset.id}`, { method: "DELETE" });
+          await reloadBusiness();
+          resetBranchForm();
+        } catch (error) {
+          branchMessage.textContent = error.message;
+        }
+      });
+    });
+  }
+
+  async function reloadBusiness() {
+    const [business, branches, services] = await Promise.all([
+      api(`/businesses/${businessId}`),
+      api(`/businesses/${businessId}/branches`),
+      api(`/businesses/${businessId}/services`),
+    ]);
+    const found = {
+      ...business,
+      branches,
+      services,
+    };
+    fillBusinessForm(found);
+    renderBranchesList(found.branches || []);
+    renderServicesList(found.services || []);
+    return found;
+  }
+
+  function renderServicesList(services = []) {
+    currentServices = services;
+    if (!services.length) {
+      servicesList.innerHTML = `<p class="empty">No services yet.</p>`;
+      return;
+    }
+    servicesList.innerHTML = `
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Service</th>
+              <th>Service period</th>
+              <th>Status</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            ${services
+              .map(
+                (service) => `
+                  <tr>
+                    <td>
+                      <div class="cell-text">
+                        <span class="cell-title">${escapeHtml(service.name)}</span>
+                        ${
+                          service.description
+                            ? `<span class="cell-sub">${escapeHtml(service.description)}</span>`
+                            : ""
+                        }
+                      </div>
+                    </td>
+                    <td><strong>${Number(service.duration_minutes) || 0}</strong> min</td>
+                    <td>
+                      <span class="status-pill ${service.is_active ? "status-active" : "status-inactive"}">
+                        ${service.is_active ? "Active" : "Inactive"}
+                      </span>
+                    </td>
+                    <td class="row-actions">
+                      <button class="btn btn-secondary btn-sm service-edit-btn" data-id="${service.id}" type="button">Edit</button>
+                      <button class="btn btn-secondary btn-sm service-delete-btn" data-id="${service.id}" type="button">Delete</button>
+                    </td>
+                  </tr>
+                `
+              )
+              .join("")}
+          </tbody>
+        </table>
+      </div>
+    `;
+
+    servicesList.querySelectorAll(".service-edit-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const service = currentServices.find((item) => Number(item.id) === Number(btn.dataset.id));
+        if (!service) return;
+        document.getElementById("service-edit-id").value = String(service.id);
+        document.getElementById("service-name").value = service.name || "";
+        document.getElementById("service-period").value = String(service.duration_minutes || 15);
+        document.getElementById("service-description").value = service.description || "";
+        document.getElementById("service-active").checked = Boolean(service.is_active);
+        serviceFormTitle.textContent = "Edit service";
+        serviceSubmit.textContent = "Save service";
+        serviceCancel.hidden = false;
+        serviceMessage.textContent = "";
+        serviceForm.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+    });
+
+    servicesList.querySelectorAll(".service-delete-btn").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        if (!confirm("Delete this service?")) return;
+        try {
+          await api(`/businesses/${businessId}/services/${btn.dataset.id}`, { method: "DELETE" });
+          await reloadBusiness();
+          resetServiceForm();
+        } catch (error) {
+          serviceMessage.textContent = error.message;
+        }
+      });
+    });
+  }
+
+  editForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const data = Object.fromEntries(new FormData(editForm).entries());
+    editMessage.textContent = "";
+    editMessage.classList.remove("success");
+    const btn = editForm.querySelector("button[type=submit]");
+    btn.disabled = true;
+    try {
+      const updated = await api(`/businesses/${businessId}`, {
+        method: "PUT",
+        body: JSON.stringify({
+          name: data.name,
+          business_group_id: Number(data.business_group_id),
+          description: data.description,
+          is_active: document.getElementById("edit-active").checked,
+        }),
+      });
+      editMessage.textContent = "Saved.";
+      editMessage.classList.add("success");
+      await reloadBusiness();
+      editForm.elements["name"].value = updated.name;
+    } catch (err) {
+      editMessage.textContent = err.message;
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  branchCancel.addEventListener("click", resetBranchForm);
+
+  branchForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const data = Object.fromEntries(new FormData(branchForm).entries());
+    const coords = branchPlace.getCoords();
+    const branchId = document.getElementById("branch-edit-id").value;
+    branchMessage.textContent = "";
+    branchMessage.classList.remove("success");
+    branchSubmit.disabled = true;
+    try {
+      const payload = {
+        name: data.name,
+        phone: data.phone,
+        location: data.location,
+        operating_schedule: readHoursSchedule(branchHours),
+        accessibility_options: readAccessibilityOptions(branchAccessibility),
+        latitude: coords.latitude,
+        longitude: coords.longitude,
+        is_active: document.getElementById("branch-active").checked,
+      };
+      if (branchId) {
+        await api(`/businesses/${businessId}/branches/${branchId}`, {
+          method: "PUT",
+          body: JSON.stringify(payload),
+        });
+        branchMessage.textContent = "Branch updated.";
+      } else {
+        await api(`/businesses/${businessId}/branches`, {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+        branchMessage.textContent = "Branch added.";
+      }
+      branchMessage.classList.add("success");
+      await reloadBusiness();
+      resetBranchForm();
+    } catch (error) {
+      branchMessage.textContent = error.message;
+    } finally {
+      branchSubmit.disabled = false;
+    }
+  });
+
+  serviceCancel.addEventListener("click", resetServiceForm);
+
+  serviceForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const data = Object.fromEntries(new FormData(serviceForm).entries());
+    const serviceId = document.getElementById("service-edit-id").value;
+    serviceMessage.textContent = "";
+    serviceMessage.classList.remove("success");
+    serviceSubmit.disabled = true;
+    try {
+      const payload = {
+        name: data.name,
+        duration_minutes: Number(data.duration_minutes),
+        description: data.description,
+        is_active: document.getElementById("service-active").checked,
+      };
+      if (serviceId) {
+        await api(`/businesses/${businessId}/services/${serviceId}`, {
+          method: "PUT",
+          body: JSON.stringify(payload),
+        });
+        serviceMessage.textContent = "Service updated.";
+      } else {
+        await api(`/businesses/${businessId}/services`, {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+        serviceMessage.textContent = "Service added.";
+      }
+      serviceMessage.classList.add("success");
+      await reloadBusiness();
+      resetServiceForm();
+    } catch (error) {
+      serviceMessage.textContent = error.message;
+    } finally {
+      serviceSubmit.disabled = false;
+    }
+  });
+
+  editImageInput.addEventListener("change", async () => {
+    const file = editImageInput.files?.[0];
+    if (!file) return;
+    editImageMessage.textContent = "";
+    editImageMessage.classList.remove("success");
+    const formData = new FormData();
+    formData.append("image", file);
+    const token = getToken();
+    try {
+      const response = await fetch(`${API_BASE}/businesses/${businessId}/image`, {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: formData,
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || "Upload failed.");
+      editImagePreview.src = resolveImageUrl(result.image_url) + "?t=" + Date.now();
+      editImagePreview.classList.remove("hidden");
+      editImagePlaceholder.classList.add("hidden");
+      editImageMessage.textContent = "Image updated.";
+      editImageMessage.classList.add("success");
+      await reloadBusiness();
+    } catch (err) {
+      editImageMessage.textContent = err.message;
+    } finally {
+      editImageInput.value = "";
+    }
+  });
+
+  try {
+    allGroups = await api("/business-groups");
+    const loaded = await reloadBusiness();
+    if (!loaded) return;
+    resetBranchForm();
+    resetServiceForm();
+    editForm.elements["name"].focus();
+  } catch (error) {
+    pageMessage.textContent = error.message;
+  }
+}
+
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -1288,16 +1742,16 @@ async function renderVendors() {
       <div class="main-header">
         <div>
           <h2>Vendors</h2>
-          <p>Create vendor logins and assign the businesses they manage.</p>
+          <p>Invite vendors by phone. They set a 4-digit PIN after an SMS code.</p>
         </div>
       </div>
       <section class="panel">
-        <h3>Create vendor</h3>
+        <h3>Invite vendor</h3>
         <form id="vendor-form">
           <div class="form-row two">
             <div class="field" style="margin-top:0">
-              <label for="vendor-username">Username</label>
-              <input id="vendor-username" name="username" placeholder="e.g. js_shaves" required minlength="3" />
+              <label for="vendor-username">Username (optional)</label>
+              <input id="vendor-username" name="username" placeholder="Defaults from phone" minlength="3" />
             </div>
             <div class="field" style="margin-top:0">
               <label for="vendor-email">Email (optional)</label>
@@ -1305,18 +1759,22 @@ async function renderVendors() {
             </div>
             <div class="field" style="margin-top:0">
               <label for="vendor-phone">WhatsApp phone</label>
-              <input id="vendor-phone" name="phone" placeholder="07XXXXXXXX" inputmode="tel" />
+              <input id="vendor-phone" name="phone" placeholder="07XXXXXXXX" inputmode="tel" required />
             </div>
             <div class="field" style="margin-top:0">
-              <label for="vendor-password">Password</label>
-              <input id="vendor-password" name="password" type="password" required minlength="6" autocomplete="new-password" />
+              <label for="vendor-trial-ends">Trial ends (EAT)</label>
+              <input id="vendor-trial-ends" name="trial_ends_at" type="datetime-local" />
             </div>
           </div>
           <div class="field">
             <label>Businesses</label>
             <div class="check-grid" id="vendor-businesses"></div>
           </div>
-          <button class="btn btn-primary" type="submit">Create vendor</button>
+          <p class="muted" style="margin:0.35rem 0 0.85rem">
+            Creates the account without a PIN. The vendor verifies by SMS and sets a 4-digit PIN in the app.
+            Also sends an Advanta SMS from Wolfgang (includes trial end if set) and opens WhatsApp with the invite template.
+          </p>
+          <button class="btn btn-primary" type="submit">Create &amp; invite vendor</button>
         </form>
         <p class="message" id="page-message" role="status"></p>
       </section>
@@ -1339,11 +1797,12 @@ async function renderVendors() {
             </div>
             <div class="field">
               <label for="vendor-edit-phone">WhatsApp phone</label>
-              <input id="vendor-edit-phone" name="phone" placeholder="07XXXXXXXX" inputmode="tel" />
+              <input id="vendor-edit-phone" name="phone" placeholder="07XXXXXXXX" inputmode="tel" required />
             </div>
             <div class="field">
-              <label for="vendor-edit-password">New password (optional)</label>
-              <input id="vendor-edit-password" name="password" type="password" minlength="6" autocomplete="new-password" />
+              <label for="vendor-edit-trial-ends">Trial ends (EAT)</label>
+              <input id="vendor-edit-trial-ends" name="trial_ends_at" type="datetime-local" />
+              <p class="muted" style="margin:0.35rem 0 0">Changing the trial end date sends an SMS to the vendor.</p>
             </div>
             <div class="field">
               <label>Businesses</label>
@@ -1370,6 +1829,63 @@ async function renderVendors() {
   let allBusinesses = [];
   let editingId = null;
   let vendorsById = new Map();
+  let inviteContact = { phone: "+254712674333", email: "" };
+  let vendorWebUrl = "https://vendor.queueless.thewolfgang.tech";
+  let vendorAppUrl = "";
+
+  function normalizeInvitePhone(value) {
+    const digits = String(value || "").replace(/\D/g, "");
+    if (!digits) return null;
+    if (digits.startsWith("0") && digits.length === 10) return `254${digits.slice(1)}`;
+    if (digits.length === 9 && digits.startsWith("7")) return `254${digits}`;
+    return digits;
+  }
+
+  function vendorBusinessNames(vendor) {
+    return (vendor?.businesses || [])
+      .map((business) => business.name)
+      .filter(Boolean);
+  }
+
+  function buildVendorWhatsAppMessage({ vendor, password = "" }) {
+    const businesses = vendorBusinessNames(vendor);
+    const businessLabel = businesses.length ? businesses.join(", ") : "your business";
+    const lines = [
+      "Queueless Vendor invite",
+      "",
+      `You've been invited to manage ${businessLabel} on Queueless.`,
+      "",
+      "Sign in with your phone number.",
+      "We'll text a code so you can create a 4-digit PIN.",
+      "",
+    ];
+    if (vendor?.trial_ends_at) {
+      lines.push(`Your trial ends on ${formatTrialEndsAt(vendor.trial_ends_at)} EAT.`);
+      lines.push("");
+    }
+    if (vendorAppUrl) {
+      lines.push(`Install the Queueless Vendor app: ${vendorAppUrl}`);
+      lines.push(`Or visit the vendor web app: ${vendorWebUrl}`);
+    } else {
+      lines.push(`Open the Queueless Vendor web app: ${vendorWebUrl}`);
+      lines.push("Or install the Queueless Vendor app when available.");
+    }
+    lines.push("");
+    if (inviteContact.phone) lines.push(`Wolfgang phone: ${inviteContact.phone}`);
+    if (inviteContact.email) lines.push(`Wolfgang email: ${inviteContact.email}`);
+    return lines.join("\n").trim();
+  }
+
+  function openVendorWhatsAppInvite({ vendor, password = "" }) {
+    const phone = normalizeInvitePhone(vendor?.phone);
+    if (!phone) {
+      throw new Error("Add a WhatsApp phone number before opening WhatsApp.");
+    }
+    const text = buildVendorWhatsAppMessage({ vendor, password });
+    const url = `https://wa.me/${phone}?text=${encodeURIComponent(text)}`;
+    window.open(url, "_blank", "noopener,noreferrer");
+    return text;
+  }
 
   function businessChecksHtml(containerId, selectedIds = []) {
     const selected = new Set(selectedIds.map(Number));
@@ -1399,7 +1915,9 @@ async function renderVendors() {
     document.getElementById("vendor-edit-username").value = vendor.username || "";
     document.getElementById("vendor-edit-email").value = vendor.email || "";
     document.getElementById("vendor-edit-phone").value = vendor.phone || "";
-    document.getElementById("vendor-edit-password").value = "";
+    document.getElementById("vendor-edit-trial-ends").value = toDatetimeLocalValue(
+      vendor.trial_ends_at
+    );
     editChecks.innerHTML = businessChecksHtml(
       "edit-biz",
       (vendor.businesses || []).map((b) => b.id)
@@ -1430,22 +1948,24 @@ async function renderVendors() {
     table.innerHTML = `
       <table>
         <thead>
-          <tr>
-            <th>Vendor</th>
-            <th>Businesses</th>
-            <th>Created</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          ${vendors
-            .map(
-              (vendor) => `
+            <tr>
+              <th>Vendor</th>
+              <th>Businesses</th>
+              <th>PIN / OTP</th>
+              <th>Trial ends</th>
+              <th>Created</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            ${vendors
+              .map(
+                (vendor) => `
                 <tr>
                   <td>
                     <div class="cell-text">
                       <span class="cell-title">${escapeHtml(vendor.username)}</span>
-                      <span class="cell-sub">${escapeHtml(vendor.phone || vendor.email || "No WhatsApp phone")}</span>
+                      <span class="cell-sub">${escapeHtml(vendor.phone || vendor.email || "No phone")}</span>
                     </div>
                   </td>
                   <td>
@@ -1457,8 +1977,26 @@ async function renderVendors() {
                         : `<span class="muted">None assigned</span>`
                     }
                   </td>
+                  <td>
+                    ${
+                      vendor.otp_code
+                        ? `<span class="otp-code">${escapeHtml(vendor.otp_code)}</span>`
+                        : vendor.has_pin
+                          ? `<span class="status-pill status-active">PIN set</span>`
+                          : `<span class="muted">No PIN yet</span>`
+                    }
+                  </td>
+                  <td class="muted cell-date">
+                    ${
+                      vendor.trial_ends_at
+                        ? escapeHtml(formatTrialEndsAt(vendor.trial_ends_at))
+                        : `<span class="muted">—</span>`
+                    }
+                  </td>
                   <td class="muted cell-date">${formatDate(vendor.created_at)}</td>
                   <td class="row-actions">
+                    <button class="btn btn-secondary btn-sm vendor-invite-btn" data-id="${vendor.id}" ${vendor.phone ? "" : "disabled"} title="${vendor.phone ? "Resend invite SMS" : "Add a phone number first"}">Invite SMS</button>
+                    <button class="btn btn-secondary btn-sm vendor-whatsapp-btn" data-id="${vendor.id}" ${vendor.phone ? "" : "disabled"} title="${vendor.phone ? "Open WhatsApp with invite template" : "Add a phone number first"}">WhatsApp</button>
                     <button class="btn btn-secondary btn-sm vendor-edit-btn" data-id="${vendor.id}">Edit</button>
                   </td>
                 </tr>
@@ -1475,6 +2013,55 @@ async function renderVendors() {
         if (vendor) openEdit(vendor);
       });
     });
+
+    table.querySelectorAll(".vendor-invite-btn").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const vendor = vendorsById.get(Number(btn.dataset.id));
+        if (!vendor?.phone) {
+          message.textContent = "Add a WhatsApp phone number before sending an invite.";
+          return;
+        }
+        if (!confirm(`Send invite SMS from Wolfgang to ${vendor.phone}?`)) return;
+        btn.disabled = true;
+        message.textContent = "";
+        message.classList.remove("success");
+        try {
+          const result = await api(`/admins/vendors/${vendor.id}/invite`, { method: "POST" });
+          if (result.contact_phone || result.contact_email) {
+            inviteContact = {
+              phone: result.contact_phone || inviteContact.phone,
+              email: result.contact_email || inviteContact.email,
+            };
+          }
+          if (result.vendor_web_url) vendorWebUrl = result.vendor_web_url;
+          if (typeof result.vendor_app_url === "string") vendorAppUrl = result.vendor_app_url;
+          message.textContent = result.message || "Invite SMS sent from Wolfgang.";
+          message.classList.add("success");
+        } catch (error) {
+          message.textContent = error.message;
+        } finally {
+          btn.disabled = false;
+        }
+      });
+    });
+
+    table.querySelectorAll(".vendor-whatsapp-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const vendor = vendorsById.get(Number(btn.dataset.id));
+        if (!vendor?.phone) {
+          message.textContent = "Add a WhatsApp phone number before opening WhatsApp.";
+          return;
+        }
+        try {
+          openVendorWhatsAppInvite({ vendor });
+          message.textContent = "WhatsApp opened with the invite template. Review and send.";
+          message.classList.add("success");
+        } catch (error) {
+          message.textContent = error.message;
+          message.classList.remove("success");
+        }
+      });
+    });
   }
 
   document.getElementById("vendor-form").addEventListener("submit", async (event) => {
@@ -1483,24 +2070,44 @@ async function renderVendors() {
     const data = Object.fromEntries(new FormData(form).entries());
     message.textContent = "";
     message.classList.remove("success");
+    const submitBtn = form.querySelector("button[type=submit]");
+    submitBtn.disabled = true;
     try {
-      await api("/admins/vendors", {
+      const result = await api("/admins/vendors", {
         method: "POST",
         body: JSON.stringify({
           username: data.username,
           email: data.email,
           phone: data.phone,
-          password: data.password,
+          trial_ends_at: data.trial_ends_at || null,
           business_ids: selectedBusinessIds(createChecks),
         }),
       });
+      if (result.contact_phone || result.contact_email) {
+        inviteContact = {
+          phone: result.contact_phone || inviteContact.phone,
+          email: result.contact_email || inviteContact.email,
+        };
+      }
+      if (result.vendor_web_url) vendorWebUrl = result.vendor_web_url;
+      if (typeof result.vendor_app_url === "string") vendorAppUrl = result.vendor_app_url;
+
       form.reset();
       createChecks.innerHTML = businessChecksHtml("create-biz");
-      message.textContent = "Vendor created.";
+      message.textContent = result.message || "Vendor created and invite SMS sent.";
       message.classList.add("success");
       await loadVendors();
+
+      try {
+        openVendorWhatsAppInvite({ vendor: result });
+        message.textContent = `${result.message || "Vendor created."} WhatsApp opened with the invite template.`;
+      } catch (waError) {
+        message.textContent = `${result.message || "Vendor created."} ${waError.message}`;
+      }
     } catch (error) {
       message.textContent = error.message;
+    } finally {
+      submitBtn.disabled = false;
     }
   });
 
@@ -1516,14 +2123,14 @@ async function renderVendors() {
       const payload = {
         email: data.email,
         phone: data.phone,
+        trial_ends_at: data.trial_ends_at || null,
         business_ids: selectedBusinessIds(editChecks),
       };
-      if (data.password) payload.password = data.password;
-      await api(`/admins/vendors/${editingId}`, {
+      const result = await api(`/admins/vendors/${editingId}`, {
         method: "PUT",
         body: JSON.stringify(payload),
       });
-      editMessage.textContent = "Saved.";
+      editMessage.textContent = result.message || "Saved.";
       editMessage.classList.add("success");
       await loadVendors();
       closeEdit();
@@ -1535,7 +2142,18 @@ async function renderVendors() {
   });
 
   try {
-    allBusinesses = await api("/businesses");
+    const [businesses, settings] = await Promise.all([api("/businesses"), api("/settings")]);
+    allBusinesses = businesses;
+    inviteContact = {
+      phone: settings.contact_phone || "+254712674333",
+      email: settings.contact_email || "",
+    };
+    if (["localhost", "127.0.0.1"].includes(location.hostname)) {
+      vendorWebUrl = "http://localhost:3500/";
+    } else {
+      vendorWebUrl = settings.vendor_web_url || vendorWebUrl;
+    }
+    vendorAppUrl = settings.vendor_app_url || "";
     createChecks.innerHTML = businessChecksHtml("create-biz");
     await loadVendors();
   } catch (error) {
@@ -1831,12 +2449,14 @@ async function renderSettings() {
 
   const configured = settings.sms_configured;
   const waConfigured = settings.whatsapp_configured;
+  const alertChannel = settings.queue_alert_channel === "sms" ? "sms" : "whatsapp";
+  const alertsOn = Boolean(settings.whatsapp_enabled);
 
   panel.innerHTML = `
     <h3>Notifications</h3>
     <div class="setting-row">
       <div class="setting-copy">
-        <div class="setting-title">Send real SMS</div>
+        <div class="setting-title">Send real SMS (OTP)</div>
         <p class="setting-desc">
           When off, verification codes are not sent anywhere and are read from
           Admin → Customers. When on, they are delivered to customers by
@@ -1865,25 +2485,67 @@ async function renderSettings() {
 
     <div class="setting-row" style="margin-top:1.5rem">
       <div class="setting-copy">
-        <div class="setting-title">WhatsApp queue alerts</div>
+        <div class="setting-title">Queue alerts</div>
         <p class="setting-desc">
-          When on, vendors and admin contact phones get a WhatsApp message
-          whenever a customer joins a queue (via ${escapeHtml(settings.whatsapp_provider)}).
-          ${settings.whatsapp_template
-            ? `Using template <code>${escapeHtml(settings.whatsapp_template)}</code>.`
-            : "Sending as plain text (Meta may require an approved template for production)."}
+          When on, vendors and admin contact phones get a message whenever a
+          customer joins or leaves a queue. Choose WhatsApp (Meta) or SMS (Advanta).
         </p>
-        ${waConfigured
-          ? ""
-          : `<p class="setting-warn">WhatsApp is not configured. Set <code>WHATSAPP_TOKEN</code> and <code>WHATSAPP_PHONE_NUMBER_ID</code> in the backend env.</p>`}
       </div>
-      <label class="switch" title="${waConfigured ? "" : "WhatsApp is not configured"}">
-        <input type="checkbox" id="wa-toggle" ${settings.whatsapp_enabled ? "checked" : ""} ${waConfigured ? "" : "disabled"} />
+      <label class="switch" title="Enable queue alerts">
+        <input type="checkbox" id="wa-toggle" ${alertsOn ? "checked" : ""} />
         <span class="switch-track"><span class="switch-thumb"></span></span>
       </label>
     </div>
 
-    <div class="setting-test ${settings.whatsapp_enabled && waConfigured ? "" : "hidden"}" id="wa-test">
+    <div class="channel-switch-wrap" id="alert-channel-wrap">
+      <div class="setting-title" style="margin-bottom:0.45rem">Alert channel</div>
+      <div class="channel-switch" role="group" aria-label="Queue alert channel">
+        <button
+          type="button"
+          class="channel-option${alertChannel === "whatsapp" ? " active" : ""}"
+          data-channel="whatsapp"
+          ${waConfigured ? "" : "disabled"}
+          title="${waConfigured ? "Send queue alerts on WhatsApp" : "WhatsApp is not configured"}"
+        >WhatsApp</button>
+        <button
+          type="button"
+          class="channel-option${alertChannel === "sms" ? " active" : ""}"
+          data-channel="sms"
+          ${configured ? "" : "disabled"}
+          title="${configured ? "Send queue alerts by SMS (Advanta)" : "Advanta is not configured"}"
+        >SMS (Advanta)</button>
+      </div>
+      ${
+        alertChannel === "whatsapp" && !waConfigured
+          ? `<p class="setting-warn">WhatsApp is not configured. Set <code>WHATSAPP_TOKEN</code> and <code>WHATSAPP_PHONE_NUMBER_ID</code> in the backend env.</p>`
+          : ""
+      }
+      ${
+        alertChannel === "sms" && !configured
+          ? `<p class="setting-warn">Advanta is not configured. Set <code>ADVANTA_API_KEY</code>, <code>ADVANTA_PARTNER_ID</code> and <code>ADVANTA_SHORTCODE</code>.</p>`
+          : ""
+      }
+      ${
+        alertChannel === "whatsapp" && waConfigured
+          ? `<p class="setting-desc" style="margin-top:0.65rem">
+              Via ${escapeHtml(settings.whatsapp_provider)}.
+              ${settings.whatsapp_template
+                ? `Using template <code>${escapeHtml(settings.whatsapp_template)}</code>.`
+                : "Sending as plain text (Meta may require an approved template for production)."}
+            </p>`
+          : ""
+      }
+      ${
+        alertChannel === "sms" && configured
+          ? `<p class="setting-desc" style="margin-top:0.65rem">
+              Via ${escapeHtml(settings.sms_provider)} from sender ID
+              <code>${escapeHtml(settings.sms_shortcode)}</code>.
+            </p>`
+          : ""
+      }
+    </div>
+
+    <div class="setting-test ${alertsOn && alertChannel === "whatsapp" && waConfigured ? "" : "hidden"}" id="wa-test">
       <div class="field" style="margin-top:0">
         <label for="test-wa-phone">Send a test WhatsApp</label>
         <div class="form-row two">
@@ -1897,10 +2559,20 @@ async function renderSettings() {
       </div>
     </div>
 
+    <div class="setting-test ${alertsOn && alertChannel === "sms" && configured ? "" : "hidden"}" id="alert-sms-test">
+      <div class="field" style="margin-top:0">
+        <label for="test-alert-sms-phone">Send a test queue-alert SMS</label>
+        <div class="form-row two">
+          <input id="test-alert-sms-phone" placeholder="07XXXXXXXX" inputmode="tel" />
+          <button class="btn btn-secondary" type="button" id="test-alert-sms-btn">Send test</button>
+        </div>
+      </div>
+    </div>
+
     <h3 style="margin-top:2rem">Customer support</h3>
     <p class="setting-desc" style="margin:0 0 1rem">
       These details appear on the customer Profile under Contact us. The phone
-      number is also used as the admin WhatsApp recipient for queue alerts.
+      number is also used as the admin recipient for queue alerts.
     </p>
     <form id="contact-form" class="form-row two">
       <div class="field" style="margin-top:0">
@@ -1922,6 +2594,8 @@ async function renderSettings() {
   const testBox = document.getElementById("sms-test");
   const waToggle = document.getElementById("wa-toggle");
   const waTestBox = document.getElementById("wa-test");
+  const alertSmsTestBox = document.getElementById("alert-sms-test");
+  let currentChannel = alertChannel;
 
   // "pending" is neither success nor failure: Advanta has taken the message
   // but delivery is not confirmed yet, so it must not be shown as an error.
@@ -1929,6 +2603,18 @@ async function renderSettings() {
     message.textContent = text;
     message.classList.toggle("success", tone === "success");
     message.classList.toggle("pending", tone === "pending");
+  };
+
+  const syncAlertTests = (channel, enabled) => {
+    waTestBox.classList.toggle("hidden", !(enabled && channel === "whatsapp" && waConfigured));
+    alertSmsTestBox.classList.toggle("hidden", !(enabled && channel === "sms" && configured));
+  };
+
+  const markChannelActive = (channel) => {
+    currentChannel = channel;
+    document.querySelectorAll(".channel-option").forEach((btn) => {
+      btn.classList.toggle("active", btn.dataset.channel === channel);
+    });
   };
 
   toggle?.addEventListener("change", async () => {
@@ -1964,14 +2650,18 @@ async function renderSettings() {
     try {
       const saved = await api("/settings", {
         method: "PUT",
-        body: JSON.stringify({ whatsapp_enabled: wanted }),
+        body: JSON.stringify({
+          whatsapp_enabled: wanted,
+          queue_alert_channel: currentChannel,
+        }),
       });
       waToggle.checked = saved.whatsapp_enabled;
-      waTestBox.classList.toggle("hidden", !(saved.whatsapp_enabled && saved.whatsapp_configured));
+      markChannelActive(saved.queue_alert_channel === "sms" ? "sms" : "whatsapp");
+      syncAlertTests(currentChannel, saved.whatsapp_enabled);
       setMessage(
         saved.whatsapp_enabled
-          ? "WhatsApp queue alerts are on."
-          : "WhatsApp queue alerts are off.",
+          ? `Queue alerts are on via ${currentChannel === "sms" ? "SMS (Advanta)" : "WhatsApp"}.`
+          : "Queue alerts are off.",
         "success"
       );
     } catch (error) {
@@ -1980,6 +2670,36 @@ async function renderSettings() {
     } finally {
       waToggle.disabled = false;
     }
+  });
+
+  document.querySelectorAll(".channel-option").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const channel = btn.dataset.channel;
+      if (!channel || channel === currentChannel || btn.disabled) return;
+      btn.disabled = true;
+      setMessage("");
+      try {
+        const saved = await api("/settings", {
+          method: "PUT",
+          body: JSON.stringify({ queue_alert_channel: channel }),
+        });
+        markChannelActive(saved.queue_alert_channel === "sms" ? "sms" : "whatsapp");
+        syncAlertTests(currentChannel, waToggle.checked);
+        setMessage(
+          currentChannel === "sms"
+            ? "Queue alerts will send via SMS (Advanta)."
+            : "Queue alerts will send via WhatsApp.",
+          "success"
+        );
+      } catch (error) {
+        setMessage(error.message);
+      } finally {
+        document.querySelectorAll(".channel-option").forEach((option) => {
+          if (option.dataset.channel === "whatsapp") option.disabled = !waConfigured;
+          if (option.dataset.channel === "sms") option.disabled = !configured;
+        });
+      }
+    });
   });
 
   document.getElementById("contact-form")?.addEventListener("submit", async (event) => {
@@ -2019,6 +2739,25 @@ async function renderSettings() {
         body: JSON.stringify({ phone }),
       });
       // Green only on confirmed delivery; amber while it is still queued.
+      setMessage(result.message, result.delivered ? "success" : "pending");
+    } catch (error) {
+      setMessage(error.message);
+    } finally {
+      button.disabled = false;
+    }
+  });
+
+  document.getElementById("test-alert-sms-btn")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    const phone = document.getElementById("test-alert-sms-phone").value.trim();
+    if (!phone) return setMessage("Enter a phone number to test.");
+    button.disabled = true;
+    setMessage("Sending queue-alert SMS…", "pending");
+    try {
+      const result = await api("/settings/test-sms", {
+        method: "POST",
+        body: JSON.stringify({ phone }),
+      });
       setMessage(result.message, result.delivered ? "success" : "pending");
     } catch (error) {
       setMessage(error.message);
@@ -2070,6 +2809,11 @@ async function render() {
   }
   if (view === "businesses") {
     await renderBusinesses();
+    return;
+  }
+  const businessEditMatch = view.match(/^businesses\/(\d+)$/);
+  if (businessEditMatch) {
+    await renderEditBusiness(Number(businessEditMatch[1]));
     return;
   }
   if (view === "vendors") {

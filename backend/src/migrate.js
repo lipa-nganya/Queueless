@@ -110,6 +110,10 @@ export async function migrate() {
       left_at TIMESTAMPTZ
     );
 
+    -- One ticket per customer account; party_size covers companions in the same place.
+    ALTER TABLE queue_entries ADD COLUMN IF NOT EXISTS party_size INTEGER NOT NULL DEFAULT 1;
+    ALTER TABLE queue_entries ADD COLUMN IF NOT EXISTS party_names JSONB NOT NULL DEFAULT '[]'::jsonb;
+
     -- A customer can hold only one live place per business.
     CREATE UNIQUE INDEX IF NOT EXISTS queue_entries_one_active
       ON queue_entries (business_id, customer_id)
@@ -148,6 +152,19 @@ export async function migrate() {
     ALTER TABLE vendors ADD COLUMN IF NOT EXISTS phone TEXT;
     ALTER TABLE admins ADD COLUMN IF NOT EXISTS phone TEXT;
 
+    ALTER TABLE vendors ADD COLUMN IF NOT EXISTS pin_hash TEXT;
+    ALTER TABLE vendors ADD COLUMN IF NOT EXISTS otp_code TEXT;
+    ALTER TABLE vendors ADD COLUMN IF NOT EXISTS otp_expires_at TIMESTAMPTZ;
+    ALTER TABLE vendors ADD COLUMN IF NOT EXISTS phone_verified_at TIMESTAMPTZ;
+    ALTER TABLE vendors ADD COLUMN IF NOT EXISTS otp_resend_count INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE vendors ADD COLUMN IF NOT EXISTS otp_last_sent_at TIMESTAMPTZ;
+    ALTER TABLE vendors ADD COLUMN IF NOT EXISTS trial_ends_at TIMESTAMPTZ;
+    ALTER TABLE vendors ALTER COLUMN password_hash DROP NOT NULL;
+
+    CREATE UNIQUE INDEX IF NOT EXISTS vendors_phone_unique
+      ON vendors (phone)
+      WHERE phone IS NOT NULL;
+
     -- Branches are physical sites under a brand business. Existing businesses
     -- are backfilled as a single "Main" branch below.
     CREATE TABLE IF NOT EXISTS business_branches (
@@ -168,6 +185,9 @@ export async function migrate() {
 
     CREATE INDEX IF NOT EXISTS business_branches_business_id
       ON business_branches (business_id);
+
+    ALTER TABLE business_branches
+      ADD COLUMN IF NOT EXISTS accessibility_options TEXT;
 
     INSERT INTO business_branches (
       business_id, name, location, latitude, longitude, phone, operating_hours,
@@ -220,6 +240,22 @@ export async function migrate() {
     CREATE INDEX IF NOT EXISTS queue_entries_branch_waiting
       ON queue_entries (branch_id, joined_at)
       WHERE status = 'waiting';
+
+    -- Catalog of services offered by a business (shared across its branches).
+    -- duration_minutes is the service period used for wait estimates.
+    CREATE TABLE IF NOT EXISTS business_services (
+      id SERIAL PRIMARY KEY,
+      business_id INTEGER NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      duration_minutes INTEGER NOT NULL DEFAULT 15,
+      description TEXT,
+      is_active BOOLEAN NOT NULL DEFAULT true,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (business_id, name)
+    );
+
+    CREATE INDEX IF NOT EXISTS business_services_business_id
+      ON business_services (business_id);
   `);
 }
 
@@ -286,24 +322,30 @@ export async function seedBusinessGroups() {
 export async function seedVendor() {
   const username = process.env.VENDOR_USERNAME || "vendor";
   const password = process.env.VENDOR_PASSWORD || "vendor123";
+  const pin = String(process.env.VENDOR_PIN || "1234").trim();
   const email = (process.env.VENDOR_EMAIL || "vendor@queueless.co.ke").toLowerCase();
-  const phoneRaw = process.env.VENDOR_WHATSAPP || process.env.WHATSAPP_NOTIFY_PHONES || "";
-  const phone = String(phoneRaw).split(",")[0].replace(/\D/g, "") || null;
-  const hash = await bcrypt.hash(password, 10);
+  const phoneRaw = process.env.VENDOR_WHATSAPP || process.env.WHATSAPP_NOTIFY_PHONES || "254700000001";
+  const phone = String(phoneRaw).split(",")[0].replace(/\D/g, "") || "254700000001";
+  const passwordHash = await bcrypt.hash(password, 10);
+  const pinHash = /^\d{4}$/.test(pin) ? await bcrypt.hash(pin, 10) : null;
 
   const vendor = await query(
     `
-      INSERT INTO vendors (username, email, phone, password_hash, activated_at)
-      VALUES ($1, $2, $3, $4, NOW())
+      INSERT INTO vendors (
+        username, email, phone, password_hash, pin_hash, phone_verified_at, activated_at
+      )
+      VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
       ON CONFLICT (username)
       DO UPDATE SET
         password_hash = EXCLUDED.password_hash,
         email = COALESCE(vendors.email, EXCLUDED.email),
         phone = COALESCE(EXCLUDED.phone, vendors.phone),
+        pin_hash = COALESCE(vendors.pin_hash, EXCLUDED.pin_hash),
+        phone_verified_at = COALESCE(vendors.phone_verified_at, EXCLUDED.phone_verified_at),
         activated_at = COALESCE(vendors.activated_at, NOW())
       RETURNING id
     `,
-    [username, email, phone, hash]
+    [username, email, phone, passwordHash, pinHash]
   );
 
   const vendorId = vendor.rows[0]?.id;

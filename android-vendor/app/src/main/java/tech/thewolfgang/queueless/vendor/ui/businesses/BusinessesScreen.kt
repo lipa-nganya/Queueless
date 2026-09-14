@@ -20,6 +20,9 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -28,17 +31,21 @@ import tech.thewolfgang.queueless.vendor.data.BusinessSummary
 import tech.thewolfgang.queueless.vendor.ui.components.TopBar
 import tech.thewolfgang.queueless.vendor.ui.components.VendorBottomBar
 import tech.thewolfgang.queueless.vendor.ui.components.VendorTab
+import tech.thewolfgang.queueless.vendor.ui.components.liveStatus
 import tech.thewolfgang.queueless.vendor.ui.theme.Danger
 import tech.thewolfgang.queueless.vendor.ui.theme.Lime
 import tech.thewolfgang.queueless.vendor.ui.theme.Navy
 import tech.thewolfgang.queueless.vendor.ui.theme.SurfaceCard
 import tech.thewolfgang.queueless.vendor.ui.theme.TextMuted
 import tech.thewolfgang.queueless.vendor.ui.theme.TextPrimary
+import androidx.compose.ui.semantics.Role as SemanticsRole
 
 @Composable
 fun BusinessesScreen(
     viewModel: BusinessesViewModel,
     onOpenQueue: (Int) -> Unit,
+    onOpenBranches: () -> Unit,
+    onOpenServices: () -> Unit,
     onOpenProfile: () -> Unit,
     onSignOut: () -> Unit,
     onUnauthorized: () -> Unit,
@@ -114,6 +121,8 @@ fun BusinessesScreen(
         VendorBottomBar(
             selected = VendorTab.Queue,
             onQueue = {},
+            onBranches = onOpenBranches,
+            onServices = onOpenServices,
             onProfile = onOpenProfile,
             onSignOut = onSignOut,
         )
@@ -130,6 +139,15 @@ private fun BusinessRow(
             .fillMaxWidth()
             .background(SurfaceCard, RoundedCornerShape(14.dp))
             .clickable(onClick = onClick)
+            .semantics(mergeDescendants = true) {
+                role = SemanticsRole.Button
+                val title = listOfNotNull(
+                    business.businessName?.takeIf { it.isNotBlank() },
+                    business.name.takeIf { it.isNotBlank() },
+                ).distinct().joinToString(" · ").ifBlank { business.name }
+                contentDescription =
+                    "$title, ${if (business.isActive) "Active" else "Inactive"}, ${business.waitingTotal} waiting"
+            }
             .padding(16.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,

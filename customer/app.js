@@ -1,4 +1,5 @@
 import { groupIconSvg, resolveGroupIconKey, ICON_ALIASES, GROUP_ICON_KEYS } from "./group-icons.js";
+import { accessibilityIconSvg } from "./accessibility-icons.js";
 
 // Deployed builds read the backend origin from config.js; locally the API runs on :4000.
 const API_ORIGIN =
@@ -39,6 +40,56 @@ const CATEGORY_ICONS = {
   more: "more",
 };
 
+const ACCESSIBILITY_OPTIONS = [
+  { id: "wheelchair", label: "Wheelchair Accessible" },
+  { id: "blind_low_vision", label: "Blind & Low-Vision Friendly" },
+  { id: "deaf_hard_of_hearing", label: "Deaf & Hard-of-Hearing Friendly" },
+  { id: "sign_language", label: "Sign Language Available" },
+  { id: "autism_friendly", label: "Autism-Friendly" },
+  { id: "quiet_low_sensory", label: "Quiet / Low-Sensory Space Available" },
+  { id: "accessible_seating", label: "Accessible Seating Available" },
+  { id: "accessible_restroom", label: "Accessible Restroom Available" },
+  { id: "assistance_animals", label: "Assistance Animals Welcome" },
+  { id: "support_person", label: "Support Person Welcome" },
+];
+
+function normalizeAccessibility(business) {
+  if (Array.isArray(business?.accessibility) && business.accessibility.length) {
+    return business.accessibility
+      .map((item) => ({
+        id: item.id,
+        label: item.label || ACCESSIBILITY_OPTIONS.find((opt) => opt.id === item.id)?.label || item.id,
+      }))
+      .filter((item) => item.id && item.label);
+  }
+  const ids = Array.isArray(business?.accessibility_options) ? business.accessibility_options : [];
+  return ACCESSIBILITY_OPTIONS.filter((option) => ids.includes(option.id));
+}
+
+function accessibilityChipsHtml(business, { compact = false } = {}) {
+  const items = normalizeAccessibility(business);
+  if (!items.length) return "";
+  return `
+    <div class="a11y-chips${compact ? " a11y-chips-compact" : ""}" role="list" aria-label="Accessibility options">
+      ${items
+        .map(
+          (item) =>
+            compact
+              ? `
+            <span class="a11y-chip" role="listitem" aria-label="${escapeHtml(item.label)}" title="${escapeHtml(item.label)}">
+              <span class="a11y-chip-icon" aria-hidden="true">${accessibilityIconSvg(item.id)}</span>
+            </span>`
+              : `
+            <span class="a11y-chip" role="listitem" title="${escapeHtml(item.label)}">
+              <span class="a11y-chip-icon" aria-hidden="true">${accessibilityIconSvg(item.id)}</span>
+              <span class="a11y-chip-label">${escapeHtml(item.label)}</span>
+            </span>`
+        )
+        .join("")}
+    </div>
+  `;
+}
+
 const DEMO_QUEUE = [3, 7, 12, 2, 5, 9, 1, 6];
 const DEMO_WAIT = [15, 25, 35, 20, 18, 30, 10, 22];
 const DEMO_RATING = [4.8, 4.7, 4.6, 4.5, 4.4, 4.9, 4.3, 4.8];
@@ -58,6 +109,7 @@ const LOCATION_KEY = "queueless_customer_location";
 const WALK_KMH = 5;
 const DRIVE_KMH = 25;
 const WALK_MAX_KM = 1.5;
+const HOME_CACHE_TTL_MS = 45000;
 
 const app = document.getElementById("app");
 let discoverState = {
@@ -65,11 +117,54 @@ let discoverState = {
   businesses: [],
   myQueue: [],
   activeGroupId: null,
+  categoriesExpanded: false,
   search: "",
   me: null,
   userLocation: readStoredLocation(),
   locationError: null,
 };
+
+let homeBundleCache = {
+  at: 0,
+  me: null,
+  groups: null,
+  businesses: null,
+  myQueue: null,
+};
+
+function invalidateHomeCache() {
+  homeBundleCache = {
+    at: 0,
+    me: null,
+    groups: null,
+    businesses: null,
+    myQueue: null,
+  };
+}
+
+async function loadHomeBundle({ force = false } = {}) {
+  const fresh =
+    !force &&
+    homeBundleCache.at > 0 &&
+    Date.now() - homeBundleCache.at < HOME_CACHE_TTL_MS &&
+    Array.isArray(homeBundleCache.businesses);
+  if (fresh) return homeBundleCache;
+
+  const [me, groups, businesses, myQueue] = await Promise.all([
+    api("/customer/me"),
+    api("/customer/business-groups"),
+    api("/customer/businesses"),
+    api("/customer/queue"),
+  ]);
+  homeBundleCache = {
+    at: Date.now(),
+    me,
+    groups,
+    businesses,
+    myQueue: Array.isArray(myQueue) ? myQueue : [],
+  };
+  return homeBundleCache;
+}
 
 function readCoord(value) {
   if (value === null || value === undefined || value === "") return NaN;
@@ -118,11 +213,11 @@ function distanceKm(lat1, lon1, lat2, lon2) {
   return 2 * 6371 * Math.asin(Math.sqrt(a));
 }
 
-function travelAway(business, origin) {
+function travelAway(point, origin) {
   // Number(null) is 0, which would send every unmapped shop to Null Island
   // and show the same multi-day "drive" on every card.
-  const lat = readCoord(business?.latitude);
-  const lon = readCoord(business?.longitude);
+  const lat = readCoord(point?.latitude);
+  const lon = readCoord(point?.longitude);
   const originLat = readCoord(origin?.latitude);
   const originLon = readCoord(origin?.longitude);
   if (![lat, lon, originLat, originLon].every(Number.isFinite)) {
@@ -130,17 +225,33 @@ function travelAway(business, origin) {
   }
   const km = distanceKm(originLat, originLon, lat, lon);
   if (km <= WALK_MAX_KM) {
+    const minutes = Math.max(1, Math.round((km / WALK_KMH) * 60));
     return {
-      minutes: Math.max(1, Math.round((km / WALK_KMH) * 60)),
+      km,
+      minutes,
       mode: "walk",
-      label: `${Math.max(1, Math.round((km / WALK_KMH) * 60))} min walk`,
+      label: `${minutes} min walk`,
     };
   }
+  const minutes = Math.max(1, Math.round((km / DRIVE_KMH) * 60));
   return {
-    minutes: Math.max(1, Math.round((km / DRIVE_KMH) * 60)),
+    km,
+    minutes,
     mode: "drive",
-    label: `${Math.max(1, Math.round((km / DRIVE_KMH) * 60))} min drive`,
+    label: `${minutes} min drive`,
   };
+}
+
+function formatDistanceKm(km) {
+  if (!Number.isFinite(km)) return "";
+  if (km < 1) return `${Math.max(50, Math.round(km * 1000))} m`;
+  return `${km < 10 ? km.toFixed(1) : Math.round(km)} km`;
+}
+
+function formatAwaySummary(away) {
+  if (!away) return "";
+  const distance = formatDistanceKm(away.km);
+  return distance ? `${distance} · ${away.label}` : away.label;
 }
 
 function requestUserLocation() {
@@ -180,6 +291,16 @@ function locationButtonLabel() {
     return `${icon("pin")} ${escapeHtml(discoverState.locationError)} ${icon("chevron")}`;
   }
   return `${icon("pin")} Use my location ${icon("chevron")}`;
+}
+
+function locationButtonAriaLabel() {
+  if (discoverState.userLocation?.label) {
+    return `Current location: ${discoverState.userLocation.label}. Tap to refresh.`;
+  }
+  if (discoverState.locationError) {
+    return `${discoverState.locationError}. Tap to try again.`;
+  }
+  return "Use my location";
 }
 
 function getToken() {
@@ -373,6 +494,51 @@ function go(view) {
   render();
 }
 
+function focusPage({ preferSelector = null } = {}) {
+  requestAnimationFrame(() => {
+    const preferred = preferSelector ? document.querySelector(preferSelector) : null;
+    const target =
+      preferred ||
+      document.querySelector(
+        "#main-content h1, #main-content .page-title, .card h1, #first_name, #phone_number, #otp, #pin-0, #main-content"
+      );
+    if (!target) return;
+    if (!target.hasAttribute("tabindex") && !/^(INPUT|SELECT|TEXTAREA|BUTTON|A)$/i.test(target.tagName)) {
+      target.setAttribute("tabindex", "-1");
+    }
+    try {
+      target.focus({ preventScroll: true });
+    } catch {
+      target.focus();
+    }
+  });
+}
+
+function captureFocusKey() {
+  const el = document.activeElement;
+  if (!el || el === document.body || el === document.documentElement) return null;
+  return el.getAttribute("data-focus-key") || el.id || null;
+}
+
+function restoreFocusKey(key) {
+  if (!key) return false;
+  const target =
+    document.querySelector(`[data-focus-key="${CSS.escape(key)}"]`) ||
+    document.getElementById(key);
+  if (!target || typeof target.focus !== "function") return false;
+  try {
+    target.focus({ preventScroll: true });
+  } catch {
+    target.focus();
+  }
+  return true;
+}
+
+function decorateIconSvg(svg) {
+  if (!svg || svg.includes("aria-hidden")) return svg;
+  return svg.replace("<svg ", '<svg aria-hidden="true" focusable="false" ');
+}
+
 // Set when arriving at the queue screen from a specific business, so the list
 // can scroll straight to that card instead of making the customer hunt for it.
 let queueFocusBusinessId = null;
@@ -382,6 +548,7 @@ let queueFocusBusinessId = null;
 let signupPrefillPhone = null;
 
 function goToQueue(businessId = null) {
+  invalidateHomeCache();
   queueFocusBusinessId = businessId;
   go("queue");
 }
@@ -401,7 +568,7 @@ function icon(name) {
     "more",
     ...Object.keys(ICON_ALIASES),
   ]);
-  if (groupKeys.has(name)) return groupIconSvg(name);
+  if (groupKeys.has(name)) return decorateIconSvg(groupIconSvg(name));
 
   const icons = {
     call: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.37 1.9.72 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.35 1.85.59 2.81.72A2 2 0 0 1 22 16.92Z"/></svg>`,
@@ -423,7 +590,7 @@ function icon(name) {
     queue: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="7" cy="8" r="2.2"/><circle cx="12" cy="8" r="2.2"/><circle cx="17" cy="8" r="2.2"/><path d="M3.8 18c.7-2.3 2.3-3.5 3.2-3.5s2.5 1.2 3.2 3.5M8.8 18c.7-2.3 2.3-3.5 3.2-3.5s2.5 1.2 3.2 3.5M13.8 18c.7-2.3 2.3-3.5 3.2-3.5s2.5 1.2 3.2 3.5"/></svg>`,
     profile: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="3.2"/><path d="M5.5 19.5c1.4-3.2 3.7-4.8 6.5-4.8s5.1 1.6 6.5 4.8"/></svg>`,
   };
-  return icons[name] || icons.more;
+  return decorateIconSvg(icons[name] || icons.more);
 }
 
 function categoryKey(name) {
@@ -433,12 +600,26 @@ function categoryKey(name) {
 }
 
 function tabbar(active) {
+  const tabs = [
+    { id: "home", label: "Home", icon: "home" },
+    { id: "bookings", label: "Bookings", icon: "bookings" },
+    { id: "queue", label: "Queue", icon: "queue" },
+    { id: "profile", label: "Profile", icon: "profile" },
+  ];
   return `
-    <nav class="tabbar">
-      <button class="tab ${active === "home" ? "active" : ""}" data-tab="home" type="button">${icon("home")}Home</button>
-      <button class="tab ${active === "bookings" ? "active" : ""}" data-tab="bookings" type="button">${icon("bookings")}Bookings</button>
-      <button class="tab ${active === "queue" ? "active" : ""}" data-tab="queue" type="button">${icon("queue")}Queue</button>
-      <button class="tab ${active === "profile" ? "active" : ""}" data-tab="profile" type="button">${icon("profile")}Profile</button>
+    <nav class="tabbar" aria-label="Main">
+      ${tabs
+        .map(
+          (tab) => `
+            <button
+              class="tab ${active === tab.id ? "active" : ""}"
+              data-tab="${tab.id}"
+              type="button"
+              ${active === tab.id ? 'aria-current="page"' : ""}
+            >${icon(tab.icon)}${tab.label}</button>
+          `
+        )
+        .join("")}
     </nav>
   `;
 }
@@ -457,9 +638,10 @@ function renderSignup() {
 
   app.innerHTML = `
     <div class="auth-shell">
-      <form class="card" id="signup-form">
-        <div class="brand">Queue<span>less</span></div>
-        <h2>Create account</h2>
+      <main id="main-content" tabindex="-1">
+      <form class="card" id="signup-form" aria-labelledby="signup-heading">
+        <p class="brand">Queue<span>less</span></p>
+        <h1 id="signup-heading" class="card-heading">Create account</h1>
         <p class="lead">
           ${carried
             ? "That number isn't registered yet. Add your name and a PIN to finish signing up."
@@ -474,15 +656,15 @@ function renderSignup() {
         ${pinFieldHtml({ id: "confirm_pin", label: "Confirm PIN" })}
         <button class="btn" type="submit">Continue</button>
         <button class="btn-link" type="button" id="to-login">Already have an account? Log in</button>
-        <p class="message" id="message" role="status"></p>
+        <p class="message" id="message" role="status" aria-live="polite"></p>
       </form>
+      </main>
     </div>
   `;
 
   bindPinFields();
   document.getElementById("to-login").onclick = () => go("login");
-  // The phone is already filled in, so start where the customer still has work.
-  if (carried) document.getElementById("first_name").focus();
+  focusPage({ preferSelector: carried ? "#first_name" : "#first_name" });
 
   document.getElementById("signup-form").addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -525,9 +707,10 @@ function renderVerify() {
   const parts = splitStoredPhone(phone);
   app.innerHTML = `
     <div class="auth-shell">
-      <form class="card" id="verify-form">
-        <div class="brand">Queue<span>less</span></div>
-        <h2>Enter OTP</h2>
+      <main id="main-content" tabindex="-1">
+      <form class="card" id="verify-form" aria-labelledby="verify-heading">
+        <p class="brand">Queue<span>less</span></p>
+        <h1 id="verify-heading" class="card-heading">Enter OTP</h1>
         <p class="lead">
           Web-only mode: open Admin → Customers to see the OTP for
           <strong>${phone || "your phone"}</strong>, then enter it here.
@@ -535,17 +718,19 @@ function renderVerify() {
         ${phoneFieldHtml({ selectedCode: parts.code, localValue: parts.local })}
         <div class="field">
           <label for="otp">OTP</label>
-          <input id="otp" name="otp" inputmode="numeric" maxlength="4" pattern="\\d{4}" placeholder="4 digits" required />
+          <input id="otp" name="otp" inputmode="numeric" maxlength="4" pattern="\\d{4}" placeholder="4 digits" autocomplete="one-time-code" required />
         </div>
         <button class="btn" type="submit">Verify &amp; sign in</button>
         <div class="resend-row">
           <button class="btn-link" type="button" id="resend-btn" hidden></button>
         </div>
         <button class="btn-link" type="button" id="to-signup">Back to sign up</button>
-        <p class="message" id="message" role="status"></p>
+        <p class="message" id="message" role="status" aria-live="polite"></p>
       </form>
+      </main>
     </div>
   `;
+  focusPage({ preferSelector: "#otp" });
 
   const resendBtn = document.getElementById("resend-btn");
   const statusMessage = document.getElementById("message");
@@ -678,9 +863,10 @@ function renderLogin() {
     const onPin = stage === "pin";
     app.innerHTML = `
       <div class="auth-shell">
-        <form class="card" id="login-form">
-          <div class="brand">Queue<span>less</span></div>
-          <h2>${onPin ? `Welcome back${greeting ? `, ${escapeHtml(greeting)}` : ""}` : "Log in"}</h2>
+        <main id="main-content" tabindex="-1">
+        <form class="card" id="login-form" aria-labelledby="login-heading">
+          <p class="brand">Queue<span>less</span></p>
+          <h1 id="login-heading" class="card-heading">${onPin ? `Welcome back${greeting ? `, ${escapeHtml(greeting)}` : ""}` : "Log in"}</h1>
           <p class="lead">
             ${onPin
               ? `Enter the 4-digit PIN for <strong>+${escapeHtml(knownPhone)}</strong>.`
@@ -693,20 +879,22 @@ function renderLogin() {
           <button class="btn-link" type="button" id="secondary-action">
             ${onPin ? "Use a different number" : "Create an account"}
           </button>
-          <p class="message" id="message" role="status"></p>
+          <p class="message" id="message" role="status" aria-live="polite"></p>
         </form>
+        </main>
       </div>
     `;
 
     if (onPin) {
       bindPinFields();
-      document.getElementById("pin-0")?.focus();
+      focusPage({ preferSelector: "#pin-0" });
       document.getElementById("secondary-action").onclick = () => {
         stage = "phone";
         paint();
       };
     } else {
       document.getElementById("secondary-action").onclick = () => go("signup");
+      focusPage({ preferSelector: "#phone_number" });
     }
 
     document.getElementById("login-form").addEventListener("submit", onSubmit);
@@ -801,10 +989,36 @@ function enrichBusiness(business, index) {
   const i = index % DEMO_IMAGES.length;
   const queueSize = business.queue_size ?? DEMO_QUEUE[i];
   const avgWait = business.avg_wait_minutes ?? DEMO_WAIT[i];
-  const away = travelAway(business, discoverState.userLocation);
+  const branches = (Array.isArray(business.branches) ? business.branches : [])
+    .map((branch) => {
+      const away = travelAway(branch, discoverState.userLocation);
+      return {
+        ...branch,
+        away,
+        awaySummary: formatAwaySummary(away),
+      };
+    })
+    .sort((a, b) => {
+      const aMin = a.away?.minutes ?? Number.POSITIVE_INFINITY;
+      const bMin = b.away?.minutes ?? Number.POSITIVE_INFINITY;
+      if (aMin !== bMin) return aMin - bMin;
+      return String(a.name || "").localeCompare(String(b.name || ""));
+    });
+
+  const nearest = branches.find((branch) => branch.away) || branches[0] || null;
+  const place =
+    branches.length === 1
+      ? branches[0].location || business.location || ""
+      : business.location || nearest?.location || "";
+  const away =
+    branches.length === 1
+      ? branches[0].away
+      : nearest?.away || travelAway(business, discoverState.userLocation);
+
   return {
     ...business,
-    place: business.location || "",
+    branches,
+    place,
     rating: business.rating || DEMO_RATING[i],
     reviews: business.review_count || DEMO_REVIEWS[i],
     queueSize,
@@ -813,6 +1027,40 @@ function enrichBusiness(business, index) {
     thumb: resolveImageUrl(business.image_url) || DEMO_IMAGES[i],
     away,
   };
+}
+
+function branchTravelHtml(branches, { compact = false } = {}) {
+  if (!Array.isArray(branches) || !branches.length) return "";
+  if (branches.length === 1) {
+    const branch = branches[0];
+    const summary = branch.awaySummary;
+    if (!summary && !branch.location) return "";
+    return summary
+      ? `<div class="away-line">${escapeHtml(summary)}</div>`
+      : "";
+  }
+  return `
+    <div class="branch-aways" role="list" aria-label="Branch distances">
+      ${branches
+        .map((branch) => {
+          const summary = branch.awaySummary;
+          const location = branch.location ? escapeHtml(branch.location) : "";
+          return `
+            <div class="branch-away-line" role="listitem">
+              <span class="branch-away-name">${escapeHtml(branch.name || "Branch")}</span>
+              ${
+                summary
+                  ? `<span class="branch-away-meta">${escapeHtml(summary)}</span>`
+                  : location
+                    ? `<span class="branch-away-meta">${location}</span>`
+                    : `<span class="branch-away-meta muted">Distance unavailable</span>`
+              }
+            </div>
+          `;
+        })
+        .join("")}
+    </div>
+  `;
 }
 
 function matchesHomeFilters(business, { ignoreGroup = false } = {}) {
@@ -834,7 +1082,9 @@ function matchesHomeFilters(business, { ignoreGroup = false } = {}) {
 // Estimated wait = people ahead × average service time (from the queue API).
 function orderedHomeBusinesses() {
   const businessById = new Map(
-    discoverState.businesses.map((business) => [Number(business.id), business])
+    discoverState.businesses
+      .filter((business) => Array.isArray(business.branches) && business.branches.length > 0)
+      .map((business) => [Number(business.id), business])
   );
 
   const joined = discoverState.myQueue
@@ -856,6 +1106,7 @@ function orderedHomeBusinesses() {
 
   const joinedIds = new Set(joined.map((business) => Number(business.id)));
   const others = discoverState.businesses
+    .filter((business) => Array.isArray(business.branches) && business.branches.length > 0)
     .filter((business) => !joinedIds.has(Number(business.id)))
     .filter((business) => matchesHomeFilters(business))
     .map((business) => ({ ...business, myQueueEntry: null }));
@@ -889,26 +1140,45 @@ function renderBusinessCards(list) {
         .map((business, index) => {
           const item = enrichBusiness(business, index);
           const entry = business.myQueueEntry || null;
+          const statusLabel = entry
+            ? `Joined, position ${entry.position}, ${entry.people_ahead} ahead`
+            : `${item.queueSize} in queue, about ${item.avgWait} minutes average wait`;
+          const branchTravel =
+            item.branches?.length > 1
+              ? item.branches
+                  .map((branch) => {
+                    const travel = branch.awaySummary || "distance unavailable";
+                    return `${branch.name || "Branch"}: ${travel}`;
+                  })
+                  .join(". ")
+              : item.away
+                ? formatAwaySummary(item.away)
+                : "";
           return `
-            <article class="biz-card ${entry ? "biz-card-joined" : ""}" role="button" tabindex="0" data-biz-id="${item.id}">
-              <img class="biz-thumb" src="${escapeHtml(item.thumb)}" alt="${escapeHtml(item.name)}" loading="lazy" onerror="this.src='data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2270%22 height=%2270%22 fill=%22%23eef0f3%22%3E%3Crect width=%2270%22 height=%2270%22/%3E%3C/svg%3E'" />
+            <article class="biz-card ${entry ? "biz-card-joined" : ""}" role="button" tabindex="0" data-biz-id="${item.id}" aria-label="${escapeHtml(item.name)}. ${statusLabel}${branchTravel ? `. ${escapeHtml(branchTravel)}` : ""}">
+              <img class="biz-thumb" src="${escapeHtml(item.thumb)}" alt="" loading="lazy" onerror="this.src='data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2270%22 height=%2270%22 fill=%22%23eef0f3%22%3E%3Crect width=%2270%22 height=%2270%22/%3E%3C/svg%3E'" />
               <div class="biz-meta">
-                <h3>${escapeHtml(item.name)}</h3>
+                <h2>${escapeHtml(item.name)}</h2>
                 ${
-                  item.place
-                    ? `<div class="place">${icon("pin")} ${escapeHtml(item.place)}</div>`
-                    : ""
+                  item.branches?.length > 1
+                    ? ""
+                    : item.place
+                      ? `<div class="place">${icon("pin")} ${escapeHtml(item.place)}</div>`
+                      : ""
                 }
                 ${
-                  item.away
-                    ? `<div class="away-line">${escapeHtml(item.away.label)}</div>`
-                    : ""
+                  item.branches?.length > 1
+                    ? branchTravelHtml(item.branches)
+                    : item.away
+                      ? `<div class="away-line">${escapeHtml(formatAwaySummary(item.away))}</div>`
+                      : ""
                 }
                 ${
                   entry
                     ? `<div class="queue-position-line">Your position · ${entry.people_ahead} ahead</div>`
                     : `<div class="rating">${icon("star")} ${item.rating} <span class="reviews">(${item.reviews})</span></div>`
                 }
+                ${accessibilityChipsHtml(item, { compact: true })}
               </div>
               ${positionBadge(entry, item)}
             </article>
@@ -923,16 +1193,45 @@ function bindBizCards() {
   document.querySelectorAll("[data-biz-id]").forEach((el) => {
     const open = () => go(`business-${el.dataset.bizId}`);
     el.addEventListener("click", open);
-    el.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") open(); });
+    el.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        open();
+      }
+    });
   });
 }
 
 function renderDiscoverFrame() {
-  const categories = discoverState.groups.map((group) => ({
-    id: group.id,
-    name: group.name,
-    iconKey: group.icon || CATEGORY_ICONS[categoryKey(group.name)] || "more",
-  }));
+  const groupsWithBusinesses = new Set(
+    discoverState.businesses.map((business) => Number(business.business_group_id))
+  );
+  const categories = discoverState.groups
+    .filter((group) => groupsWithBusinesses.has(Number(group.id)))
+    .map((group) => ({
+      id: group.id,
+      name: group.name,
+      iconKey: group.icon || CATEGORY_ICONS[categoryKey(group.name)] || "more",
+    }));
+
+  if (
+    discoverState.activeGroupId &&
+    !groupsWithBusinesses.has(Number(discoverState.activeGroupId))
+  ) {
+    discoverState.activeGroupId = categories[0]?.id || null;
+  }
+
+  const categoryRowSize = 4;
+  const hasMoreCategories = categories.length > categoryRowSize;
+  if (!hasMoreCategories) discoverState.categoriesExpanded = false;
+  const activeHidden =
+    !discoverState.categoriesExpanded &&
+    discoverState.activeGroupId &&
+    !categories.slice(0, categoryRowSize).some((cat) => cat.id === discoverState.activeGroupId);
+  if (activeHidden) discoverState.categoriesExpanded = true;
+  const visibleCategories = discoverState.categoriesExpanded
+    ? categories
+    : categories.slice(0, categoryRowSize);
 
   const ordered = orderedHomeBusinesses();
   const joinedCount = ordered.filter((business) => business.myQueueEntry).length;
@@ -944,48 +1243,61 @@ function renderDiscoverFrame() {
 
   app.innerHTML = `
     <div class="home-shell">
+      <main id="main-content" tabindex="-1">
       <div class="home-top">
         <div>
           <h1>Discover Services</h1>
-          <button class="location" type="button" id="use-location">${locationButtonLabel()}</button>
+          <button class="location" type="button" id="use-location" aria-label="${escapeHtml(locationButtonAriaLabel())}">${locationButtonLabel()}</button>
         </div>
-        <button class="icon-btn" type="button" aria-label="Notifications">${icon("bell")}<span class="dot"></span></button>
+        <button class="icon-btn" type="button" aria-label="Notifications, no unread alerts" disabled>${icon("bell")}<span class="dot" aria-hidden="true"></span></button>
       </div>
 
-      <label class="search">
-        ${icon("search")}
-        <input id="search-input" type="search" placeholder="Search for a service or business" value="${escapeHtml(discoverState.search)}" />
-        <button class="filter" type="button" aria-label="Filters">${icon("filter")}</button>
-      </label>
-
-      <div class="categories">
-        ${categories
-          .map((cat) => {
-            const active =
-              cat.id === "more"
-                ? false
-                : discoverState.activeGroupId === cat.id;
-            return `
-              <button class="cat ${active ? "active" : ""}" type="button" data-group="${cat.id}">
-                <span class="glyph">${icon(cat.iconKey)}</span>
-                <span>${escapeHtml(cat.name)}</span>
-              </button>
-            `;
-          })
-          .join("")}
+      <div class="search">
+        <span aria-hidden="true">${icon("search")}</span>
+        <input id="search-input" type="search" placeholder="Search for a service or business" aria-label="Search for a service or business" value="${escapeHtml(discoverState.search)}" />
+        <button class="filter" type="button" aria-label="Filters" disabled>${icon("filter")}</button>
       </div>
+
+      ${
+        categories.length
+          ? `
+      <div class="categories-panel">
+        <div class="categories" role="toolbar" aria-label="Business categories">
+          ${visibleCategories
+            .map((cat) => {
+              const active = discoverState.activeGroupId === cat.id;
+              return `
+                <button class="cat ${active ? "active" : ""}" type="button" data-group="${cat.id}" aria-pressed="${active ? "true" : "false"}">
+                  <span class="glyph" aria-hidden="true">${icon(cat.iconKey)}</span>
+                  <span>${escapeHtml(cat.name)}</span>
+                </button>
+              `;
+            })
+            .join("")}
+        </div>
+        ${
+          hasMoreCategories
+            ? `<button class="categories-toggle" type="button" id="categories-toggle" aria-expanded="${
+                discoverState.categoriesExpanded ? "true" : "false"
+              }">${discoverState.categoriesExpanded ? "Show less" : "Show all"}</button>`
+            : ""
+        }
+      </div>`
+          : ""
+      }
 
       <div class="section-head">
         <h2>${sectionTitle}</h2>
-        <button type="button">See all</button>
       </div>
       <div id="biz-list-wrap">${renderBusinessCards(ordered)}</div>
+      </main>
       ${tabbar("home")}
     </div>
   `;
 
   bindTabs();
   bindBizCards();
+  focusPage();
 
   document.getElementById("use-location")?.addEventListener("click", async () => {
     const button = document.getElementById("use-location");
@@ -1005,10 +1317,14 @@ function renderDiscoverFrame() {
     bindBizCards();
   });
 
+  document.getElementById("categories-toggle")?.addEventListener("click", () => {
+    discoverState.categoriesExpanded = !discoverState.categoriesExpanded;
+    renderDiscoverFrame();
+  });
+
   document.querySelectorAll("[data-group]").forEach((button) => {
     button.addEventListener("click", async () => {
       const value = button.getAttribute("data-group");
-      if (value === "more") return;
       const groupId = Number(value);
       discoverState.activeGroupId =
         discoverState.activeGroupId === groupId ? null : groupId;
@@ -1020,29 +1336,27 @@ function renderDiscoverFrame() {
 async function renderHome() {
   app.innerHTML = `
     <div class="home-shell">
-      <h1>Discover Services</h1>
-      <p class="empty-state">Loading nearby businesses…</p>
+      <main id="main-content" tabindex="-1">
+        <h1>Discover Services</h1>
+        <p class="empty-state" role="status" aria-live="polite">Loading nearby businesses…</p>
+      </main>
       ${tabbar("home")}
     </div>
   `;
   bindTabs();
+  focusPage();
 
   try {
-    const [me, groups, businesses, myQueue] = await Promise.all([
-      api("/customer/me"),
-      api("/customer/business-groups"),
-      api("/customer/businesses"),
-      api("/customer/queue"),
-    ]);
-    discoverState.me = me;
-    discoverState.groups = groups;
-    discoverState.businesses = businesses;
-    discoverState.myQueue = Array.isArray(myQueue) ? myQueue : [];
-    if (!discoverState.activeGroupId && groups.length) {
-      const beauty = groups.find((group) =>
+    const bundle = await loadHomeBundle();
+    discoverState.me = bundle.me;
+    discoverState.groups = bundle.groups;
+    discoverState.businesses = bundle.businesses;
+    discoverState.myQueue = bundle.myQueue;
+    if (!discoverState.activeGroupId && discoverState.groups.length) {
+      const beauty = discoverState.groups.find((group) =>
         /beauty/i.test(group.name)
       );
-      discoverState.activeGroupId = (beauty || groups[0]).id;
+      discoverState.activeGroupId = (beauty || discoverState.groups[0]).id;
     }
     // Soft-ask once per session so cards can show travel time without blocking
     // the first paint.
@@ -1078,12 +1392,15 @@ async function renderHome() {
 async function renderProfile() {
   app.innerHTML = `
     <div class="profile-page">
-      <h1>Profile</h1>
-      <p class="empty-state">Loading…</p>
+      <main id="main-content" tabindex="-1">
+        <h1>Profile</h1>
+        <p class="empty-state" role="status" aria-live="polite">Loading…</p>
+      </main>
       ${tabbar("profile")}
     </div>
   `;
   bindTabs();
+  focusPage();
 
   try {
     const [me, contact] = await Promise.all([
@@ -1098,6 +1415,7 @@ async function renderProfile() {
 
     app.innerHTML = `
       <div class="profile-page">
+        <main id="main-content" tabindex="-1">
         <h1>Profile</h1>
         <div class="profile-identity">
           <div class="profile-avatar" aria-hidden="true">${escapeHtml((me.first_name || "?").slice(0, 1).toUpperCase())}</div>
@@ -1161,6 +1479,7 @@ async function renderProfile() {
         </section>
 
         <button class="btn profile-logout" type="button" id="logout">Sign out</button>
+        </main>
         ${tabbar("profile")}
       </div>
     `;
@@ -1172,6 +1491,7 @@ async function renderProfile() {
     app.querySelectorAll("[data-go]").forEach((btn) => {
       btn.addEventListener("click", () => go(btn.dataset.go));
     });
+    focusPage();
   } catch (error) {
     clearToken();
     go("login");
@@ -1181,6 +1501,7 @@ async function renderProfile() {
 function legalPageShell(title, bodyHtml) {
   return `
     <div class="legal-page">
+      <main id="main-content" tabindex="-1">
       <header class="legal-header">
         <button type="button" class="legal-back" id="legal-back" aria-label="Back to profile">←</button>
         <h1>${escapeHtml(title)}</h1>
@@ -1188,6 +1509,7 @@ function legalPageShell(title, bodyHtml) {
       <article class="legal-body">
         ${bodyHtml}
       </article>
+      </main>
       ${tabbar("profile")}
     </div>
   `;
@@ -1239,6 +1561,7 @@ function renderTerms() {
   );
   bindTabs();
   document.getElementById("legal-back").onclick = () => go("profile");
+  focusPage();
 }
 
 function renderPrivacy() {
@@ -1294,15 +1617,18 @@ function renderPrivacy() {
   );
   bindTabs();
   document.getElementById("legal-back").onclick = () => go("profile");
+  focusPage();
 }
 
 async function renderBusinessDetail(id) {
   app.innerHTML = `
     <div class="detail-shell">
-      <div class="detail-hero skeleton"></div>
+      <main id="main-content" tabindex="-1">
+      <div class="detail-hero skeleton" aria-hidden="true"></div>
       <div class="detail-body">
-        <p class="empty-state">Loading…</p>
+        <p class="empty-state" role="status" aria-live="polite">Loading…</p>
       </div>
+      </main>
       ${tabbar("home")}
     </div>
   `;
@@ -1345,31 +1671,73 @@ async function renderBusinessDetail(id) {
 
   app.innerHTML = `
     <div class="detail-shell">
-      <div class="detail-hero" style="background-image:url('${escapeHtml(item.thumb)}')">
-        <button class="detail-back" type="button" id="back-btn" aria-label="Back">
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m15 18-6-6 6-6"/></svg>
+      <main id="main-content" tabindex="-1">
+      <div class="detail-hero" style="background-image:url('${escapeHtml(item.thumb)}')" role="img" aria-label="${escapeHtml(item.name)}">
+        <button class="detail-back" type="button" id="back-btn" aria-label="Back to discover">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true" focusable="false"><path d="m15 18-6-6 6-6"/></svg>
         </button>
         <div class="detail-category-pill">${escapeHtml(item.business_group_name || "")}</div>
       </div>
 
       <div class="detail-body">
         <h1 class="detail-name">${escapeHtml(item.name)}</h1>
-        ${item.place ? `
-          <div class="detail-row">
-            ${icon("pin")}
-            <span>${escapeHtml(item.place)}</span>
-          </div>` : ""}
-        ${item.away ? `
-          <div class="detail-row away-detail">
-            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l2.5 2.5"/></svg>
-            <span>${escapeHtml(item.away.label)} away</span>
-          </div>` : ""}
+        ${
+          item.branches?.length > 1
+            ? `
+          <section class="detail-branches" aria-labelledby="detail-branches-heading">
+            <h2 id="detail-branches-heading" class="detail-branches-heading">Locations</h2>
+            <div class="detail-branch-list">
+              ${item.branches
+                .map((branch) => {
+                  const summary = branch.awaySummary;
+                  return `
+                    <div class="detail-branch-card">
+                      <div class="detail-branch-name">${escapeHtml(branch.name || "Branch")}</div>
+                      ${
+                        branch.location
+                          ? `<div class="detail-row">${icon("pin")}<span>${escapeHtml(branch.location)}</span></div>`
+                          : ""
+                      }
+                      ${
+                        summary
+                          ? `<div class="detail-row away-detail"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l2.5 2.5"/></svg><span>${escapeHtml(summary)}</span></div>`
+                          : ""
+                      }
+                    </div>
+                  `;
+                })
+                .join("")}
+            </div>
+          </section>`
+            : `
+              ${item.place ? `
+                <div class="detail-row">
+                  ${icon("pin")}
+                  <span>${escapeHtml(item.place)}</span>
+                </div>` : ""}
+              ${item.away ? `
+                <div class="detail-row away-detail">
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l2.5 2.5"/></svg>
+                  <span>${escapeHtml(formatAwaySummary(item.away))}</span>
+                </div>` : ""}
+            `
+        }
         ${item.phone ? `
           <div class="detail-row">
-            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6.5 4h3l1.5 4-2 1.2A11 11 0 0 0 12.8 13l1.2-2 4 1.5v3c0 1-.9 1.7-1.9 1.5A17 17 0 0 1 4.9 5.4C4.7 4.4 5.4 4 6.5 4Z"/></svg>
-            <span>${escapeHtml(item.phone)}</span>
+            ${icon("call")}
+            <a href="tel:${escapeHtml(String(item.phone).replace(/\s+/g, ""))}">${escapeHtml(item.phone)}</a>
           </div>` : ""}
         ${item.description ? `<p class="detail-desc">${escapeHtml(item.description)}</p>` : ""}
+
+        ${
+          normalizeAccessibility(item).length
+            ? `
+          <section class="detail-a11y" aria-labelledby="detail-a11y-heading">
+            <h2 id="detail-a11y-heading" class="detail-a11y-heading">Accessibility</h2>
+            ${accessibilityChipsHtml(item)}
+          </section>`
+            : ""
+        }
 
         <div class="queue-stats">
           <div class="queue-stat">
@@ -1396,12 +1764,16 @@ async function renderBusinessDetail(id) {
           <button
             class="btn detail-join-btn${alreadyInQueue ? " in-queue" : ""}"
             type="button"
+            id="detail-join-btn"
+            aria-label="${escapeHtml(joinLabel)} at ${escapeHtml(item.name)}"
           >${alreadyInQueue ? `${joinLabel} ${icon("chevron")}` : joinLabel}</button>
-          <button class="btn btn-ghost detail-book-btn" type="button">Book for later</button>
+          <button class="btn btn-ghost detail-book-btn" type="button" aria-label="Book ${escapeHtml(item.name)} for later">Book for later</button>
         </div>
-        <p class="message" id="detail-message" role="status"></p>
+        <p class="message" id="detail-message" role="status" aria-live="polite"></p>
       </div>
+      </main>
       ${bookingSheetHtml(item)}
+      ${joinSheetHtml(item)}
       ${tabbar("home")}
     </div>
   `;
@@ -1413,32 +1785,20 @@ async function renderBusinessDetail(id) {
   const joinBtn = document.querySelector(".detail-join-btn");
 
   if (!alreadyInQueue) {
-    joinBtn.onclick = async (event) => {
-      const btn = event.currentTarget;
-      btn.disabled = true;
-      message.textContent = "";
-      message.classList.remove("success");
-      try {
-        await api(`/customer/businesses/${item.id}/queue`, { method: "POST" });
-        goToQueue(item.id);
-      } catch (error) {
-        if (error.status === 409) {
-          goToQueue(item.id);
-          return;
-        }
-        message.textContent = error.message;
-        btn.disabled = false;
-      }
-    };
+    bindJoinSheet(item, message);
+    joinBtn.onclick = () => openJoinSheet();
   } else {
     joinBtn.onclick = () => goToQueue(item.id);
     message.textContent = `You're #${myEntry.position} in this queue · about ${formatWaitMinutes(
       myEntry.estimated_wait_minutes
-    )} to go.`;
+    )} to go${
+      myEntry.party_size > 1 ? ` · party of ${myEntry.party_size}` : ""
+    }.`;
     message.classList.add("success");
   }
 
   bindBookingSheet(item, message);
+  focusPage();
 }
 
 /* ---------------------------------------------------------------- bookings */
@@ -1469,10 +1829,10 @@ function slotLabel(date) {
 function bookingSheetHtml(item) {
   const slots = bookingSlots();
   return `
-    <div class="sheet-overlay hidden" id="booking-sheet">
+    <div class="sheet-overlay hidden" id="booking-sheet" role="dialog" aria-modal="true" aria-labelledby="booking-sheet-title">
       <div class="sheet">
-        <div class="sheet-handle"></div>
-        <h3>Book a slot</h3>
+        <div class="sheet-handle" aria-hidden="true"></div>
+        <h3 id="booking-sheet-title">Book a slot</h3>
         <p class="sheet-lead">
           Reserve your place at ${escapeHtml(item.name)}. You can book up to
           ${BOOKING_WINDOW_HOURS} hours ahead.
@@ -1487,25 +1847,177 @@ function bookingSheetHtml(item) {
         </div>
         <button class="btn" type="button" id="booking-confirm">Confirm booking</button>
         <button class="btn-link" type="button" id="booking-cancel">Not now</button>
-        <p class="message" id="booking-message" role="status"></p>
+        <p class="message" id="booking-message" role="status" aria-live="polite"></p>
       </div>
     </div>
   `;
 }
 
+const MAX_PARTY_SIZE = 10;
+
+function joinSheetHtml(item) {
+  return `
+    <div class="sheet-overlay hidden" id="join-sheet" role="dialog" aria-modal="true" aria-labelledby="join-sheet-title">
+      <div class="sheet">
+        <div class="sheet-handle" aria-hidden="true"></div>
+        <h3 id="join-sheet-title">Join the queue</h3>
+        <p class="sheet-lead">
+          Add everyone you're bringing to ${escapeHtml(item.name)}. You'll keep one place in line for the whole party.
+        </p>
+        <div class="field">
+          <label id="party-size-label" for="party-count">How many people?</label>
+          <div class="party-stepper" role="group" aria-labelledby="party-size-label">
+            <button type="button" id="party-dec" aria-label="Fewer people">−</button>
+            <strong id="party-count" aria-live="polite" aria-atomic="true">1</strong>
+            <button type="button" id="party-inc" aria-label="More people">+</button>
+          </div>
+        </div>
+        <div id="party-names" class="party-names"></div>
+        <button class="btn" type="button" id="join-confirm">Join queue</button>
+        <button class="btn-link" type="button" id="join-cancel">Not now</button>
+        <p class="message" id="join-message" role="status" aria-live="polite"></p>
+      </div>
+    </div>
+  `;
+}
+
+function openJoinSheet() {
+  const sheet = document.getElementById("join-sheet");
+  if (!sheet) return;
+  sheet.dataset.returnFocus = document.activeElement?.id || "";
+  sheet.classList.remove("hidden");
+  requestAnimationFrame(() => document.getElementById("party-inc")?.focus() || document.getElementById("join-confirm")?.focus());
+}
+
+function bindJoinSheet(item, detailMessage, { bookingId = null } = {}) {
+  const sheet = document.getElementById("join-sheet");
+  if (!sheet) return;
+  const sheetMessage = document.getElementById("join-message");
+  const namesRoot = document.getElementById("party-names");
+  const countEl = document.getElementById("party-count");
+  let partySize = 1;
+  let defaultFirstName = "";
+
+  const close = () => {
+    sheet.classList.add("hidden");
+    sheetMessage.textContent = "";
+    const returnId = sheet.dataset.returnFocus;
+    if (returnId) document.getElementById(returnId)?.focus();
+    else document.querySelector(".detail-join-btn")?.focus();
+  };
+
+  const onKeydown = (event) => {
+    if (event.key === "Escape" && !sheet.classList.contains("hidden")) {
+      event.preventDefault();
+      close();
+    }
+  };
+  if (sheet._a11yEsc) document.removeEventListener("keydown", sheet._a11yEsc);
+  document.addEventListener("keydown", onKeydown);
+  sheet._a11yEsc = onKeydown;
+
+  const renderNames = () => {
+    countEl.textContent = String(partySize);
+    namesRoot.innerHTML = Array.from({ length: partySize }, (_, index) => {
+      const label = index === 0 ? "Your name" : `Person ${index + 1}`;
+      const value = index === 0 ? defaultFirstName : "";
+      return `
+        <div class="field">
+          <label for="party-name-${index}">${label}</label>
+          <input
+            id="party-name-${index}"
+            name="party_name_${index}"
+            autocomplete="${index === 0 ? "given-name" : "off"}"
+            placeholder="${index === 0 ? "Optional" : "Name (optional)"}"
+            value="${escapeHtml(value)}"
+          />
+        </div>
+      `;
+    }).join("");
+  };
+
+  document.getElementById("party-dec").onclick = () => {
+    partySize = Math.max(1, partySize - 1);
+    renderNames();
+  };
+  document.getElementById("party-inc").onclick = () => {
+    partySize = Math.min(MAX_PARTY_SIZE, partySize + 1);
+    renderNames();
+  };
+  document.getElementById("join-cancel").onclick = close;
+  sheet.addEventListener("click", (event) => {
+    if (event.target === sheet) close();
+  });
+
+  document.getElementById("join-confirm").onclick = async (event) => {
+    const btn = event.currentTarget;
+    const party_names = Array.from({ length: partySize }, (_, index) => {
+      const input = document.getElementById(`party-name-${index}`);
+      return String(input?.value || "").trim();
+    }).filter(Boolean);
+    btn.disabled = true;
+    sheetMessage.textContent = "";
+    if (detailMessage) {
+      detailMessage.textContent = "";
+      detailMessage.classList.remove("success");
+    }
+    try {
+      const body = { party_size: partySize, party_names };
+      if (bookingId) body.booking_id = Number(bookingId);
+      await api(`/customer/businesses/${item.id}/queue`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+      close();
+      goToQueue(item.id);
+    } catch (error) {
+      if (error.status === 409) {
+        close();
+        goToQueue(item.id);
+        return;
+      }
+      sheetMessage.textContent = error.message;
+    } finally {
+      btn.disabled = false;
+    }
+  };
+
+  renderNames();
+  void api("/customer/me")
+    .then((me) => {
+      defaultFirstName = me.first_name || "";
+      const first = document.getElementById("party-name-0");
+      if (first && !first.value) first.value = defaultFirstName;
+    })
+    .catch(() => {});
+}
+
 function bindBookingSheet(item, detailMessage) {
   const sheet = document.getElementById("booking-sheet");
   const sheetMessage = document.getElementById("booking-message");
-  const close = () => sheet.classList.add("hidden");
+  const close = () => {
+    sheet.classList.add("hidden");
+    document.querySelector(".detail-book-btn")?.focus();
+  };
 
   document.querySelector(".detail-book-btn").onclick = () => {
     sheetMessage.textContent = "";
     sheet.classList.remove("hidden");
+    requestAnimationFrame(() => document.getElementById("booking-slot")?.focus());
   };
   document.getElementById("booking-cancel").onclick = close;
   sheet.addEventListener("click", (event) => {
     if (event.target === sheet) close();
   });
+  const onKeydown = (event) => {
+    if (event.key === "Escape" && !sheet.classList.contains("hidden")) {
+      event.preventDefault();
+      close();
+    }
+  };
+  if (sheet._a11yEsc) document.removeEventListener("keydown", sheet._a11yEsc);
+  document.addEventListener("keydown", onKeydown);
+  sheet._a11yEsc = onKeydown;
 
   document.getElementById("booking-confirm").onclick = async (event) => {
     const btn = event.currentTarget;
@@ -1531,12 +2043,15 @@ function bindBookingSheet(item, detailMessage) {
 async function renderBookings() {
   app.innerHTML = `
     <div class="placeholder-page">
-      <h1>Bookings</h1>
-      <p class="empty-state">Loading…</p>
+      <main id="main-content" tabindex="-1">
+        <h1>Bookings</h1>
+        <p class="empty-state" role="status" aria-live="polite">Loading…</p>
+      </main>
       ${tabbar("bookings")}
     </div>
   `;
   bindTabs();
+  focusPage();
 
   let bookings = [];
   try {
@@ -1544,12 +2059,15 @@ async function renderBookings() {
   } catch (error) {
     app.innerHTML = `
       <div class="placeholder-page">
-        <h1>Bookings</h1>
-        <p class="empty-state">${escapeHtml(error.message)}</p>
+        <main id="main-content" tabindex="-1">
+          <h1>Bookings</h1>
+          <p class="empty-state" role="alert">${escapeHtml(error.message)}</p>
+        </main>
         ${tabbar("bookings")}
       </div>
     `;
     bindTabs();
+    focusPage();
     return;
   }
 
@@ -1573,13 +2091,13 @@ async function renderBookings() {
                 <span class="booking-day">${escapeHtml(slotLabel(when).split(" ")[0])}</span>
               </div>
               <div class="booking-meta">
-                <h3>${escapeHtml(booking.business_name)}</h3>
+                <h2>${escapeHtml(booking.business_name)}</h2>
                 <div class="place">${icon("pin")} ${escapeHtml(booking.location || "—")}</div>
                 <div class="booking-countdown">${escapeHtml(countdown)}</div>
               </div>
               <div class="booking-actions">
-                <button class="chip chip-primary" data-join="${booking.business_id}" data-booking="${booking.id}">Check in</button>
-                <button class="chip" data-cancel="${booking.id}">Cancel</button>
+                <button class="chip chip-primary" data-join="${booking.business_id}" data-booking="${booking.id}" aria-label="Check in at ${escapeHtml(booking.business_name)}">Check in</button>
+                <button class="chip" data-cancel="${booking.id}" aria-label="Cancel booking at ${escapeHtml(booking.business_name)}">Cancel</button>
               </div>
             </article>
           `;
@@ -1589,14 +2107,17 @@ async function renderBookings() {
 
   app.innerHTML = `
     <div class="placeholder-page">
-      <h1>Bookings</h1>
-      <p class="page-lead">Reserved slots for the next ${BOOKING_WINDOW_HOURS} hours.</p>
-      <div class="booking-list">${list}</div>
-      <p class="message" id="bookings-message" role="status"></p>
+      <main id="main-content" tabindex="-1">
+        <h1>Bookings</h1>
+        <p class="page-lead">Reserved slots for the next ${BOOKING_WINDOW_HOURS} hours.</p>
+        <div class="booking-list">${list}</div>
+        <p class="message" id="bookings-message" role="status" aria-live="polite"></p>
+      </main>
       ${tabbar("bookings")}
     </div>
   `;
   bindTabs();
+  focusPage();
 
   const message = document.getElementById("bookings-message");
 
@@ -1619,7 +2140,10 @@ async function renderBookings() {
       try {
         await api(`/customer/businesses/${btn.dataset.join}/queue`, {
           method: "POST",
-          body: JSON.stringify({ booking_id: Number(btn.dataset.booking) }),
+          body: JSON.stringify({
+            booking_id: Number(btn.dataset.booking),
+            party_size: 1,
+          }),
         });
         go("queue");
       } catch (error) {
@@ -1677,10 +2201,10 @@ function queueCardHtml(entry) {
   const waitLabel = wait <= 0 ? "Any moment" : formatWaitMinutes(wait);
 
   return `
-    <article class="queue-card ${milestone.tone}" data-entry="${entry.id}">
+    <article class="queue-card ${milestone.tone}" data-entry="${entry.id}" aria-label="${escapeHtml(entry.business_name)}, position ${position} of ${total || position}, ${ahead} ahead, estimated wait ${escapeHtml(waitLabel)}${entry.party_size > 1 ? `, party of ${entry.party_size}` : ""}">
       <div class="queue-card-main">
-        <div class="position-ring" style="--progress:${progress}">
-          <div class="position-inner">
+        <div class="position-ring" style="--progress:${progress}" role="progressbar" aria-valuenow="${progress}" aria-valuemin="0" aria-valuemax="100" aria-label="Queue progress ${progress} percent">
+          <div class="position-inner" aria-hidden="true">
             <span class="position-number">${position}</span>
             <span class="position-of">of ${total || position}</span>
           </div>
@@ -1693,13 +2217,23 @@ function queueCardHtml(entry) {
           </div>
           <div class="place">${icon("pin")} ${escapeHtml(entry.location || "—")}</div>
           <p class="queue-milestone">
-            <span class="milestone-emoji">${milestone.emoji}</span>
+            <span class="milestone-emoji" aria-hidden="true">${milestone.emoji}</span>
             ${escapeHtml(milestone.text)}
           </p>
           <div class="queue-facts">
             <span><strong>${ahead}</strong> ahead</span>
             <span><strong>${escapeHtml(waitLabel)}</strong> est. wait</span>
+            ${
+              entry.party_size > 1
+                ? `<span><strong>${entry.party_size}</strong> in your party</span>`
+                : ""
+            }
           </div>
+          ${
+            Array.isArray(entry.party_names) && entry.party_names.length
+              ? `<p class="queue-party-names">${escapeHtml(entry.party_names.join(" · "))}</p>`
+              : ""
+          }
         </div>
       </div>
 
@@ -1707,7 +2241,7 @@ function queueCardHtml(entry) {
         <div class="queue-progress" title="${served} of ${total || position} served">
           <div class="queue-progress-bar" style="width:${progress}%"></div>
         </div>
-        <button class="queue-leave" data-leave="${entry.id}" type="button">Leave</button>
+        <button class="queue-leave" data-leave="${entry.id}" data-focus-key="leave-${entry.id}" type="button" aria-label="Leave queue at ${escapeHtml(entry.business_name)}">Leave</button>
       </div>
     </article>
   `;
@@ -1721,7 +2255,7 @@ function queueNavHtml(entries) {
       ${entries
         .map(
           (entry) => `
-            <button class="queue-nav-chip" type="button" data-nav="${entry.id}">
+            <button class="queue-nav-chip" type="button" data-nav="${entry.id}" aria-label="${escapeHtml(entry.business_name)}, position ${entry.position}">
               <span class="queue-nav-pos">#${entry.position}</span>
               ${escapeHtml(entry.business_name)}
             </button>
@@ -1752,7 +2286,10 @@ function bindQueueNav(focusEntryId = null) {
 
   const setActive = (id) => {
     for (const [chipId, chip] of chips) {
-      chip.classList.toggle("active", chipId === String(id));
+      const on = chipId === String(id);
+      chip.classList.toggle("active", on);
+      if (on) chip.setAttribute("aria-current", "true");
+      else chip.removeAttribute("aria-current");
     }
   };
 
@@ -1789,23 +2326,30 @@ async function renderQueue() {
 
   let navObserver = null;
 
-  const paint = (inner, nav = "") => {
+  let lastAnnouncement = "";
+  const paint = (inner, nav = "", { announce = "" } = {}) => {
+    const focusKey = document.getElementById("queue-body") ? captureFocusKey() : null;
     app.innerHTML = `
       <div class="queue-shell">
-        <div class="queue-header">
-          <h1>Your Queue</h1>
-          <p class="page-lead">Live position, updated automatically.</p>
-          ${nav}
-        </div>
-        <div id="queue-body">${inner}</div>
-        <p class="message" id="queue-message" role="status"></p>
+        <main id="main-content" tabindex="-1">
+          <div class="queue-header">
+            <h1>Your Queue</h1>
+            <p class="page-lead">Live position, updated automatically.</p>
+            ${nav}
+          </div>
+          <p class="sr-only" id="queue-live" aria-live="polite" aria-atomic="true">${escapeHtml(announce)}</p>
+          <div id="queue-body">${inner}</div>
+          <p class="message" id="queue-message" role="status" aria-live="polite"></p>
+        </main>
         ${tabbar("queue")}
       </div>
     `;
     bindTabs();
+    if (focusKey) restoreFocusKey(focusKey);
+    else if (!document.getElementById("queue-body")?.querySelector("[data-entry]")) focusPage();
   };
 
-  paint(`<p class="empty-state">Loading…</p>`);
+  paint(`<p class="empty-state" role="status">Loading…</p>`);
 
   // Chained timeouts rather than a fixed interval, so the gap can adapt.
   function scheduleNext(entries) {
@@ -1849,7 +2393,12 @@ async function renderQueue() {
 
     // Rebuilding the whole shell keeps the sticky nav in sync with the cards.
     navObserver?.disconnect();
-    paint(entries.map(queueCardHtml).join(""), queueNavHtml(entries));
+    const summary = entries
+      .map((entry) => `${entry.business_name}: position ${entry.position}, ${formatWaitMinutes(entry.estimated_wait_minutes)} wait`)
+      .join(". ");
+    const announce = summary !== lastAnnouncement ? summary : "";
+    lastAnnouncement = summary;
+    paint(entries.map(queueCardHtml).join(""), queueNavHtml(entries), { announce });
 
     // Only jump on the paint right after arriving from a business page; later
     // polls must not yank the customer's scroll position around.
@@ -1868,6 +2417,7 @@ async function renderQueue() {
         btn.disabled = true;
         try {
           await api(`/customer/queue/${btn.dataset.leave}/leave`, { method: "POST" });
+          invalidateHomeCache();
           await load();
         } catch (error) {
           const message = document.getElementById("queue-message");

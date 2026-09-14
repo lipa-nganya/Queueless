@@ -11,7 +11,7 @@ Product flavors (pick one in Android Studio’s build variant dropdown):
 
 | Flavor | App id suffix | API base URL | Notes |
 | --- | --- | --- | --- |
-| **local** | `.local` | `http://10.0.2.2:4000/api` | Emulator → host localhost; cleartext allowed |
+| **local** | `.local` | `https://homiest-psychopharmacologic-anaya.ngrok-free.dev/api` | Host API via ngrok (physical device or emulator) |
 | **dev** | `.dev` | `https://queueless-staging.up.railway.app/api` | Develop / Railway staging |
 | **production** | _(none)_ | `https://queueless.up.railway.app/api` | Live API |
 
@@ -22,10 +22,18 @@ All three can be installed side-by-side. Non-production builds show the env name
 In `android-vendor/local.properties` (gitignored):
 
 ```properties
-queueless.api.local=http://192.168.1.20:4000/api
+queueless.api.local=https://homiest-psychopharmacologic-anaya.ngrok-free.dev/api
 queueless.api.dev=https://queueless-staging.up.railway.app/api
 queueless.api.production=https://queueless.up.railway.app/api
 ```
+
+### Local API via ngrok (recommended)
+
+1. Start local servers: `./start-servers.sh` (from the repo root).
+2. Expose the API on the reserved domain: `./start-ngrok-api.sh`.
+3. Build/run the **localDebug** variant — it already points at that ngrok URL.
+
+The OkHttp client sends `ngrok-skip-browser-warning` automatically for ngrok hosts.
 
 ## Open in Android Studio
 
@@ -62,9 +70,9 @@ adb install -r app/build/outputs/apk/local/debug/app-local-debug.apk
 
 ## Local API from a physical device
 
-`10.0.2.2` only works on the emulator. On a real phone, either:
+Prefer **ngrok** (see above). Alternatives if ngrok is down:
 
-1. **Preferred:** USB reverse, then point local flavor at loopback:
+1. USB reverse, then point local flavor at loopback:
 
    ```bash
    adb reverse tcp:4000 tcp:4000
@@ -78,7 +86,7 @@ adb install -r app/build/outputs/apk/local/debug/app-local-debug.apk
 
 2. Or use your Mac’s LAN IP, e.g. `queueless.api.local=http://192.168.1.20:4000/api`, with the backend bound to `0.0.0.0`.
 
-Cleartext HTTP is allowed for the **local** flavor only (`src/local/AndroidManifest.xml` + `network_security_config.xml`).
+Cleartext HTTP is allowed for the **local** flavor only (`src/local/AndroidManifest.xml` + `network_security_config.xml`) when you use those HTTP fallbacks.
 
 ## Screens
 

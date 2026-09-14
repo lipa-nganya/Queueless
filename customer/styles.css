@@ -34,10 +34,62 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+.skip-link {
+  position: absolute;
+  left: 0.75rem;
+  top: 0.75rem;
+  z-index: 1000;
+  padding: 0.65rem 0.9rem;
+  border-radius: 0.65rem;
+  background: var(--lime-flow);
+  color: var(--deep-navy);
+  font-weight: 700;
+  text-decoration: none;
+  transform: translateY(-160%);
+}
+
+.skip-link:focus {
+  transform: translateY(0);
+  outline: 3px solid #fff;
+  outline-offset: 2px;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 button,
 input,
 select {
   font: inherit;
+}
+
+:focus-visible {
+  outline: 3px solid rgba(166, 230, 0, 0.95);
+  outline-offset: 2px;
+}
+
+.btn:focus-visible,
+.btn-link:focus-visible,
+.tab:focus-visible,
+.cat:focus-visible,
+.biz-card:focus-visible,
+.chip:focus-visible,
+.icon-btn:focus-visible,
+.detail-back:focus-visible,
+.queue-leave:focus-visible,
+.queue-nav-chip:focus-visible,
+.party-stepper button:focus-visible {
+  outline: 3px solid rgba(166, 230, 0, 0.95);
+  outline-offset: 2px;
 }
 
 #app {
@@ -73,7 +125,8 @@ select {
   color: var(--lime-deep);
 }
 
-.card h2 {
+.card h2,
+.card .card-heading {
   margin-top: 1.1rem;
   font-size: 1.35rem;
   font-weight: 800;
@@ -365,11 +418,36 @@ select {
   place-items: center;
 }
 
-.categories {
+.categories-panel {
   margin-top: 1.15rem;
+  padding: 0.75rem 0.55rem 0.55rem;
+  background: var(--bg-soft);
+  border-radius: 16px;
+}
+
+.categories {
+  margin-top: 0;
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 0.45rem 0.35rem;
+}
+
+.categories-toggle {
+  display: block;
+  width: 100%;
+  margin-top: 0.55rem;
+  padding: 0.45rem 0.5rem;
+  border: none;
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--lime-deep);
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.categories-toggle:hover {
+  background: #fff;
 }
 
 .cat {
@@ -390,7 +468,8 @@ select {
   display: grid;
   place-items: center;
   background: var(--bg);
-  border: 1.5px solid var(--lime-flow);
+  border: none;
+  box-shadow: 0 1px 2px rgba(10, 15, 26, 0.04);
   color: var(--deep-navy);
 }
 
@@ -418,7 +497,6 @@ select {
 
 .cat.active .glyph {
   background: var(--lime-flow);
-  border-color: var(--lime-flow);
   color: var(--deep-navy);
 }
 
@@ -473,6 +551,7 @@ select {
   background: var(--bg-muted);
 }
 
+.biz-meta h2,
 .biz-meta h3 {
   font-size: 0.95rem;
   font-weight: 800;
@@ -492,9 +571,71 @@ select {
   font-weight: 700;
 }
 
+.branch-aways {
+  margin-top: 0.35rem;
+  display: grid;
+  gap: 0.25rem;
+}
+
+.branch-away-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.35rem 0.55rem;
+  font-size: 0.74rem;
+  line-height: 1.3;
+}
+
+.branch-away-name {
+  font-weight: 700;
+  color: var(--text);
+}
+
+.branch-away-meta {
+  color: var(--ocean-teal);
+  font-weight: 700;
+}
+
+.branch-away-meta.muted {
+  color: var(--text-dim);
+  font-weight: 500;
+}
+
 .away-detail {
   color: var(--ocean-teal);
   font-weight: 700;
+}
+
+.detail-branches {
+  margin-top: 1rem;
+}
+
+.detail-branches-heading {
+  font-size: 0.95rem;
+  font-weight: 800;
+  margin-bottom: 0.55rem;
+}
+
+.detail-branch-list {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.detail-branch-card {
+  padding: 0.75rem 0.85rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg-soft);
+}
+
+.detail-branch-name {
+  font-weight: 800;
+  font-size: 0.9rem;
+  margin-bottom: 0.35rem;
+}
+
+.detail-branch-card .detail-row {
+  margin-top: 0.25rem;
 }
 
 .biz-meta .rating {
@@ -514,11 +655,12 @@ select {
 
 .wait {
   min-width: 3.6rem;
-  padding: 0.45rem 0.35rem;
-  border: 1.5px solid var(--lime-flow);
+  padding: 0.5rem 0.4rem;
+  border: none;
   border-radius: 10px;
   text-align: center;
-  color: var(--lime-deep);
+  color: var(--deep-navy);
+  background: var(--bg-soft);
   font-weight: 800;
   font-size: 0.78rem;
   line-height: 1.15;
@@ -532,13 +674,14 @@ select {
 }
 
 .biz-card-joined {
-  border-color: rgba(166, 230, 0, 0.55);
-  background: linear-gradient(180deg, rgba(166, 230, 0, 0.08), var(--bg) 55%);
+  border-color: transparent;
+  background: var(--bg-soft);
+  box-shadow: inset 0 0 0 1px rgba(166, 230, 0, 0.35);
 }
 
 .wait-joined {
-  border-color: var(--lime-deep);
-  background: rgba(166, 230, 0, 0.14);
+  border: none;
+  background: rgba(166, 230, 0, 0.22);
   color: var(--deep-navy);
   min-width: 3.9rem;
 }
@@ -920,6 +1063,68 @@ select {
   line-height: 1.55;
 }
 
+.detail-a11y {
+  margin-top: 1.15rem;
+}
+
+.detail-a11y-heading {
+  font-size: 0.95rem;
+  font-weight: 800;
+  margin-bottom: 0.55rem;
+}
+
+.a11y-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.a11y-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.4rem 0.65rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--bg-soft);
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.2;
+}
+
+.a11y-chip-icon {
+  display: inline-flex;
+  width: 1rem;
+  height: 1rem;
+  flex-shrink: 0;
+  color: inherit;
+}
+
+.a11y-chip-icon svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.a11y-chips-compact {
+  margin-top: 0.45rem;
+  gap: 0.3rem;
+}
+
+.a11y-chips-compact .a11y-chip {
+  padding: 0.22rem 0.45rem;
+  font-size: 0.68rem;
+  max-width: 100%;
+}
+
+.a11y-chips-compact .a11y-chip-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 9.5rem;
+}
+
 .queue-stats {
   margin-top: 1.25rem;
   display: flex;
@@ -1078,6 +1283,44 @@ select {
   margin-top: 0.5rem;
 }
 
+.party-stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  margin-top: 0.35rem;
+}
+
+.party-stepper button {
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 0.75rem;
+  border: 1px solid var(--line);
+  background: #fff;
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.party-stepper strong {
+  min-width: 1.75rem;
+  text-align: center;
+  font-size: 1.2rem;
+}
+
+.party-names {
+  margin-top: 0.85rem;
+  display: grid;
+  gap: 0.65rem;
+}
+
+.queue-party-names {
+  margin-top: 0.45rem;
+  color: var(--text-dim);
+  font-size: 0.8rem;
+  line-height: 1.35;
+}
+
 /* Bookings list */
 .booking-list {
   margin-top: 1.1rem;
@@ -1119,6 +1362,7 @@ select {
   letter-spacing: 0.04em;
 }
 
+.booking-meta h2,
 .booking-meta h3 {
   font-size: 0.95rem;
   font-weight: 800;

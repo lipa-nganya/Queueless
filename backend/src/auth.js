@@ -67,6 +67,7 @@ export function signVendorToken(vendor) {
       sub: vendor.id,
       username: vendor.username,
       email: vendor.email,
+      phone: vendor.phone,
       role: "vendor",
     },
     JWT_SECRET,
@@ -74,13 +75,43 @@ export function signVendorToken(vendor) {
   );
 }
 
+export async function vendorLoginWithPin(phone, pin) {
+  const phoneDigits = String(phone || "").trim();
+  const pinValue = String(pin || "");
+  if (!phoneDigits || !/^\d{4}$/.test(pinValue)) return null;
+
+  const result = await query(
+    `
+      SELECT id, username, email, phone, pin_hash, activated_at
+      FROM vendors
+      WHERE phone = $1
+      LIMIT 1
+    `,
+    [phoneDigits]
+  );
+
+  const vendor = result.rows[0];
+  if (!vendor?.pin_hash || !vendor.activated_at) return null;
+
+  const ok = await bcrypt.compare(pinValue, vendor.pin_hash);
+  if (!ok) return null;
+
+  return {
+    token: signVendorToken(vendor),
+    username: vendor.username,
+    email: vendor.email,
+    phone: vendor.phone,
+  };
+}
+
+/** @deprecated password login — prefer vendorLoginWithPin */
 export async function vendorLogin(identifier, password) {
   const loginId = String(identifier || "").trim();
   if (!loginId || !password) return null;
 
   const result = await query(
     `
-      SELECT id, username, email, password_hash, activated_at
+      SELECT id, username, email, phone, password_hash, activated_at
       FROM vendors
       WHERE username = $1 OR lower(email) = lower($1)
       LIMIT 1
@@ -98,6 +129,7 @@ export async function vendorLogin(identifier, password) {
     token: signVendorToken(vendor),
     username: vendor.username,
     email: vendor.email,
+    phone: vendor.phone,
   };
 }
 

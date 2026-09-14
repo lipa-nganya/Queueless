@@ -8,15 +8,19 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import tech.thewolfgang.queueless.vendor.data.AccessibilityOptions
 import tech.thewolfgang.queueless.vendor.data.ApiException
+import tech.thewolfgang.queueless.vendor.data.DayHours
+import tech.thewolfgang.queueless.vendor.data.OperatingHours
 import tech.thewolfgang.queueless.vendor.data.VendorRepository
 
 data class ProfileUiState(
     val loading: Boolean = true,
     val saving: Boolean = false,
     val name: String = "",
-    val operatingHours: String = "",
+    val schedule: List<DayHours> = OperatingHours.defaultSchedule(),
     val isActive: Boolean = true,
+    val accessibilityOptions: Set<String> = emptySet(),
     val groupName: String? = null,
     val error: String? = null,
     val savedMessage: String? = null,
@@ -43,8 +47,16 @@ class ProfileViewModel(
                     it.copy(
                         loading = false,
                         name = business.name,
-                        operatingHours = business.operatingHours.orEmpty(),
+                        schedule = OperatingHours.parse(
+                            business.operatingSchedule,
+                            business.operatingHours,
+                        ),
                         isActive = business.isActive,
+                        accessibilityOptions = AccessibilityOptions.normalize(
+                            business.accessibilityOptions.ifEmpty {
+                                business.accessibility.map { info -> info.id }
+                            },
+                        ).toSet(),
                         groupName = business.businessGroupName,
                     )
                 }
@@ -68,12 +80,56 @@ class ProfileViewModel(
         _uiState.update { it.copy(name = value, error = null, savedMessage = null) }
     }
 
-    fun onOperatingHoursChange(value: String) {
-        _uiState.update { it.copy(operatingHours = value, error = null, savedMessage = null) }
-    }
-
     fun onActiveChange(value: Boolean) {
         _uiState.update { it.copy(isActive = value, error = null, savedMessage = null) }
+    }
+
+    fun onAccessibilityToggle(id: String, enabled: Boolean) {
+        _uiState.update { state ->
+            val next = state.accessibilityOptions.toMutableSet()
+            if (enabled) next.add(id) else next.remove(id)
+            state.copy(
+                accessibilityOptions = AccessibilityOptions.normalize(next.toList()).toSet(),
+                error = null,
+                savedMessage = null,
+            )
+        }
+    }
+
+    fun onDayOpenChange(day: String, open: Boolean) {
+        _uiState.update { state ->
+            state.copy(
+                schedule = state.schedule.map {
+                    if (it.day == day) it.copy(open = open) else it
+                },
+                error = null,
+                savedMessage = null,
+            )
+        }
+    }
+
+    fun onDayStartChange(day: String, start: String) {
+        _uiState.update { state ->
+            state.copy(
+                schedule = state.schedule.map {
+                    if (it.day == day) it.copy(start = OperatingHours.normalizeTime(start)) else it
+                },
+                error = null,
+                savedMessage = null,
+            )
+        }
+    }
+
+    fun onDayEndChange(day: String, end: String) {
+        _uiState.update { state ->
+            state.copy(
+                schedule = state.schedule.map {
+                    if (it.day == day) it.copy(end = OperatingHours.normalizeTime(end, "18:00")) else it
+                },
+                error = null,
+                savedMessage = null,
+            )
+        }
     }
 
     fun save() {
@@ -83,21 +139,37 @@ class ProfileViewModel(
             _uiState.update { it.copy(error = "Branch name is required.") }
             return
         }
+        val hoursError = OperatingHours.validate(state.schedule)
+        if (hoursError != null) {
+            _uiState.update { it.copy(error = hoursError) }
+            return
+        }
         viewModelScope.launch {
             _uiState.update { it.copy(saving = true, error = null, savedMessage = null) }
             try {
                 val updated = repository.updateBusiness(
                     businessId = businessId,
                     name = name,
-                    operatingHours = state.operatingHours.trim().ifBlank { null },
+                    operatingSchedule = state.schedule,
                     isActive = state.isActive,
+                    accessibilityOptions = AccessibilityOptions.normalize(
+                        state.accessibilityOptions.toList(),
+                    ),
                 )
                 _uiState.update {
                     it.copy(
                         saving = false,
                         name = updated.name,
-                        operatingHours = updated.operatingHours.orEmpty(),
+                        schedule = OperatingHours.parse(
+                            updated.operatingSchedule,
+                            updated.operatingHours,
+                        ),
                         isActive = updated.isActive,
+                        accessibilityOptions = AccessibilityOptions.normalize(
+                            updated.accessibilityOptions.ifEmpty {
+                                updated.accessibility.map { info -> info.id }
+                            },
+                        ).toSet(),
                         groupName = updated.businessGroupName,
                         savedMessage = "Saved.",
                     )

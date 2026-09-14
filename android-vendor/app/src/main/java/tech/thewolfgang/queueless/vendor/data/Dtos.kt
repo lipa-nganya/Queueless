@@ -4,9 +4,64 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
 @Serializable
+data class PhoneStatusRequest(
+    val phone: String,
+)
+
+@Serializable
+data class PhoneStatusResponse(
+    val phone: String,
+    val registered: Boolean = false,
+    @SerialName("has_pin") val hasPin: Boolean = false,
+    @SerialName("needs_otp") val needsOtp: Boolean = false,
+    @SerialName("needs_pin_setup") val needsPinSetup: Boolean = false,
+    val username: String? = null,
+)
+
+@Serializable
+data class OtpRequest(
+    val phone: String,
+    val purpose: String = "setup",
+)
+
+@Serializable
+data class OtpResponse(
+    val phone: String? = null,
+    val purpose: String? = null,
+    @SerialName("otp_mode") val otpMode: String? = null,
+    val message: String? = null,
+    @SerialName("can_resend") val canResend: Boolean = true,
+    @SerialName("cooldown_seconds") val cooldownSeconds: Int = 0,
+    val error: String? = null,
+)
+
+@Serializable
+data class VerifyOtpRequest(
+    val phone: String,
+    val otp: String,
+)
+
+@Serializable
+data class VerifyOtpResponse(
+    val phone: String? = null,
+    val verified: Boolean = false,
+    @SerialName("needs_pin_setup") val needsPinSetup: Boolean = true,
+    @SerialName("has_pin") val hasPin: Boolean = false,
+    val message: String? = null,
+)
+
+@Serializable
+data class SetPinRequest(
+    val phone: String,
+    val pin: String,
+    @SerialName("confirm_pin") val confirmPin: String,
+    val otp: String? = null,
+)
+
+@Serializable
 data class LoginRequest(
-    val username: String,
-    val password: String,
+    val phone: String,
+    val pin: String,
 )
 
 @Serializable
@@ -14,11 +69,18 @@ data class LoginResponse(
     val token: String,
     val username: String? = null,
     val email: String? = null,
+    val phone: String? = null,
+    val message: String? = null,
 )
 
 @Serializable
 data class ErrorResponse(
     val error: String? = null,
+    @SerialName("needs_otp") val needsOtp: Boolean = false,
+    @SerialName("needs_pin_setup") val needsPinSetup: Boolean = false,
+    @SerialName("not_registered") val notRegistered: Boolean = false,
+    @SerialName("has_pin") val hasPin: Boolean = false,
+    val phone: String? = null,
 )
 
 @Serializable
@@ -40,6 +102,22 @@ data class BusinessSummary(
 )
 
 @Serializable
+data class DayHours(
+    val day: String,
+    val open: Boolean = true,
+    val start: String = "08:00",
+    val end: String = "18:00",
+)
+
+@Serializable
+data class AccessibilityInfo(
+    val id: String,
+    val emoji: String? = null,
+    val label: String? = null,
+    val description: String? = null,
+)
+
+@Serializable
 data class BusinessProfile(
     val id: Int,
     val name: String,
@@ -48,6 +126,10 @@ data class BusinessProfile(
     val location: String? = null,
     val phone: String? = null,
     @SerialName("operating_hours") val operatingHours: String? = null,
+    @SerialName("operating_schedule") val operatingSchedule: List<DayHours>? = null,
+    @SerialName("operating_hours_display") val operatingHoursDisplay: String? = null,
+    @SerialName("accessibility_options") val accessibilityOptions: List<String> = emptyList(),
+    val accessibility: List<AccessibilityInfo> = emptyList(),
     @SerialName("image_url") val imageUrl: String? = null,
     @SerialName("is_active") val isActive: Boolean = true,
     @SerialName("business_group_id") val businessGroupId: Int? = null,
@@ -57,8 +139,25 @@ data class BusinessProfile(
 @Serializable
 data class UpdateBusinessProfileRequest(
     val name: String,
-    @SerialName("operating_hours") val operatingHours: String? = null,
+    @SerialName("operating_schedule") val operatingSchedule: List<DayHours>,
     @SerialName("is_active") val isActive: Boolean,
+    @SerialName("accessibility_options") val accessibilityOptions: List<String> = emptyList(),
+)
+
+@Serializable
+data class UpsertBranchRequest(
+    val name: String,
+    val location: String? = null,
+    val phone: String? = null,
+    @SerialName("is_active") val isActive: Boolean = true,
+)
+
+@Serializable
+data class BranchesResponse(
+    @SerialName("business_id") val businessId: Int,
+    @SerialName("business_name") val businessName: String? = null,
+    @SerialName("business_group_name") val businessGroupName: String? = null,
+    val branches: List<BusinessProfile> = emptyList(),
 )
 
 @Serializable
@@ -84,6 +183,8 @@ data class QueueEntry(
     @SerialName("booking_id") val bookingId: Int? = null,
     @SerialName("customer_first_name") val customerFirstName: String? = null,
     @SerialName("customer_phone") val customerPhone: String? = null,
+    @SerialName("party_size") val partySize: Int = 1,
+    @SerialName("party_names") val partyNames: List<String> = emptyList(),
     val position: Int = 0,
     @SerialName("people_ahead") val peopleAhead: Int = 0,
     @SerialName("estimated_wait_minutes") val estimatedWaitMinutes: Double = 0.0,
@@ -106,4 +207,22 @@ data class WalkInsResponse(
     val name: String? = null,
     @SerialName("queue_size") val queueSize: Int = 0,
     @SerialName("avg_wait_minutes") val avgWaitMinutes: Double? = null,
+)
+
+@Serializable
+data class BusinessService(
+    val id: Int,
+    @SerialName("business_id") val businessId: Int? = null,
+    val name: String,
+    @SerialName("duration_minutes") val durationMinutes: Int = 15,
+    val description: String? = null,
+    @SerialName("is_active") val isActive: Boolean = true,
+)
+
+@Serializable
+data class UpsertServiceRequest(
+    val name: String,
+    @SerialName("duration_minutes") val durationMinutes: Int,
+    val description: String? = null,
+    @SerialName("is_active") val isActive: Boolean = true,
 )

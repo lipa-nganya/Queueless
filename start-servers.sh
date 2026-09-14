@@ -147,5 +147,14 @@ echo "  Admin:    $ADMIN_URL"
 echo "  Customer: $CUSTOMER_URL"
 echo "  Vendor:   $VENDOR_URL"
 echo "  pgAdmin:  http://localhost:5050/"
+
+if [[ "${SKIP_NGROK:-0}" != "1" ]] && command -v ngrok >/dev/null 2>&1; then
+  if "$ROOT/start-ngrok-api.sh"; then
+    echo "  Android:  https://${QUEUELESS_NGROK_DOMAIN:-homiest-psychopharmacologic-anaya.ngrok-free.dev}/api"
+  else
+    echo "  Android:  ngrok failed — run ./start-ngrok-api.sh for the local Android build"
+  fi
+fi
+
 echo "Logs: $LOG_DIR/"
 open_frontends

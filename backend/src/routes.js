@@ -8,10 +8,12 @@ import { query } from "./db.js";
 import {
   login,
   vendorLogin,
+  vendorLoginWithPin,
   requireAdmin,
   requireCustomer,
   requireVendor,
   signCustomerToken,
+  signVendorToken,
 } from "./auth.js";
 import {
   deliverOtp,
@@ -25,9 +27,12 @@ import { sendAdminInviteEmail } from "./mail.js";
 import {
   SMS_ENABLED,
   WHATSAPP_ENABLED,
+  QUEUE_ALERT_CHANNEL,
+  QUEUE_ALERT_CHANNELS,
   CONTACT_PHONE,
   CONTACT_EMAIL,
   getBoolSetting,
+  getQueueAlertChannel,
   getSetting,
   setSetting,
   smsProviderConfigured,
@@ -40,6 +45,21 @@ import {
   sendWhatsAppTemplate,
   whatsappConfigured,
 } from "./whatsapp.js";
+import {
+  enrichHoursFields,
+  resolveOperatingHoursFromBody,
+} from "./operatingHours.js";
+import {
+  ACCESSIBILITY_OPTIONS,
+  describeAccessibility,
+  enrichAccessibilityFields,
+  mergeAccessibilityOptionLists,
+  resolveAccessibilityOptionsFromBody,
+} from "./accessibilityOptions.js";
+
+function enrichBranchFields(row) {
+  return enrichAccessibilityFields(enrichHoursFields(row));
+}
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const uploadsDir = path.resolve(__dirname, "../uploads");
@@ -287,6 +307,7 @@ router.post("/auth/login", async (req, res) => {
 /* ---------------------------------------------------------------- settings */
 
 async function settingsPayload() {
+  const queueAlertChannel = await getQueueAlertChannel();
   return {
     sms_enabled: await getBoolSetting(SMS_ENABLED, false),
     sms_provider: "Advanta",
@@ -297,8 +318,13 @@ async function settingsPayload() {
     whatsapp_configured: whatsappProviderConfigured(),
     whatsapp_phone_number_id: process.env.WHATSAPP_PHONE_NUMBER_ID || "",
     whatsapp_template: process.env.WHATSAPP_TEMPLATE_NAME || "",
+    queue_alert_channel: queueAlertChannel,
+    queue_alert_channels: QUEUE_ALERT_CHANNELS,
     contact_phone: (await getSetting(CONTACT_PHONE, "")) || "",
     contact_email: (await getSetting(CONTACT_EMAIL, "")) || "",
+    vendor_web_url:
+      process.env.VENDOR_PUBLIC_URL || "https://vendor.queueless.thewolfgang.tech",
+    vendor_app_url: process.env.VENDOR_APP_URL || "",
   };
 }
 
@@ -328,12 +354,40 @@ router.put("/settings", requireAdmin, async (req, res) => {
       await setSetting(SMS_ENABLED, enabled, req.admin?.sub ?? null);
     }
 
+    if (typeof req.body?.queue_alert_channel !== "undefined") {
+      const channel = String(req.body.queue_alert_channel || "").trim().toLowerCase();
+      if (!QUEUE_ALERT_CHANNELS.includes(channel)) {
+        return res.status(400).json({ error: "Choose WhatsApp or SMS (Advanta)." });
+      }
+      if (channel === "whatsapp" && !whatsappProviderConfigured()) {
+        return res.status(400).json({
+          error:
+            "WhatsApp is not configured. Set WHATSAPP_TOKEN and WHATSAPP_PHONE_NUMBER_ID before selecting it.",
+        });
+      }
+      if (channel === "sms" && !smsProviderConfigured()) {
+        return res.status(400).json({
+          error:
+            "Advanta is not configured. Set ADVANTA_API_KEY, ADVANTA_PARTNER_ID and ADVANTA_SHORTCODE before selecting SMS.",
+        });
+      }
+      await setSetting(QUEUE_ALERT_CHANNEL, channel, req.admin?.sub ?? null);
+    }
+
     if (typeof req.body?.whatsapp_enabled !== "undefined") {
       const enabled = req.body.whatsapp_enabled === true || req.body.whatsapp_enabled === "true";
-      if (enabled && !whatsappProviderConfigured()) {
+      const channel = await getQueueAlertChannel();
+
+      if (enabled && channel === "whatsapp" && !whatsappProviderConfigured()) {
         return res.status(400).json({
           error:
             "WhatsApp is not configured. Set WHATSAPP_TOKEN and WHATSAPP_PHONE_NUMBER_ID before enabling.",
+        });
+      }
+      if (enabled && channel === "sms" && !smsProviderConfigured()) {
+        return res.status(400).json({
+          error:
+            "Advanta is not configured. Set ADVANTA_API_KEY, ADVANTA_PARTNER_ID and ADVANTA_SHORTCODE before enabling SMS alerts.",
         });
       }
       await setSetting(WHATSAPP_ENABLED, enabled, req.admin?.sub ?? null);
@@ -757,7 +811,7 @@ const QUEUE_TOTALS_CTE = `
     FROM businesses b
     INNER JOIN business_groups bg ON bg.id = b.business_group_id
     LEFT JOIN (
-      SELECT business_id, COUNT(*)::int AS waiting
+      SELECT business_id, COALESCE(SUM(COALESCE(party_size, 1)), 0)::int AS waiting
       FROM queue_entries
       WHERE status = 'waiting'
       GROUP BY business_id
@@ -981,20 +1035,34 @@ router.get("/businesses", requireAdmin, async (_req, res) => {
     const branches = await query(`
       SELECT
         id, business_id, name, location, latitude, longitude, phone,
-        operating_hours, queue_size, avg_wait_minutes, is_active, created_at
+        operating_hours, accessibility_options, queue_size, avg_wait_minutes,
+        is_active, created_at
       FROM business_branches
+      ORDER BY name ASC, id ASC
+    `);
+    const services = await query(`
+      SELECT
+        id, business_id, name, duration_minutes, description, is_active, created_at
+      FROM business_services
       ORDER BY name ASC, id ASC
     `);
     const byBusiness = new Map();
     for (const branch of branches.rows) {
       const list = byBusiness.get(branch.business_id) || [];
-      list.push(branch);
+      list.push(enrichBranchFields(branch));
       byBusiness.set(branch.business_id, list);
+    }
+    const servicesByBusiness = new Map();
+    for (const service of services.rows) {
+      const list = servicesByBusiness.get(service.business_id) || [];
+      list.push(service);
+      servicesByBusiness.set(service.business_id, list);
     }
     return res.json(
       result.rows.map((row) => ({
         ...row,
         branches: byBusiness.get(row.id) || [],
+        services: servicesByBusiness.get(row.id) || [],
       }))
     );
   } catch (error) {
@@ -1086,7 +1154,7 @@ router.get("/businesses/:id/branches", requireAdmin, async (req, res) => {
     }
     const business = await query("SELECT id FROM businesses WHERE id = $1", [businessId]);
     if (!business.rows[0]) return res.status(404).json({ error: "Business not found." });
-    return res.json(await listBranchesForBusiness(businessId));
+    return res.json((await listBranchesForBusiness(businessId)).map(enrichBranchFields));
   } catch (error) {
     console.error("List branches failed:", error);
     return res.status(500).json({ error: "Could not load branches." });
@@ -1102,7 +1170,12 @@ router.post("/businesses/:id/branches", requireAdmin, async (req, res) => {
     const business = await query("SELECT id FROM businesses WHERE id = $1", [businessId]);
     if (!business.rows[0]) return res.status(404).json({ error: "Business not found." });
 
-    const payload = parseBranchPayload(req.body);
+    let payload;
+    try {
+      payload = parseBranchPayload(req.body);
+    } catch (error) {
+      return res.status(400).json({ error: error.message || "Invalid operating hours." });
+    }
     if (!payload.name) {
       return res.status(400).json({ error: "Branch name is required." });
     }
@@ -1121,9 +1194,10 @@ router.post("/businesses/:id/branches", requireAdmin, async (req, res) => {
       longitude,
       phone: payload.phone,
       operatingHours: payload.operatingHours,
+      accessibilityOptions: payload.accessibilityOptions ?? "[]",
       isActive: payload.hasActive ? payload.isActive : true,
     });
-    return res.status(201).json(branch);
+    return res.status(201).json(enrichBranchFields(branch));
   } catch (error) {
     if (error.code === "23505") {
       return res.status(409).json({ error: "That branch name already exists for this business." });
@@ -1141,7 +1215,12 @@ router.put("/businesses/:id/branches/:branchId", requireAdmin, async (req, res) 
       return res.status(400).json({ error: "Invalid branch." });
     }
 
-    const payload = parseBranchPayload(req.body);
+    let payload;
+    try {
+      payload = parseBranchPayload(req.body);
+    } catch (error) {
+      return res.status(400).json({ error: error.message || "Invalid operating hours." });
+    }
     if (!payload.name) {
       return res.status(400).json({ error: "Branch name is required." });
     }
@@ -1161,9 +1240,10 @@ router.put("/businesses/:id/branches/:branchId", requireAdmin, async (req, res) 
             phone = $3,
             operating_hours = $4,
             latitude = $5,
-            longitude = $6
+            longitude = $6,
+            accessibility_options = COALESCE($7, accessibility_options)
             ${payload.hasActive ? `, is_active = ${payload.isActive ? "true" : "false"}` : ""}
-        WHERE id = $7 AND business_id = $8
+        WHERE id = $8 AND business_id = $9
         RETURNING *
       `,
       [
@@ -1173,12 +1253,13 @@ router.put("/businesses/:id/branches/:branchId", requireAdmin, async (req, res) 
         payload.operatingHours,
         latitude,
         longitude,
+        payload.accessibilityOptions ?? null,
         branchId,
         businessId,
       ]
     );
     if (!result.rows[0]) return res.status(404).json({ error: "Branch not found." });
-    return res.json(result.rows[0]);
+    return res.json(enrichBranchFields(result.rows[0]));
   } catch (error) {
     if (error.code === "23505") {
       return res.status(409).json({ error: "That branch name already exists for this business." });
@@ -1217,6 +1298,146 @@ router.delete("/businesses/:id/branches/:branchId", requireAdmin, async (req, re
   } catch (error) {
     console.error("Delete branch failed:", error);
     return res.status(500).json({ error: "Could not delete branch." });
+  }
+});
+
+function parseServicePayload(body = {}) {
+  const name = String(body?.name || "").trim();
+  const description = String(body?.description || "").trim() || null;
+  const durationMinutes = Number(body?.duration_minutes ?? body?.service_period_minutes);
+  const hasActive = typeof body?.is_active !== "undefined";
+  const isActive = hasActive
+    ? body.is_active === true || body.is_active === "true"
+    : undefined;
+  return { name, description, durationMinutes, hasActive, isActive };
+}
+
+router.get("/businesses/:id/services", requireAdmin, async (req, res) => {
+  try {
+    const businessId = Number(req.params.id);
+    if (!Number.isInteger(businessId) || businessId < 1) {
+      return res.status(400).json({ error: "Invalid business." });
+    }
+    const business = await query("SELECT id FROM businesses WHERE id = $1", [businessId]);
+    if (!business.rows[0]) return res.status(404).json({ error: "Business not found." });
+    const result = await query(
+      `
+        SELECT id, business_id, name, duration_minutes, description, is_active, created_at
+        FROM business_services
+        WHERE business_id = $1
+        ORDER BY name ASC, id ASC
+      `,
+      [businessId]
+    );
+    return res.json(result.rows);
+  } catch (error) {
+    console.error("List services failed:", error);
+    return res.status(500).json({ error: "Could not load services." });
+  }
+});
+
+router.post("/businesses/:id/services", requireAdmin, async (req, res) => {
+  try {
+    const businessId = Number(req.params.id);
+    if (!Number.isInteger(businessId) || businessId < 1) {
+      return res.status(400).json({ error: "Invalid business." });
+    }
+    const business = await query("SELECT id FROM businesses WHERE id = $1", [businessId]);
+    if (!business.rows[0]) return res.status(404).json({ error: "Business not found." });
+
+    const payload = parseServicePayload(req.body);
+    if (!payload.name) return res.status(400).json({ error: "Service name is required." });
+    if (!Number.isFinite(payload.durationMinutes) || payload.durationMinutes < 1 || payload.durationMinutes > 24 * 60) {
+      return res.status(400).json({ error: "Service period must be between 1 and 1440 minutes." });
+    }
+
+    const result = await query(
+      `
+        INSERT INTO business_services (business_id, name, duration_minutes, description, is_active)
+        VALUES ($1, $2, $3, $4, $5)
+        RETURNING id, business_id, name, duration_minutes, description, is_active, created_at
+      `,
+      [
+        businessId,
+        payload.name,
+        Math.round(payload.durationMinutes),
+        payload.description,
+        payload.hasActive ? Boolean(payload.isActive) : true,
+      ]
+    );
+    return res.status(201).json(result.rows[0]);
+  } catch (error) {
+    if (error.code === "23505") {
+      return res.status(409).json({ error: "That service name already exists for this business." });
+    }
+    console.error("Create service failed:", error);
+    return res.status(500).json({ error: "Could not create service." });
+  }
+});
+
+router.put("/businesses/:id/services/:serviceId", requireAdmin, async (req, res) => {
+  try {
+    const businessId = Number(req.params.id);
+    const serviceId = Number(req.params.serviceId);
+    if (!Number.isInteger(businessId) || businessId < 1 || !Number.isInteger(serviceId) || serviceId < 1) {
+      return res.status(400).json({ error: "Invalid service." });
+    }
+
+    const payload = parseServicePayload(req.body);
+    if (!payload.name) return res.status(400).json({ error: "Service name is required." });
+    if (!Number.isFinite(payload.durationMinutes) || payload.durationMinutes < 1 || payload.durationMinutes > 24 * 60) {
+      return res.status(400).json({ error: "Service period must be between 1 and 1440 minutes." });
+    }
+
+    const result = await query(
+      `
+        UPDATE business_services
+        SET name = $1,
+            duration_minutes = $2,
+            description = $3
+            ${payload.hasActive ? `, is_active = ${payload.isActive ? "true" : "false"}` : ""}
+        WHERE id = $4 AND business_id = $5
+        RETURNING id, business_id, name, duration_minutes, description, is_active, created_at
+      `,
+      [
+        payload.name,
+        Math.round(payload.durationMinutes),
+        payload.description,
+        serviceId,
+        businessId,
+      ]
+    );
+    if (!result.rows[0]) return res.status(404).json({ error: "Service not found." });
+    return res.json(result.rows[0]);
+  } catch (error) {
+    if (error.code === "23505") {
+      return res.status(409).json({ error: "That service name already exists for this business." });
+    }
+    console.error("Update service failed:", error);
+    return res.status(500).json({ error: "Could not update service." });
+  }
+});
+
+router.delete("/businesses/:id/services/:serviceId", requireAdmin, async (req, res) => {
+  try {
+    const businessId = Number(req.params.id);
+    const serviceId = Number(req.params.serviceId);
+    if (!Number.isInteger(businessId) || businessId < 1 || !Number.isInteger(serviceId) || serviceId < 1) {
+      return res.status(400).json({ error: "Invalid service." });
+    }
+    const result = await query(
+      `
+        DELETE FROM business_services
+        WHERE id = $1 AND business_id = $2
+        RETURNING id
+      `,
+      [serviceId, businessId]
+    );
+    if (!result.rows[0]) return res.status(404).json({ error: "Service not found." });
+    return res.json({ ok: true, id: result.rows[0].id });
+  } catch (error) {
+    console.error("Delete service failed:", error);
+    return res.status(500).json({ error: "Could not delete service." });
   }
 });
 
@@ -1761,10 +1982,20 @@ router.get("/customer/contact", requireCustomer, async (_req, res) => {
 
 router.get("/customer/business-groups", requireCustomer, async (_req, res) => {
   try {
+    // Only categories that currently have at least one active business with an
+    // active branch — empty icons clutter discover.
     const result = await query(`
-      SELECT id, name, icon, created_at
-      FROM business_groups
-      ORDER BY name ASC
+      SELECT bg.id, bg.name, bg.icon, bg.created_at
+      FROM business_groups bg
+      WHERE EXISTS (
+        SELECT 1
+        FROM businesses b
+        INNER JOIN business_branches br
+          ON br.business_id = b.id AND br.is_active = true
+        WHERE b.business_group_id = bg.id
+          AND b.is_active = true
+      )
+      ORDER BY bg.name ASC
     `);
     return res.json(result.rows);
   } catch (error) {
@@ -1777,7 +2008,13 @@ router.get("/customer/businesses", requireCustomer, async (req, res) => {
   try {
     const groupId = Number(req.query.group_id);
     const params = [];
-    const clauses = ["b.is_active = true"];
+    const clauses = [
+      "b.is_active = true",
+      `EXISTS (
+        SELECT 1 FROM business_branches br
+        WHERE br.business_id = b.id AND br.is_active = true
+      )`,
+    ];
     if (Number.isInteger(groupId) && groupId > 0) {
       params.push(groupId);
       clauses.push(`b.business_group_id = $${params.length}`);
@@ -1789,15 +2026,12 @@ router.get("/customer/businesses", requireCustomer, async (req, res) => {
         SELECT
           b.id,
           b.name,
-          b.description,
           b.location,
           b.latitude,
           b.longitude,
-          b.phone,
           b.image_url,
           b.queue_size,
           b.avg_wait_minutes,
-          b.created_at,
           b.business_group_id,
           bg.name AS business_group_name
         FROM businesses b
@@ -1807,9 +2041,13 @@ router.get("/customer/businesses", requireCustomer, async (req, res) => {
       `,
       params
     );
-    return res.json(
-      await Promise.all(result.rows.map((row) => resolveBusinessCoords(row)))
-    );
+    const rows = result.rows.map((row) => ({
+      ...row,
+      latitude: parseCoord(row.latitude, -90, 90),
+      longitude: parseCoord(row.longitude, -180, 180),
+    }));
+    const withBranches = await attachActiveBranches(rows);
+    return res.json(await attachBusinessAccessibility(withBranches));
   } catch (error) {
     console.error("Customer businesses failed:", error);
     return res.status(500).json({ error: "Could not load businesses." });
@@ -1837,12 +2075,20 @@ router.get("/customer/businesses/:id", requireCustomer, async (req, res) => {
           bg.name AS business_group_name
         FROM businesses b
         INNER JOIN business_groups bg ON bg.id = b.business_group_id
-        WHERE b.id = $1 AND b.is_active = true
+        WHERE b.id = $1
+          AND b.is_active = true
+          AND EXISTS (
+            SELECT 1 FROM business_branches br
+            WHERE br.business_id = b.id AND br.is_active = true
+          )
       `,
       [id]
     );
     if (!result.rows[0]) return res.status(404).json({ error: "Business not found." });
-    return res.json(await resolveBusinessCoords(result.rows[0]));
+    const row = await resolveBusinessCoords(result.rows[0]);
+    const [withBranches] = await attachActiveBranches([row]);
+    const [enriched] = await attachBusinessAccessibility([withBranches]);
+    return res.json(enriched);
   } catch (error) {
     console.error("Customer business detail failed:", error);
     return res.status(500).json({ error: "Could not load business." });
@@ -1857,6 +2103,111 @@ router.get("/customer/businesses/:id", requireCustomer, async (req, res) => {
  * baseline plus everyone who joined through the app before them.
  */
 
+async function attachBusinessAccessibility(rows) {
+  if (!rows?.length) return rows || [];
+  const ids = [...new Set(rows.map((row) => Number(row.id)).filter((id) => id > 0))];
+  if (!ids.length) {
+    return rows.map((row) => ({
+      ...row,
+      accessibility_options: [],
+      accessibility: [],
+    }));
+  }
+
+  const result = await query(
+    `
+      SELECT business_id, accessibility_options
+      FROM business_branches
+      WHERE business_id = ANY($1::int[])
+        AND is_active = true
+    `,
+    [ids]
+  );
+
+  const byBusiness = new Map();
+  for (const row of result.rows) {
+    const list = byBusiness.get(row.business_id) || [];
+    list.push(row.accessibility_options);
+    byBusiness.set(row.business_id, list);
+  }
+
+  return rows.map((row) => {
+    const options = mergeAccessibilityOptionLists(byBusiness.get(row.id) || []);
+    return {
+      ...row,
+      accessibility_options: options,
+      accessibility: describeAccessibility(options),
+    };
+  });
+}
+
+/** Attach active branches (coords + location) for customer discover/detail. */
+async function attachActiveBranches(rows) {
+  if (!rows?.length) return rows || [];
+  const ids = [...new Set(rows.map((row) => Number(row.id)).filter((id) => id > 0))];
+  if (!ids.length) {
+    return rows.map((row) => ({ ...row, branches: [] }));
+  }
+
+  const result = await query(
+    `
+      SELECT
+        id,
+        business_id,
+        name,
+        location,
+        latitude,
+        longitude,
+        phone,
+        queue_size,
+        avg_wait_minutes
+      FROM business_branches
+      WHERE business_id = ANY($1::int[])
+        AND is_active = true
+      ORDER BY name ASC, id ASC
+    `,
+    [ids]
+  );
+
+  const byBusiness = new Map();
+  for (const row of result.rows) {
+    const list = byBusiness.get(row.business_id) || [];
+    list.push({
+      id: row.id,
+      name: row.name,
+      location: row.location,
+      latitude: parseCoord(row.latitude, -90, 90),
+      longitude: parseCoord(row.longitude, -180, 180),
+      phone: row.phone,
+      queue_size: row.queue_size,
+      avg_wait_minutes: row.avg_wait_minutes,
+    });
+    byBusiness.set(row.business_id, list);
+  }
+
+  return rows.map((row) => {
+    const branches = byBusiness.get(row.id) || [];
+    // Prefer primary branch coords when the brand row has none.
+    const primary = branches[0];
+    const latitude =
+      parseCoord(row.latitude, -90, 90) ?? primary?.latitude ?? null;
+    const longitude =
+      parseCoord(row.longitude, -180, 180) ?? primary?.longitude ?? null;
+    const location = row.location || primary?.location || null;
+    return {
+      ...row,
+      location,
+      latitude,
+      longitude,
+      branches,
+    };
+  });
+}
+
+router.get("/accessibility-options", (_req, res) => {
+  return res.json(ACCESSIBILITY_OPTIONS);
+});
+
 async function createBusinessBranch(businessId, {
   name = "Main",
   location = null,
@@ -1864,6 +2215,7 @@ async function createBusinessBranch(businessId, {
   longitude = null,
   phone = null,
   operatingHours = null,
+  accessibilityOptions = "[]",
   queueSize = 0,
   avgWaitMinutes = 15,
   isActive = true,
@@ -1873,9 +2225,9 @@ async function createBusinessBranch(businessId, {
     `
       INSERT INTO business_branches (
         business_id, name, location, latitude, longitude, phone, operating_hours,
-        queue_size, avg_wait_minutes, is_active
+        accessibility_options, queue_size, avg_wait_minutes, is_active
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
       RETURNING *
     `,
     [
@@ -1886,6 +2238,7 @@ async function createBusinessBranch(businessId, {
       longitude,
       phone,
       operatingHours,
+      accessibilityOptions ?? "[]",
       Math.max(0, Math.round(Number(queueSize) || 0)),
       Math.max(1, Math.round(Number(avgWaitMinutes) || 15)),
       Boolean(isActive),
@@ -1899,7 +2252,8 @@ async function listBranchesForBusiness(businessId) {
     `
       SELECT
         id, business_id, name, location, latitude, longitude, phone,
-        operating_hours, queue_size, avg_wait_minutes, is_active, created_at
+        operating_hours, accessibility_options, queue_size, avg_wait_minutes,
+        is_active, created_at
       FROM business_branches
       WHERE business_id = $1
       ORDER BY name ASC, id ASC
@@ -1928,7 +2282,8 @@ function parseBranchPayload(body = {}) {
   const name = String(body?.name || "").trim();
   const location = String(body?.location || "").trim() || null;
   const phone = String(body?.phone || "").trim() || null;
-  const operatingHours = String(body?.operating_hours || "").trim() || null;
+  const operatingHours = resolveOperatingHoursFromBody(body);
+  const accessibilityOptions = resolveAccessibilityOptionsFromBody(body);
   const latitude = location ? parseCoord(body?.latitude, -90, 90) : null;
   const longitude = location ? parseCoord(body?.longitude, -180, 180) : null;
   const hasActive = typeof body?.is_active !== "undefined";
@@ -1940,6 +2295,7 @@ function parseBranchPayload(body = {}) {
     location,
     phone,
     operatingHours,
+    accessibilityOptions,
     latitude,
     longitude,
     hasActive,
@@ -1950,6 +2306,8 @@ function parseBranchPayload(body = {}) {
 const BOOKING_WINDOW_HOURS = 24;
 
 // Wraps a queue_entries row with the derived position figures the UI needs.
+const MAX_PARTY_SIZE = 10;
+
 const QUEUE_ENTRY_SELECT = `
   SELECT
     qe.id,
@@ -1957,6 +2315,8 @@ const QUEUE_ENTRY_SELECT = `
     qe.branch_id,
     qe.joined_at,
     qe.booking_id,
+    COALESCE(qe.party_size, 1) AS party_size,
+    COALESCE(qe.party_names, '[]'::jsonb) AS party_names,
     b.name AS business_name,
     COALESCE(br.name, 'Main') AS branch_name,
     b.image_url,
@@ -1967,7 +2327,7 @@ const QUEUE_ENTRY_SELECT = `
     c.first_name AS customer_first_name,
     c.phone AS customer_phone,
     (
-      SELECT COUNT(*)::int
+      SELECT COALESCE(SUM(COALESCE(ahead.party_size, 1)), 0)::int
       FROM queue_entries ahead
       WHERE ahead.status = 'waiting'
         AND ahead.joined_at < qe.joined_at
@@ -1975,9 +2335,9 @@ const QUEUE_ENTRY_SELECT = `
           (qe.branch_id IS NOT NULL AND ahead.branch_id = qe.branch_id)
           OR (qe.branch_id IS NULL AND ahead.business_id = qe.business_id AND ahead.branch_id IS NULL)
         )
-    ) AS app_customers_ahead,
+    ) AS app_people_ahead,
     (
-      SELECT COUNT(*)::int
+      SELECT COALESCE(SUM(COALESCE(total.party_size, 1)), 0)::int
       FROM queue_entries total
       WHERE total.status = 'waiting'
         AND (
@@ -1992,10 +2352,38 @@ const QUEUE_ENTRY_SELECT = `
   LEFT JOIN business_branches br ON br.id = qe.branch_id
 `;
 
+function normalizePartyNames(value, partySize) {
+  let names = value;
+  if (typeof names === "string") {
+    try {
+      names = JSON.parse(names);
+    } catch {
+      names = names.split(",").map((part) => part.trim());
+    }
+  }
+  if (!Array.isArray(names)) names = [];
+  return names
+    .map((name) => String(name || "").trim())
+    .filter(Boolean)
+    .slice(0, partySize);
+}
+
+function parsePartyPayload(body) {
+  let size = Number(body?.party_size ?? 1);
+  if (!Number.isFinite(size)) size = 1;
+  size = Math.max(1, Math.min(MAX_PARTY_SIZE, Math.round(size)));
+  const names = normalizePartyNames(body?.party_names, size);
+  return { partySize: size, partyNames: names };
+}
+
 function decorateQueueEntry(row) {
-  const ahead = row.walk_in_baseline + row.app_customers_ahead;
+  const partySize = Math.max(1, Number(row.party_size) || 1);
+  const partyNames = normalizePartyNames(row.party_names, partySize);
+  const ahead = row.walk_in_baseline + row.app_people_ahead;
   return {
     ...row,
+    party_size: partySize,
+    party_names: partyNames,
     people_ahead: ahead,
     position: ahead + 1,
     queue_length: row.walk_in_baseline + row.app_queue_length,
@@ -2003,19 +2391,25 @@ function decorateQueueEntry(row) {
   };
 }
 
-/** Phones that should get WhatsApp when someone joins/leaves this business. */
+/** Phones that should get join/leave alerts for this business. */
 async function queueAlertRecipients(businessId, businessPhone = null) {
   const recipients = new Set();
 
+  // Explicit opt-in list (comma-separated) — keep HQ alerts intentional.
   for (const phone of String(process.env.WHATSAPP_NOTIFY_PHONES || "").split(",")) {
     const trimmed = phone.trim();
     if (trimmed) recipients.add(trimmed);
   }
 
-  const contactPhone = await getSetting(CONTACT_PHONE, "");
-  if (contactPhone) recipients.add(contactPhone);
+  // Optional: include global contact phone (off by default to cut SMS fan-out).
+  if (process.env.QUEUE_ALERT_INCLUDE_CONTACT === "1") {
+    const contactPhone = await getSetting(CONTACT_PHONE, "");
+    if (contactPhone) recipients.add(contactPhone);
+  }
+
   if (businessPhone) recipients.add(businessPhone);
 
+  // Vendors assigned to this brand — they operate the queue.
   const vendors = await query(
     `
       SELECT v.phone
@@ -2027,12 +2421,12 @@ async function queueAlertRecipients(businessId, businessPhone = null) {
   );
   for (const row of vendors.rows) recipients.add(row.phone);
 
-  const admins = await query(
-    `SELECT phone FROM admins WHERE phone IS NOT NULL AND phone <> ''`
+  // Cap paid sends per event (vendors + branch phone cover normal ops).
+  const maxRecipients = Math.max(
+    1,
+    Math.min(10, Number(process.env.QUEUE_ALERT_MAX_RECIPIENTS || 5) || 5)
   );
-  for (const row of admins.rows) recipients.add(row.phone);
-
-  return [...recipients];
+  return [...recipients].slice(0, maxRecipients);
 }
 
 function fireQueueWhatsApp(action, businessId, businessPhone, details) {
@@ -2092,13 +2486,30 @@ router.post("/customer/businesses/:id/queue", requireCustomer, async (req, res) 
     }
 
     const bookingId = req.body?.booking_id ? Number(req.body.booking_id) : null;
+    const { partySize, partyNames } = parsePartyPayload(req.body);
+    const namesForStore =
+      partyNames.length > 0
+        ? partyNames
+        : req.customer.first_name
+          ? [req.customer.first_name]
+          : [];
+
     const created = await query(
       `
-        INSERT INTO queue_entries (business_id, branch_id, customer_id, booking_id)
-        VALUES ($1, $2, $3, $4)
+        INSERT INTO queue_entries (
+          business_id, branch_id, customer_id, booking_id, party_size, party_names
+        )
+        VALUES ($1, $2, $3, $4, $5, $6::jsonb)
         RETURNING id
       `,
-      [businessId, branch.id, req.customer.sub, bookingId]
+      [
+        businessId,
+        branch.id,
+        req.customer.sub,
+        bookingId,
+        partySize,
+        JSON.stringify(namesForStore),
+      ]
     );
 
     if (bookingId) {
@@ -2117,6 +2528,7 @@ router.post("/customer/businesses/:id/queue", requireCustomer, async (req, res) 
       businessName: decorated.business_name || business.rows[0].name,
       position: decorated.position,
       estimatedWaitMinutes: decorated.estimated_wait_minutes,
+      partySize: decorated.party_size,
     });
 
     return res.status(201).json(decorated);
@@ -2354,7 +2766,7 @@ async function replaceVendorBusinesses(vendorId, businessIds) {
 async function vendorWithBusinesses(vendorId) {
   const vendor = await query(
     `
-      SELECT id, username, email, phone, created_at, activated_at
+      SELECT id, username, email, phone, created_at, activated_at, trial_ends_at
       FROM vendors WHERE id = $1
     `,
     [vendorId]
@@ -2375,17 +2787,463 @@ async function vendorWithBusinesses(vendorId) {
   return { ...vendor.rows[0], businesses: businesses.rows };
 }
 
+async function vendorOtpResendState(vendor) {
+  const used = vendor.otp_resend_count || 0;
+  const remaining = cooldownRemaining(vendor.otp_last_sent_at);
+  const expired = Boolean(
+    vendor.otp_expires_at && new Date(vendor.otp_expires_at) < new Date()
+  );
+  const exhausted = used >= MAX_OTP_RESENDS;
+  return {
+    expired,
+    resends_used: used,
+    resends_left: Math.max(0, MAX_OTP_RESENDS - used),
+    cooldown_seconds: remaining,
+    exhausted,
+    can_resend: !exhausted && remaining === 0,
+    support_phone: await supportPhone(),
+  };
+}
+
+async function uniqueVendorUsernameFromPhone(phone) {
+  const base = `v${String(phone).slice(-9)}`;
+  let candidate = base;
+  for (let i = 0; i < 30; i += 1) {
+    const existing = await query("SELECT id FROM vendors WHERE username = $1 LIMIT 1", [
+      candidate,
+    ]);
+    if (!existing.rows[0]) return candidate;
+    candidate = `${base}${i + 2}`;
+  }
+  return `v${Date.now()}`;
+}
+
+router.post("/vendor/phone-status", async (req, res) => {
+  try {
+    const phone = resolvePhone(req.body);
+    if (!phone) return res.status(400).json({ error: "Enter a valid phone number." });
+
+    const result = await query(
+      `
+        SELECT id, username, phone, pin_hash, phone_verified_at
+        FROM vendors
+        WHERE phone = $1
+        LIMIT 1
+      `,
+      [phone]
+    );
+    const vendor = result.rows[0];
+
+    if (!vendor) {
+      // Auto-provision so invited numbers that aren't in DB yet, or self-serve
+      // first open, can complete OTP + PIN. Admin can assign businesses later.
+      return res.json({
+        phone,
+        registered: false,
+        needs_otp: true,
+        needs_pin_setup: true,
+      });
+    }
+
+    if (!vendor.pin_hash) {
+      return res.json({
+        phone,
+        registered: true,
+        needs_otp: true,
+        needs_pin_setup: true,
+        username: vendor.username,
+      });
+    }
+
+    return res.json({
+      phone,
+      registered: true,
+      has_pin: true,
+      username: vendor.username,
+    });
+  } catch (error) {
+    console.error("Vendor phone status failed:", error);
+    return res.status(500).json({ error: "Could not check that number." });
+  }
+});
+
+router.post("/vendor/request-otp", async (req, res) => {
+  try {
+    const phone = resolvePhone(req.body);
+    const purpose = String(req.body?.purpose || "setup").trim().toLowerCase();
+    if (!phone) return res.status(400).json({ error: "Enter a valid phone number." });
+    if (!["setup", "forgot"].includes(purpose)) {
+      return res.status(400).json({ error: "Invalid OTP purpose." });
+    }
+
+    let vendor = (
+      await query(
+        `
+          SELECT id, username, phone, pin_hash, otp_expires_at, otp_resend_count, otp_last_sent_at
+          FROM vendors WHERE phone = $1 LIMIT 1
+        `,
+        [phone]
+      )
+    ).rows[0];
+
+    if (!vendor && purpose === "forgot") {
+      return res.status(404).json({
+        error: "That number isn't registered as a vendor yet.",
+        not_registered: true,
+        phone,
+      });
+    }
+
+    if (!vendor && purpose === "setup") {
+      const username = await uniqueVendorUsernameFromPhone(phone);
+      const created = await query(
+        `
+          INSERT INTO vendors (username, phone, password_hash, activated_at)
+          VALUES ($1, $2, NULL, NOW())
+          RETURNING id, username, phone, pin_hash, otp_expires_at, otp_resend_count, otp_last_sent_at
+        `,
+        [username, phone]
+      );
+      vendor = created.rows[0];
+    }
+
+    if (purpose === "setup" && vendor.pin_hash) {
+      return res.status(409).json({
+        error: "This number already has a PIN. Log in or use Forgot PIN.",
+        has_pin: true,
+        phone,
+      });
+    }
+    if (purpose === "forgot" && !vendor.pin_hash) {
+      return res.status(409).json({
+        error: "No PIN is set yet. Continue with setup instead.",
+        needs_pin_setup: true,
+        phone,
+      });
+    }
+
+    const state = await vendorOtpResendState(vendor);
+    if (state.exhausted) {
+      return res.status(429).json({ error: await supportMessageText(), ...state });
+    }
+    if (state.cooldown_seconds > 0 && vendor.otp_code) {
+      return res.status(429).json({
+        error: `Please wait ${state.cooldown_seconds}s before requesting another code.`,
+        ...state,
+      });
+    }
+
+    const otp = generateOtp();
+    const updated = await query(
+      `
+        UPDATE vendors
+        SET otp_code = $1,
+            otp_expires_at = $2,
+            otp_resend_count = CASE
+              WHEN otp_last_sent_at IS NULL THEN 0
+              ELSE otp_resend_count + 1
+            END,
+            otp_last_sent_at = NOW()
+        WHERE id = $3
+        RETURNING otp_expires_at, otp_resend_count, otp_last_sent_at
+      `,
+      [otp, otpExpiryDate(10), vendor.id]
+    );
+
+    let delivery;
+    try {
+      delivery = await deliverOtp({ phone, otp, firstName: vendor.username || "Vendor" });
+    } catch (error) {
+      await query(
+        `
+          UPDATE vendors
+          SET otp_code = NULL, otp_expires_at = NULL,
+              otp_resend_count = GREATEST(otp_resend_count - 1, 0)
+          WHERE id = $1
+        `,
+        [vendor.id]
+      );
+      throw error;
+    }
+
+    return res.json({
+      phone,
+      purpose,
+      otp_mode: delivery.mode,
+      message:
+        delivery.mode === "sms"
+          ? "We sent a verification code by SMS."
+          : "Verification code created. Check Admin → Vendors while SMS is off.",
+      ...(await vendorOtpResendState(updated.rows[0])),
+    });
+  } catch (error) {
+    console.error("Vendor request OTP failed:", error);
+    return res.status(500).json({ error: error.message || "Could not send verification code." });
+  }
+});
+
+router.post("/vendor/otp-status", async (req, res) => {
+  try {
+    const phone = resolvePhone(req.body);
+    if (!phone) return res.status(400).json({ error: "Enter a valid phone number." });
+    const result = await query(
+      `
+        SELECT otp_expires_at, otp_resend_count, otp_last_sent_at, pin_hash
+        FROM vendors WHERE phone = $1 LIMIT 1
+      `,
+      [phone]
+    );
+    const vendor = result.rows[0];
+    if (!vendor) return res.status(404).json({ error: "Vendor not found." });
+    return res.json({ phone, has_pin: Boolean(vendor.pin_hash), ...(await vendorOtpResendState(vendor)) });
+  } catch (error) {
+    console.error("Vendor OTP status failed:", error);
+    return res.status(500).json({ error: "Could not check that number." });
+  }
+});
+
+router.post("/vendor/resend-otp", async (req, res) => {
+  try {
+    const phone = resolvePhone(req.body);
+    const purpose = String(req.body?.purpose || "setup").trim().toLowerCase();
+    if (!phone) return res.status(400).json({ error: "Enter a valid phone number." });
+
+    const result = await query(
+      `
+        SELECT id, username, phone, pin_hash, otp_expires_at, otp_resend_count, otp_last_sent_at
+        FROM vendors WHERE phone = $1 LIMIT 1
+      `,
+      [phone]
+    );
+    const vendor = result.rows[0];
+    if (!vendor) return res.status(404).json({ error: "Vendor not found." });
+
+    const state = await vendorOtpResendState(vendor);
+    if (state.exhausted) {
+      return res.status(429).json({ error: await supportMessageText(), ...state });
+    }
+    if (state.cooldown_seconds > 0) {
+      return res.status(429).json({
+        error: `Please wait ${state.cooldown_seconds}s before requesting another code.`,
+        ...state,
+      });
+    }
+
+    const otp = generateOtp();
+    const updated = await query(
+      `
+        UPDATE vendors
+        SET otp_code = $1,
+            otp_expires_at = $2,
+            otp_resend_count = otp_resend_count + 1,
+            otp_last_sent_at = NOW()
+        WHERE id = $3
+        RETURNING otp_expires_at, otp_resend_count, otp_last_sent_at
+      `,
+      [otp, otpExpiryDate(10), vendor.id]
+    );
+
+    let delivery;
+    try {
+      delivery = await deliverOtp({ phone, otp, firstName: vendor.username || "Vendor" });
+    } catch (error) {
+      await query(
+        `UPDATE vendors SET otp_resend_count = GREATEST(otp_resend_count - 1, 0) WHERE id = $1`,
+        [vendor.id]
+      );
+      throw error;
+    }
+
+    return res.json({
+      phone,
+      purpose,
+      otp_mode: delivery.mode,
+      message:
+        delivery.mode === "sms"
+          ? "We sent a new verification code by SMS."
+          : "New verification code created. Check Admin → Vendors while SMS is off.",
+      ...(await vendorOtpResendState(updated.rows[0])),
+    });
+  } catch (error) {
+    console.error("Vendor resend OTP failed:", error);
+    return res.status(500).json({ error: error.message || "Could not resend code." });
+  }
+});
+
+router.post("/vendor/verify-otp", async (req, res) => {
+  try {
+    const phone = resolvePhone(req.body);
+    const otp = String(req.body?.otp || "").trim();
+    if (!phone || !PIN_RE.test(otp)) {
+      return res.status(400).json({ error: "Phone and 4-digit code are required." });
+    }
+
+    const result = await query(
+      `
+        SELECT id, username, email, phone, pin_hash, otp_code, otp_expires_at
+        FROM vendors WHERE phone = $1 LIMIT 1
+      `,
+      [phone]
+    );
+    const vendor = result.rows[0];
+    if (!vendor) return res.status(404).json({ error: "Vendor not found." });
+    if (!vendor.otp_code || vendor.otp_code !== otp) {
+      return res.status(401).json({ error: "Invalid verification code." });
+    }
+    if (vendor.otp_expires_at && new Date(vendor.otp_expires_at) < new Date()) {
+      return res.status(401).json({ error: "That code has expired. Request a new one." });
+    }
+
+    await query(
+      `
+        UPDATE vendors
+        SET phone_verified_at = COALESCE(phone_verified_at, NOW()),
+            otp_code = NULL,
+            otp_expires_at = NULL,
+            otp_resend_count = 0,
+            otp_last_sent_at = NULL
+        WHERE id = $1
+      `,
+      [vendor.id]
+    );
+
+    return res.json({
+      phone,
+      verified: true,
+      needs_pin_setup: true,
+      has_pin: Boolean(vendor.pin_hash),
+      message: "Phone verified. Set your 4-digit PIN.",
+    });
+  } catch (error) {
+    console.error("Vendor verify OTP failed:", error);
+    return res.status(500).json({ error: "Could not verify code." });
+  }
+});
+
+router.post("/vendor/set-pin", async (req, res) => {
+  try {
+    const phone = resolvePhone(req.body);
+    const pin = String(req.body?.pin || "");
+    const confirmPin = String(req.body?.confirm_pin || "");
+    const otp = String(req.body?.otp || "").trim();
+
+    if (!phone) return res.status(400).json({ error: "Enter a valid phone number." });
+    if (!PIN_RE.test(pin)) return res.status(400).json({ error: "PIN must be exactly 4 digits." });
+    if (pin !== confirmPin) {
+      return res.status(400).json({ error: "PIN and confirmation do not match." });
+    }
+
+    const result = await query(
+      `
+        SELECT id, username, email, phone, pin_hash, otp_code, otp_expires_at, phone_verified_at
+        FROM vendors WHERE phone = $1 LIMIT 1
+      `,
+      [phone]
+    );
+    const vendor = result.rows[0];
+    if (!vendor) return res.status(404).json({ error: "Vendor not found." });
+
+    // Accept either a just-verified session (otp cleared + phone_verified) with
+    // matching OTP still supplied, or OTP present for one-shot set-pin.
+    let otpOk = false;
+    if (otp && vendor.otp_code && vendor.otp_code === otp) {
+      if (vendor.otp_expires_at && new Date(vendor.otp_expires_at) < new Date()) {
+        return res.status(401).json({ error: "That code has expired. Request a new one." });
+      }
+      otpOk = true;
+    } else if (vendor.phone_verified_at && !vendor.otp_code) {
+      // Verified in previous step within a short window (30 minutes).
+      const verifiedAt = new Date(vendor.phone_verified_at).getTime();
+      if (Date.now() - verifiedAt <= 30 * 60 * 1000) otpOk = true;
+    }
+
+    if (!otpOk) {
+      return res.status(403).json({
+        error: "Verify the SMS code before setting a PIN.",
+        needs_otp: true,
+        phone,
+      });
+    }
+
+    const pinHash = await bcrypt.hash(pin, 10);
+    const updated = await query(
+      `
+        UPDATE vendors
+        SET pin_hash = $1,
+            phone_verified_at = COALESCE(phone_verified_at, NOW()),
+            otp_code = NULL,
+            otp_expires_at = NULL,
+            otp_resend_count = 0,
+            otp_last_sent_at = NULL,
+            activated_at = COALESCE(activated_at, NOW())
+        WHERE id = $2
+        RETURNING id, username, email, phone
+      `,
+      [pinHash, vendor.id]
+    );
+
+    const sessionVendor = updated.rows[0];
+    return res.json({
+      token: signVendorToken(sessionVendor),
+      username: sessionVendor.username,
+      email: sessionVendor.email,
+      phone: sessionVendor.phone,
+      message: "PIN saved. You're signed in.",
+    });
+  } catch (error) {
+    console.error("Vendor set PIN failed:", error);
+    return res.status(500).json({ error: "Could not save PIN." });
+  }
+});
+
 router.post("/vendor/login", async (req, res) => {
   try {
+    const phone = resolvePhone(req.body);
+    const pin = String(req.body?.pin || "");
+
+    // New phone + PIN login.
+    if (phone || req.body?.pin) {
+      if (!phone || !PIN_RE.test(pin)) {
+        return res.status(400).json({ error: "Phone and 4-digit PIN are required." });
+      }
+
+      const existing = await query(
+        `SELECT id, pin_hash FROM vendors WHERE phone = $1 LIMIT 1`,
+        [phone]
+      );
+      if (!existing.rows[0]) {
+        return res.status(404).json({
+          error: "That number isn't registered as a vendor yet.",
+          not_registered: true,
+          needs_otp: true,
+          phone,
+        });
+      }
+      if (!existing.rows[0].pin_hash) {
+        return res.status(403).json({
+          error: "Set up your PIN first. We'll text you a code.",
+          needs_otp: true,
+          needs_pin_setup: true,
+          phone,
+        });
+      }
+
+      const session = await vendorLoginWithPin(phone, pin);
+      if (!session) {
+        return res.status(401).json({ error: "Invalid phone number or PIN." });
+      }
+      return res.json(session);
+    }
+
+    // Legacy username/password (kept briefly for older clients).
     const username = String(req.body?.username || req.body?.email || "").trim();
     const password = String(req.body?.password || "");
     if (!username || !password) {
-      return res.status(400).json({ error: "Username (or email) and password are required." });
+      return res.status(400).json({ error: "Phone and 4-digit PIN are required." });
     }
-
     const session = await vendorLogin(username, password);
     if (!session) {
-      return res.status(401).json({ error: "Invalid username or password." });
+      return res.status(401).json({ error: "Invalid phone number or PIN." });
     }
     return res.json(session);
   } catch (error) {
@@ -2398,7 +3256,7 @@ router.get("/vendor/me", requireVendor, async (req, res) => {
   try {
     const result = await query(
       `
-        SELECT id, username, email, created_at, activated_at
+        SELECT id, username, email, phone, created_at, activated_at
         FROM vendors WHERE id = $1
       `,
       [req.vendor.sub]
@@ -2430,7 +3288,8 @@ router.get("/vendor/businesses", requireVendor, async (req, res) => {
           br.is_active,
           bg.name AS business_group_name,
           (
-            SELECT COUNT(*)::int FROM queue_entries qe
+            SELECT COALESCE(SUM(COALESCE(qe.party_size, 1)), 0)::int
+            FROM queue_entries qe
             WHERE qe.branch_id = br.id AND qe.status = 'waiting'
           ) AS app_waiting
         FROM vendor_businesses vb
@@ -2475,6 +3334,7 @@ router.get("/vendor/businesses/:id", requireVendor, async (req, res) => {
           br.location,
           br.phone,
           br.operating_hours,
+          br.accessibility_options,
           b.image_url,
           br.is_active,
           b.business_group_id,
@@ -2487,7 +3347,7 @@ router.get("/vendor/businesses/:id", requireVendor, async (req, res) => {
       [branchId]
     );
     if (!result.rows[0]) return res.status(404).json({ error: "Branch not found." });
-    return res.json(result.rows[0]);
+    return res.json(enrichBranchFields(result.rows[0]));
   } catch (error) {
     console.error("Vendor business detail failed:", error);
     return res.status(500).json({ error: "Could not load business." });
@@ -2504,28 +3364,73 @@ router.put("/vendor/businesses/:id", requireVendor, async (req, res) => {
       return res.status(403).json({ error: "You do not manage this branch." });
     }
 
-    const name = String(req.body?.name || "").trim();
-    const operatingHours = String(req.body?.operating_hours || "").trim() || null;
-    const hasActive = typeof req.body?.is_active !== "undefined";
-    const isActive = hasActive
-      ? req.body.is_active === true || req.body.is_active === "true"
-      : undefined;
-
-    if (!name) {
+    let payload;
+    try {
+      payload = parseBranchPayload(req.body);
+    } catch (error) {
+      return res.status(400).json({ error: error.message || "Invalid operating hours." });
+    }
+    if (!payload.name) {
       return res.status(400).json({ error: "Branch name is required." });
+    }
+
+    const existing = await query(
+      "SELECT location, latitude, longitude FROM business_branches WHERE id = $1",
+      [branchId]
+    );
+    if (!existing.rows[0]) return res.status(404).json({ error: "Branch not found." });
+
+    let { latitude, longitude } = payload;
+    const locationChanged =
+      typeof req.body?.location !== "undefined" &&
+      payload.location !== (existing.rows[0].location || null);
+    if (payload.location && (latitude == null || longitude == null || locationChanged)) {
+      const geocoded = await resolveBusinessCoords({ location: payload.location });
+      latitude = geocoded.latitude;
+      longitude = geocoded.longitude;
+    } else if (!payload.location) {
+      latitude = null;
+      longitude = null;
+    } else {
+      latitude = existing.rows[0].latitude;
+      longitude = existing.rows[0].longitude;
+    }
+
+    const hasLocation = typeof req.body?.location !== "undefined";
+    const hasPhone = typeof req.body?.phone !== "undefined";
+    const sets = [
+      "name = $1",
+      "operating_hours = COALESCE($2, operating_hours)",
+      "accessibility_options = COALESCE($3, accessibility_options)",
+    ];
+    const params = [
+      payload.name,
+      payload.operatingHours,
+      payload.accessibilityOptions ?? null,
+      branchId,
+    ];
+    if (hasLocation) {
+      params.push(payload.location, latitude, longitude);
+      sets.push(`location = $${params.length - 2}`, `latitude = $${params.length - 1}`, `longitude = $${params.length}`);
+    }
+    if (hasPhone) {
+      params.push(payload.phone);
+      sets.push(`phone = $${params.length}`);
+    }
+    if (payload.hasActive) {
+      sets.push(`is_active = ${payload.isActive ? "true" : "false"}`);
     }
 
     const result = await query(
       `
         UPDATE business_branches
-        SET name = $1,
-            operating_hours = $2
-            ${hasActive ? `, is_active = ${isActive ? "true" : "false"}` : ""}
-        WHERE id = $3
+        SET ${sets.join(",\n            ")}
+        WHERE id = $4
         RETURNING
-          id, business_id, name, location, phone, operating_hours, is_active
+          id, business_id, name, location, phone, operating_hours,
+          accessibility_options, is_active
       `,
-      [name, operatingHours, branchId]
+      params
     );
     if (!result.rows[0]) return res.status(404).json({ error: "Branch not found." });
 
@@ -2538,19 +3443,102 @@ router.put("/vendor/businesses/:id", requireVendor, async (req, res) => {
       `,
       [result.rows[0].business_id]
     );
-    return res.json({
-      ...result.rows[0],
-      business_name: business.rows[0]?.name || null,
-      business_group_id: business.rows[0]?.business_group_id || null,
-      business_group_name: business.rows[0]?.business_group_name || null,
-      image_url: business.rows[0]?.image_url || null,
-    });
+    return res.json(
+      enrichBranchFields({
+        ...result.rows[0],
+        business_name: business.rows[0]?.name || null,
+        business_group_id: business.rows[0]?.business_group_id || null,
+        business_group_name: business.rows[0]?.business_group_name || null,
+        image_url: business.rows[0]?.image_url || null,
+      })
+    );
   } catch (error) {
     if (error.code === "23505") {
       return res.status(409).json({ error: "That branch name already exists for this business." });
     }
     console.error("Vendor business update failed:", error);
     return res.status(500).json({ error: "Could not update business." });
+  }
+});
+
+router.get("/vendor/businesses/:id/branches", requireVendor, async (req, res) => {
+  try {
+    const branchId = Number(req.params.id);
+    if (!Number.isInteger(branchId) || branchId < 1) {
+      return res.status(400).json({ error: "Invalid branch." });
+    }
+    const owned = await vendorOwnsBranch(req.vendor.sub, branchId);
+    if (!owned) {
+      return res.status(403).json({ error: "You do not manage this branch." });
+    }
+
+    const business = await query(
+      `
+        SELECT b.id, b.name AS business_name, bg.name AS business_group_name
+        FROM businesses b
+        INNER JOIN business_groups bg ON bg.id = b.business_group_id
+        WHERE b.id = $1
+      `,
+      [owned.business_id]
+    );
+    const branches = (await listBranchesForBusiness(owned.business_id)).map(enrichBranchFields);
+    return res.json({
+      business_id: owned.business_id,
+      business_name: business.rows[0]?.business_name || null,
+      business_group_name: business.rows[0]?.business_group_name || null,
+      branches,
+    });
+  } catch (error) {
+    console.error("Vendor branches list failed:", error);
+    return res.status(500).json({ error: "Could not load branches." });
+  }
+});
+
+router.post("/vendor/businesses/:id/branches", requireVendor, async (req, res) => {
+  try {
+    const branchId = Number(req.params.id);
+    if (!Number.isInteger(branchId) || branchId < 1) {
+      return res.status(400).json({ error: "Invalid branch." });
+    }
+    const owned = await vendorOwnsBranch(req.vendor.sub, branchId);
+    if (!owned) {
+      return res.status(403).json({ error: "You do not manage this branch." });
+    }
+
+    let payload;
+    try {
+      payload = parseBranchPayload(req.body);
+    } catch (error) {
+      return res.status(400).json({ error: error.message || "Invalid operating hours." });
+    }
+    if (!payload.name) {
+      return res.status(400).json({ error: "Branch name is required." });
+    }
+
+    let { latitude, longitude } = payload;
+    if (payload.location && (latitude == null || longitude == null)) {
+      const geocoded = await resolveBusinessCoords({ location: payload.location });
+      latitude = geocoded.latitude;
+      longitude = geocoded.longitude;
+    }
+
+    const branch = await createBusinessBranch(owned.business_id, {
+      name: payload.name,
+      location: payload.location,
+      latitude,
+      longitude,
+      phone: payload.phone,
+      operatingHours: payload.operatingHours,
+      accessibilityOptions: payload.accessibilityOptions ?? "[]",
+      isActive: payload.hasActive ? payload.isActive : true,
+    });
+    return res.status(201).json(enrichBranchFields(branch));
+  } catch (error) {
+    if (error.code === "23505") {
+      return res.status(409).json({ error: "That branch name already exists for this business." });
+    }
+    console.error("Vendor create branch failed:", error);
+    return res.status(500).json({ error: "Could not create branch." });
   }
 });
 
@@ -2594,6 +3582,10 @@ router.get("/vendor/businesses/:id/queue", requireVendor, async (req, res) => {
 
     const decorated = entries.rows.map(decorateQueueEntry);
     const br = branch.rows[0];
+    const appWaiting = decorated.reduce(
+      (sum, entry) => sum + (Number(entry.party_size) || 1),
+      0
+    );
     return res.json({
       business: {
         id: br.id,
@@ -2605,8 +3597,9 @@ router.get("/vendor/businesses/:id/queue", requireVendor, async (req, res) => {
         avg_wait_minutes: br.avg_wait_minutes,
         is_active: br.is_active,
         business_group_name: br.business_group_name,
-        waiting_total: (br.queue_size || 0) + decorated.length,
-        app_waiting: decorated.length,
+        waiting_total: (br.queue_size || 0) + appWaiting,
+        app_waiting: appWaiting,
+        app_parties: decorated.length,
       },
       entries: decorated,
     });
@@ -2697,13 +3690,327 @@ router.put("/vendor/businesses/:id/walk-ins", requireVendor, async (req, res) =>
   }
 });
 
+router.get("/vendor/businesses/:id/services", requireVendor, async (req, res) => {
+  try {
+    const branchId = Number(req.params.id);
+    const owned = await vendorOwnsBranch(req.vendor.sub, branchId);
+    if (!owned) return res.status(403).json({ error: "You do not manage this branch." });
+
+    const result = await query(
+      `
+        SELECT id, business_id, name, duration_minutes, description, is_active, created_at
+        FROM business_services
+        WHERE business_id = $1
+        ORDER BY name ASC, id ASC
+      `,
+      [owned.business_id]
+    );
+    return res.json(result.rows);
+  } catch (error) {
+    console.error("Vendor list services failed:", error);
+    return res.status(500).json({ error: "Could not load services." });
+  }
+});
+
+router.post("/vendor/businesses/:id/services", requireVendor, async (req, res) => {
+  try {
+    const branchId = Number(req.params.id);
+    const owned = await vendorOwnsBranch(req.vendor.sub, branchId);
+    if (!owned) return res.status(403).json({ error: "You do not manage this branch." });
+
+    const payload = parseServicePayload(req.body);
+    if (!payload.name) return res.status(400).json({ error: "Service name is required." });
+    if (!Number.isFinite(payload.durationMinutes) || payload.durationMinutes < 1 || payload.durationMinutes > 24 * 60) {
+      return res.status(400).json({ error: "Service period must be between 1 and 1440 minutes." });
+    }
+
+    const result = await query(
+      `
+        INSERT INTO business_services (business_id, name, duration_minutes, description, is_active)
+        VALUES ($1, $2, $3, $4, $5)
+        RETURNING id, business_id, name, duration_minutes, description, is_active, created_at
+      `,
+      [
+        owned.business_id,
+        payload.name,
+        Math.round(payload.durationMinutes),
+        payload.description,
+        payload.hasActive ? Boolean(payload.isActive) : true,
+      ]
+    );
+    return res.status(201).json(result.rows[0]);
+  } catch (error) {
+    if (error.code === "23505") {
+      return res.status(409).json({ error: "That service name already exists for this business." });
+    }
+    console.error("Vendor create service failed:", error);
+    return res.status(500).json({ error: "Could not create service." });
+  }
+});
+
+router.put("/vendor/businesses/:id/services/:serviceId", requireVendor, async (req, res) => {
+  try {
+    const branchId = Number(req.params.id);
+    const serviceId = Number(req.params.serviceId);
+    const owned = await vendorOwnsBranch(req.vendor.sub, branchId);
+    if (!owned) return res.status(403).json({ error: "You do not manage this branch." });
+    if (!Number.isInteger(serviceId) || serviceId < 1) {
+      return res.status(400).json({ error: "Invalid service." });
+    }
+
+    const payload = parseServicePayload(req.body);
+    if (!payload.name) return res.status(400).json({ error: "Service name is required." });
+    if (!Number.isFinite(payload.durationMinutes) || payload.durationMinutes < 1 || payload.durationMinutes > 24 * 60) {
+      return res.status(400).json({ error: "Service period must be between 1 and 1440 minutes." });
+    }
+
+    const result = await query(
+      `
+        UPDATE business_services
+        SET name = $1,
+            duration_minutes = $2,
+            description = $3
+            ${payload.hasActive ? `, is_active = ${payload.isActive ? "true" : "false"}` : ""}
+        WHERE id = $4 AND business_id = $5
+        RETURNING id, business_id, name, duration_minutes, description, is_active, created_at
+      `,
+      [
+        payload.name,
+        Math.round(payload.durationMinutes),
+        payload.description,
+        serviceId,
+        owned.business_id,
+      ]
+    );
+    if (!result.rows[0]) return res.status(404).json({ error: "Service not found." });
+    return res.json(result.rows[0]);
+  } catch (error) {
+    if (error.code === "23505") {
+      return res.status(409).json({ error: "That service name already exists for this business." });
+    }
+    console.error("Vendor update service failed:", error);
+    return res.status(500).json({ error: "Could not update service." });
+  }
+});
+
+router.delete("/vendor/businesses/:id/services/:serviceId", requireVendor, async (req, res) => {
+  try {
+    const branchId = Number(req.params.id);
+    const serviceId = Number(req.params.serviceId);
+    const owned = await vendorOwnsBranch(req.vendor.sub, branchId);
+    if (!owned) return res.status(403).json({ error: "You do not manage this branch." });
+    if (!Number.isInteger(serviceId) || serviceId < 1) {
+      return res.status(400).json({ error: "Invalid service." });
+    }
+
+    const result = await query(
+      `
+        DELETE FROM business_services
+        WHERE id = $1 AND business_id = $2
+        RETURNING id
+      `,
+      [serviceId, owned.business_id]
+    );
+    if (!result.rows[0]) return res.status(404).json({ error: "Service not found." });
+    return res.json({ ok: true, id: result.rows[0].id });
+  } catch (error) {
+    console.error("Vendor delete service failed:", error);
+    return res.status(500).json({ error: "Could not delete service." });
+  }
+});
+
 /* -------------------------------------------------------- admin vendors */
+
+/** Parse trial end from admin body. undefined = omit; null/"" = clear. */
+function parseTrialEndsAt(value) {
+  if (typeof value === "undefined") return undefined;
+  if (value === null || value === "") return null;
+  const raw = String(value).trim();
+  if (!raw) return null;
+
+  // datetime-local / "YYYY-MM-DDTHH:mm" — treat as Africa/Nairobi (EAT).
+  const local = raw.match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})(?::(\d{2}))?$/);
+  let date;
+  if (local) {
+    date = new Date(`${local[1]}T${local[2]}:${local[3] || "00"}+03:00`);
+  } else {
+    date = new Date(raw);
+  }
+  if (!Number.isFinite(date.getTime())) {
+    const error = new Error("Enter a valid trial end date and time.");
+    error.status = 400;
+    throw error;
+  }
+  return date.toISOString();
+}
+
+function formatTrialEndsAtForSms(iso) {
+  if (!iso) return null;
+  const date = new Date(iso);
+  if (!Number.isFinite(date.getTime())) return null;
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Africa/Nairobi",
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  }).format(date);
+}
+
+async function wolfgangContactDetails() {
+  const phone = String((await getSetting(CONTACT_PHONE, "")) || "").trim();
+  const email = String((await getSetting(CONTACT_EMAIL, "")) || "").trim();
+  return {
+    phone: phone || "+254712674333",
+    email: email || null,
+  };
+}
+
+function buildVendorInviteSmsMessage({ contactPhone, contactEmail, trialEndsAt }) {
+  const contacts = [contactPhone, contactEmail].filter(Boolean).join(" · ");
+  const trialLabel = formatTrialEndsAtForSms(trialEndsAt);
+  const trialLine = trialLabel
+    ? ` Your trial ends on ${trialLabel} EAT.`
+    : "";
+  return (
+    "Queueless: You've been invited to the Queueless Vendor app. " +
+    "Check WhatsApp for more details." +
+    trialLine +
+    ` Contact Wolfgang: ${contacts}.`
+  );
+}
+
+function buildVendorTrialSmsMessage({ contactPhone, contactEmail, trialEndsAt }) {
+  const contacts = [contactPhone, contactEmail].filter(Boolean).join(" · ");
+  const trialLabel = formatTrialEndsAtForSms(trialEndsAt);
+  return (
+    `Queueless: Your vendor trial ends on ${trialLabel} EAT. ` +
+    `Contact Wolfgang: ${contacts}.`
+  );
+}
+
+/**
+ * Advanta SMS from shortcode WOLFGANG. WhatsApp invites are opened from Admin
+ * (wa.me), not sent through the WhatsApp Cloud API.
+ * Never throws — vendor create must succeed even if SMS fails.
+ */
+async function notifyVendorInvite({ phone, trialEndsAt = null }) {
+  const contact = await wolfgangContactDetails();
+  const result = {
+    sms: { sent: false, reason: null, error: null },
+    contact,
+  };
+
+  if (!phone) {
+    result.sms.reason = "no_phone";
+    return result;
+  }
+
+  const message = buildVendorInviteSmsMessage({
+    contactPhone: contact.phone,
+    contactEmail: contact.email,
+    trialEndsAt,
+  });
+
+  if (!smsProviderConfigured()) {
+    result.sms.reason = "not_configured";
+    console.log(`[vendor-invite:sms:web] would notify ${phone}: ${message}`);
+    return result;
+  }
+
+  try {
+    await sendSms({ phone, message });
+    result.sms.sent = true;
+    console.log(`[vendor-invite:sms] invite SMS sent to ${phone}`);
+  } catch (error) {
+    result.sms.reason = "failed";
+    result.sms.error = error.message;
+    console.error(`[vendor-invite:sms] failed for ${phone}:`, error.message);
+  }
+
+  return result;
+}
+
+/** Notify vendor that their trial end date was set or updated. Never throws. */
+async function notifyVendorTrial({ phone, trialEndsAt }) {
+  const contact = await wolfgangContactDetails();
+  const result = {
+    sms: { sent: false, reason: null, error: null },
+    contact,
+  };
+
+  if (!trialEndsAt) {
+    result.sms.reason = "no_trial";
+    return result;
+  }
+  if (!phone) {
+    result.sms.reason = "no_phone";
+    return result;
+  }
+
+  const message = buildVendorTrialSmsMessage({
+    contactPhone: contact.phone,
+    contactEmail: contact.email,
+    trialEndsAt,
+  });
+
+  if (!smsProviderConfigured()) {
+    result.sms.reason = "not_configured";
+    console.log(`[vendor-trial:sms:web] would notify ${phone}: ${message}`);
+    return result;
+  }
+
+  try {
+    await sendSms({ phone, message });
+    result.sms.sent = true;
+    console.log(`[vendor-trial:sms] trial SMS sent to ${phone}`);
+  } catch (error) {
+    result.sms.reason = "failed";
+    result.sms.error = error.message;
+    console.error(`[vendor-trial:sms] failed for ${phone}:`, error.message);
+  }
+
+  return result;
+}
+
+function vendorInviteSummary(invite) {
+  if (invite?.sms?.sent) {
+    return "Vendor created. Invite SMS sent from Wolfgang — open WhatsApp from Admin to share login details.";
+  }
+  if (invite?.sms?.reason === "no_phone") {
+    return "Vendor created. Add a WhatsApp phone to send the invite SMS.";
+  }
+  if (invite?.sms?.reason === "not_configured") {
+    return "Vendor created. Advanta is not configured, so the invite SMS was not sent.";
+  }
+  if (invite?.sms?.error) {
+    return `Vendor created. Invite SMS failed: ${invite.sms.error}`;
+  }
+  return "Vendor created.";
+}
+
+function vendorTrialSmsSummary(trialNotify) {
+  if (trialNotify?.sms?.sent) return "Trial SMS sent to the vendor.";
+  if (trialNotify?.sms?.reason === "no_phone") {
+    return "Trial saved. Add a WhatsApp phone to send the trial SMS.";
+  }
+  if (trialNotify?.sms?.reason === "not_configured") {
+    return "Trial saved. Advanta is not configured, so the trial SMS was not sent.";
+  }
+  if (trialNotify?.sms?.error) {
+    return `Trial saved. Trial SMS failed: ${trialNotify.sms.error}`;
+  }
+  return "Trial saved.";
+}
 
 router.get("/admins/vendors", requireAdmin, async (_req, res) => {
   try {
     const vendors = await query(
       `
-        SELECT id, username, email, phone, created_at, activated_at
+        SELECT id, username, email, phone, created_at, activated_at, trial_ends_at,
+               otp_code, otp_expires_at, pin_hash
         FROM vendors
         ORDER BY created_at DESC
       `
@@ -2731,6 +4038,14 @@ router.get("/admins/vendors", requireAdmin, async (_req, res) => {
     return res.json(
       vendors.rows.map((vendor) => ({
         ...vendor,
+        has_pin: Boolean(vendor.pin_hash),
+        pin_hash: undefined,
+        otp_code:
+          vendor.otp_code &&
+          vendor.otp_expires_at &&
+          new Date(vendor.otp_expires_at) > new Date()
+            ? vendor.otp_code
+            : null,
         businesses: byVendor.get(vendor.id) || [],
       }))
     );
@@ -2742,42 +4057,71 @@ router.get("/admins/vendors", requireAdmin, async (_req, res) => {
 
 router.post("/admins/vendors", requireAdmin, async (req, res) => {
   try {
-    const username = String(req.body?.username || "").trim().toLowerCase();
+    const usernameRaw = String(req.body?.username || "").trim().toLowerCase();
     const email = String(req.body?.email || "").trim().toLowerCase();
     const phoneRaw = String(req.body?.phone || "").trim();
     const password = String(req.body?.password || "");
     const businessIds = req.body?.business_ids;
+    let trialEndsAt;
+    try {
+      trialEndsAt = parseTrialEndsAt(
+        typeof req.body?.trial_ends_at !== "undefined" ? req.body.trial_ends_at : null
+      );
+    } catch (error) {
+      return res.status(400).json({ error: error.message });
+    }
 
-    if (!username || username.length < 3) {
-      return res.status(400).json({ error: "Username must be at least 3 characters." });
+    const phone = phoneRaw ? normalizeWhatsAppPhone(phoneRaw) : null;
+    if (!phone) {
+      return res.status(400).json({ error: "WhatsApp phone number is required." });
     }
     if (email && !EMAIL_RE.test(email)) {
       return res.status(400).json({ error: "Enter a valid email address." });
     }
-    const phone = phoneRaw ? normalizeWhatsAppPhone(phoneRaw) : null;
-    if (phoneRaw && !phone) {
-      return res.status(400).json({ error: "Enter a valid WhatsApp phone number." });
+
+    const username =
+      usernameRaw && usernameRaw.length >= 3
+        ? usernameRaw
+        : await uniqueVendorUsernameFromPhone(phone);
+
+    if (username.length < 3) {
+      return res.status(400).json({ error: "Username must be at least 3 characters." });
     }
-    if (!password || password.length < 6) {
+    if (password && password.length < 6) {
       return res.status(400).json({ error: "Password must be at least 6 characters." });
     }
 
-    const hash = await bcrypt.hash(password, 10);
+    const passwordHash = password ? await bcrypt.hash(password, 10) : null;
     const created = await query(
       `
-        INSERT INTO vendors (username, email, phone, password_hash, activated_at)
-        VALUES ($1, $2, $3, $4, NOW())
-        RETURNING id, username, email, phone, created_at, activated_at
+        INSERT INTO vendors (username, email, phone, password_hash, activated_at, trial_ends_at)
+        VALUES ($1, $2, $3, $4, NOW(), $5)
+        RETURNING id, username, email, phone, created_at, activated_at, trial_ends_at
       `,
-      [username, email || null, phone, hash]
+      [username, email || null, phone, passwordHash, trialEndsAt]
     );
 
     await replaceVendorBusinesses(created.rows[0].id, businessIds);
-    return res.status(201).json(await vendorWithBusinesses(created.rows[0].id));
+    const vendor = await vendorWithBusinesses(created.rows[0].id);
+    const invite = await notifyVendorInvite({
+      phone: vendor.phone,
+      trialEndsAt: vendor.trial_ends_at,
+    });
+
+    return res.status(201).json({
+      ...vendor,
+      invite_sms: invite.sms,
+      contact_phone: invite.contact?.phone || null,
+      contact_email: invite.contact?.email || null,
+      vendor_web_url:
+        process.env.VENDOR_PUBLIC_URL || "https://vendor.queueless.thewolfgang.tech",
+      vendor_app_url: process.env.VENDOR_APP_URL || "",
+      message: vendorInviteSummary(invite),
+    });
   } catch (error) {
     if (error.status === 400) return res.status(400).json({ error: error.message });
     if (error.code === "23505") {
-      return res.status(409).json({ error: "That username or email is already in use." });
+      return res.status(409).json({ error: "That username, email, or phone is already in use." });
     }
     console.error("Create vendor failed:", error);
     return res.status(500).json({ error: "Could not create vendor." });
@@ -2791,7 +4135,10 @@ router.put("/admins/vendors/:id", requireAdmin, async (req, res) => {
       return res.status(400).json({ error: "Invalid vendor." });
     }
 
-    const existing = await query("SELECT id FROM vendors WHERE id = $1", [id]);
+    const existing = await query(
+      "SELECT id, phone, trial_ends_at FROM vendors WHERE id = $1",
+      [id]
+    );
     if (!existing.rows[0]) return res.status(404).json({ error: "Vendor not found." });
 
     const email =
@@ -2802,6 +4149,12 @@ router.put("/admins/vendors/:id", requireAdmin, async (req, res) => {
       typeof req.body?.phone !== "undefined" ? String(req.body.phone || "").trim() : undefined;
     const password =
       typeof req.body?.password !== "undefined" ? String(req.body.password || "") : undefined;
+    let trialEndsAt;
+    try {
+      trialEndsAt = parseTrialEndsAt(req.body?.trial_ends_at);
+    } catch (error) {
+      return res.status(400).json({ error: error.message });
+    }
 
     if (email !== undefined && email && !EMAIL_RE.test(email)) {
       return res.status(400).json({ error: "Enter a valid email address." });
@@ -2831,7 +4184,34 @@ router.put("/admins/vendors/:id", requireAdmin, async (req, res) => {
       await replaceVendorBusinesses(id, req.body.business_ids);
     }
 
-    return res.json(await vendorWithBusinesses(id));
+    const previousTrial = existing.rows[0].trial_ends_at
+      ? new Date(existing.rows[0].trial_ends_at).toISOString()
+      : null;
+    let trialChanged = false;
+    if (typeof trialEndsAt !== "undefined") {
+      const nextTrial = trialEndsAt;
+      trialChanged = previousTrial !== nextTrial;
+      await query(`UPDATE vendors SET trial_ends_at = $1 WHERE id = $2`, [nextTrial, id]);
+    }
+
+    const vendor = await vendorWithBusinesses(id);
+    let trialNotify = null;
+    if (trialChanged && vendor.trial_ends_at) {
+      trialNotify = await notifyVendorTrial({
+        phone: vendor.phone,
+        trialEndsAt: vendor.trial_ends_at,
+      });
+    }
+
+    return res.json({
+      ...vendor,
+      trial_sms: trialNotify?.sms || null,
+      message: trialChanged
+        ? vendor.trial_ends_at
+          ? vendorTrialSmsSummary(trialNotify)
+          : "Trial end date cleared."
+        : "Saved.",
+    });
   } catch (error) {
     if (error.status === 400) return res.status(400).json({ error: error.message });
     if (error.code === "23505") {
@@ -2839,6 +4219,62 @@ router.put("/admins/vendors/:id", requireAdmin, async (req, res) => {
     }
     console.error("Update vendor failed:", error);
     return res.status(500).json({ error: "Could not update vendor." });
+  }
+});
+
+router.post("/admins/vendors/:id/invite", requireAdmin, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id < 1) {
+      return res.status(400).json({ error: "Invalid vendor." });
+    }
+
+    const vendor = await vendorWithBusinesses(id);
+    if (!vendor) return res.status(404).json({ error: "Vendor not found." });
+    if (!vendor.phone) {
+      return res.status(400).json({ error: "Add a WhatsApp phone number before sending an invite." });
+    }
+
+    const password =
+      typeof req.body?.password !== "undefined" ? String(req.body.password || "") : "";
+    if (password && password.length < 6) {
+      return res.status(400).json({ error: "Password must be at least 6 characters." });
+    }
+    if (password) {
+      const hash = await bcrypt.hash(password, 10);
+      await query(`UPDATE vendors SET password_hash = $1 WHERE id = $2`, [hash, id]);
+    }
+
+    const invite = await notifyVendorInvite({
+      phone: vendor.phone,
+      trialEndsAt: vendor.trial_ends_at,
+    });
+
+    if (!invite.sms.sent && invite.sms.reason === "not_configured") {
+      return res.status(400).json({
+        error:
+          "Advanta is not configured. Set ADVANTA_API_KEY, ADVANTA_PARTNER_ID and ADVANTA_SHORTCODE.",
+      });
+    }
+    if (!invite.sms.sent && invite.sms.error) {
+      return res.status(502).json({ error: invite.sms.error });
+    }
+
+    return res.json({
+      ...(await vendorWithBusinesses(id)),
+      invite_sms: invite.sms,
+      contact_phone: invite.contact?.phone || null,
+      contact_email: invite.contact?.email || null,
+      vendor_web_url:
+        process.env.VENDOR_PUBLIC_URL || "https://vendor.queueless.thewolfgang.tech",
+      vendor_app_url: process.env.VENDOR_APP_URL || "",
+      message: invite.sms.sent
+        ? "Invite SMS sent from Wolfgang. Open WhatsApp from Admin to share login details."
+        : "Invite could not be sent.",
+    });
+  } catch (error) {
+    console.error("Vendor invite failed:", error);
+    return res.status(500).json({ error: "Could not send vendor invite." });
   }
 });
 

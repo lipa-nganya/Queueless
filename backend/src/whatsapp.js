@@ -1,11 +1,17 @@
 /**
  * WhatsApp Cloud API (Meta) helpers for queue join/leave alerts.
  *
- * Local-first: if WhatsApp is disabled or not configured, we log the intended
- * message so queue actions still succeed without Meta credentials.
+ * Local-first: if queue alerts are disabled or the selected channel is not
+ * configured, we log the intended message so queue actions still succeed.
  */
-import { getBoolSetting, WHATSAPP_ENABLED, whatsappProviderConfigured } from "./settings.js";
-import { normalizeKenyaPhone } from "./otp.js";
+import {
+  getBoolSetting,
+  getQueueAlertChannel,
+  WHATSAPP_ENABLED,
+  whatsappProviderConfigured,
+  smsProviderConfigured,
+} from "./settings.js";
+import { normalizeKenyaPhone, sendSms } from "./otp.js";
 
 const API_VERSION = process.env.WHATSAPP_API_VERSION || "v22.0";
 
@@ -131,7 +137,9 @@ export function buildQueueJoinMessage(details) {
       : ` Est. wait: ${details.estimatedWaitMinutes} min.`;
   const position =
     details.position == null ? "" : ` Position #${details.position}.`;
-  return `Queueless: ${who} joined the queue at ${details.businessName}.${position}${wait}`;
+  const partySize = Number(details.partySize) || 1;
+  const party = partySize > 1 ? ` Party of ${partySize}.` : "";
+  return `Queueless: ${who} joined the queue at ${details.businessName}.${party}${position}${wait}`;
 }
 
 export function buildQueueLeaveMessage(details) {
@@ -141,7 +149,9 @@ export function buildQueueLeaveMessage(details) {
 
 /**
  * Notify staff phones about a queue join/leave. Never throws — the queue
- * action must succeed even if WhatsApp fails.
+ * action must succeed even if WhatsApp/SMS fails.
+ *
+ * Channel is chosen in Admin → Settings (WhatsApp vs SMS / Advanta).
  */
 export async function notifyQueueEvent(action, recipients, details) {
   const unique = [
@@ -155,18 +165,45 @@ export async function notifyQueueEvent(action, recipients, details) {
   const message =
     action === "leave" ? buildQueueLeaveMessage(details) : buildQueueJoinMessage(details);
   const enabled = await getBoolSetting(WHATSAPP_ENABLED, false);
-  const configured = whatsappConfigured();
+  const channel = await getQueueAlertChannel();
+  const configured =
+    channel === "sms" ? smsProviderConfigured() : whatsappConfigured();
 
   if (!enabled || !configured) {
-    console.log(
-      `[whatsapp:web] would notify ${unique.join(", ") || "(no recipients)"}: ${message}`
-    );
-    return { mode: "web", recipients: unique, message };
+    if (process.env.LOG_VERBOSE === "1") {
+      console.log(
+        `[queue-alert:${channel}:web] would notify ${unique.join(", ") || "(no recipients)"}: ${message}`
+      );
+    }
+    return { mode: "web", channel, recipients: unique, message };
   }
 
   if (!unique.length) {
-    console.log(`[whatsapp] no recipients for: ${message}`);
-    return { mode: "skip", recipients: [], message };
+    if (process.env.LOG_VERBOSE === "1") {
+      console.log(`[queue-alert:${channel}] no recipients for: ${message}`);
+    }
+    return { mode: "skip", channel, recipients: [], message };
+  }
+
+  if (channel === "sms") {
+    const results = [];
+    for (const phone of unique) {
+      try {
+        const payload = await sendSms({ phone, message });
+        results.push({
+          phone,
+          ok: true,
+          id: payload?.responses?.[0]?.messageid || null,
+        });
+        if (process.env.LOG_VERBOSE === "1") {
+          console.log(`[sms] ${action} alert sent to ${phone}`);
+        }
+      } catch (error) {
+        console.error(`[sms] ${action} alert to ${phone} failed:`, error.message);
+        results.push({ phone, ok: false, error: error.message });
+      }
+    }
+    return { mode: "live", channel, recipients: unique, message, results };
   }
 
   const joinTemplate = (process.env.WHATSAPP_TEMPLATE_NAME || "").trim();
@@ -202,14 +239,16 @@ export async function notifyQueueEvent(action, recipients, details) {
         payload = await sendWhatsAppText({ phone, message });
       }
       results.push({ phone, ok: true, id: payload?.messages?.[0]?.id || null });
-      console.log(`[whatsapp] ${action} alert sent to ${phone}`);
+      if (process.env.LOG_VERBOSE === "1") {
+        console.log(`[whatsapp] ${action} alert sent to ${phone}`);
+      }
     } catch (error) {
       console.error(`[whatsapp] ${action} alert to ${phone} failed:`, error.message);
       results.push({ phone, ok: false, error: error.message, code: error.code });
     }
   }
 
-  return { mode: "live", recipients: unique, message, results };
+  return { mode: "live", channel, recipients: unique, message, results };
 }
 
 /** @deprecated use notifyQueueEvent("join", ...) */

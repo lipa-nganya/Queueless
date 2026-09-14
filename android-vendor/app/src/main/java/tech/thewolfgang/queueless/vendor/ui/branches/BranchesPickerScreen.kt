@@ -1,4 +1,4 @@
-package tech.thewolfgang.queueless.vendor.ui.profile
+package tech.thewolfgang.queueless.vendor.ui.branches
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -39,12 +39,12 @@ import tech.thewolfgang.queueless.vendor.ui.theme.TextPrimary
 import androidx.compose.ui.semantics.Role as SemanticsRole
 
 @Composable
-fun ProfilePickerScreen(
+fun BranchesPickerScreen(
     viewModel: BusinessesViewModel,
-    onOpenProfile: (Int) -> Unit,
+    onOpenBranches: (Int) -> Unit,
     onOpenQueue: () -> Unit,
-    onOpenBranches: () -> Unit,
     onOpenServices: () -> Unit,
+    onOpenProfile: () -> Unit,
     onSignOut: () -> Unit,
     onUnauthorized: () -> Unit,
 ) {
@@ -56,7 +56,7 @@ fun ProfilePickerScreen(
 
     LaunchedEffect(state.loading, state.businesses) {
         if (!state.loading && state.businesses.size == 1) {
-            onOpenProfile(state.businesses.first().id)
+            onOpenBranches(state.businesses.first().id)
         }
     }
 
@@ -70,16 +70,16 @@ fun ProfilePickerScreen(
                 .weight(1f)
                 .padding(horizontal = 16.dp, vertical = 8.dp),
         ) {
-            TopBar(title = "Profile")
+            TopBar(title = "Branches")
             Spacer(Modifier.height(12.dp))
             Text(
-                text = "Choose a branch",
+                text = "Choose a business",
                 color = TextPrimary,
                 fontSize = 28.sp,
                 fontWeight = FontWeight.Bold,
             )
             Text(
-                text = "Edit branch name, status, and business hours.",
+                text = "Manage branches for the brand behind that location.",
                 color = TextMuted,
                 modifier = Modifier.padding(top = 4.dp, bottom = 16.dp),
             )
@@ -113,7 +113,7 @@ fun ProfilePickerScreen(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .background(SurfaceCard, RoundedCornerShape(14.dp))
-                                    .clickable { onOpenProfile(business.id) }
+                                    .clickable { onOpenBranches(business.id) }
                                     .semantics(mergeDescendants = true) {
                                         role = SemanticsRole.Button
                                         val title = listOfNotNull(
@@ -147,11 +147,11 @@ fun ProfilePickerScreen(
             }
         }
         VendorBottomBar(
-            selected = VendorTab.Profile,
+            selected = VendorTab.Branches,
             onQueue = onOpenQueue,
-            onBranches = onOpenBranches,
+            onBranches = {},
             onServices = onOpenServices,
-            onProfile = {},
+            onProfile = onOpenProfile,
             onSignOut = onSignOut,
         )
     }

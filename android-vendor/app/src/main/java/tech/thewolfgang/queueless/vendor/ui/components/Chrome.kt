@@ -10,7 +10,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Logout
+import androidx.compose.material.icons.filled.AccountTree
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.MiscellaneousServices
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -20,12 +22,20 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import tech.thewolfgang.queueless.vendor.BuildConfig
 import tech.thewolfgang.queueless.vendor.ui.theme.Lime
 import tech.thewolfgang.queueless.vendor.ui.theme.NavyElevated
 import tech.thewolfgang.queueless.vendor.ui.theme.TextMuted
@@ -33,6 +43,8 @@ import tech.thewolfgang.queueless.vendor.ui.theme.TextPrimary
 
 enum class VendorTab {
     Queue,
+    Branches,
+    Services,
     Profile,
 }
 
@@ -49,7 +61,10 @@ fun BrandMark(
             append("less")
         }
     }
-    Text(text = title, modifier = modifier)
+    Text(
+        text = title,
+        modifier = modifier.semantics { contentDescription = "Queueless" },
+    )
     if (!subtitle.isNullOrBlank()) {
         Text(
             text = subtitle,
@@ -57,6 +72,23 @@ fun BrandMark(
             modifier = Modifier.padding(top = 2.dp),
         )
     }
+}
+
+@Composable
+fun AppVersionLabel(
+    modifier: Modifier = Modifier,
+    onDark: Boolean = false,
+) {
+    Text(
+        text = "v${BuildConfig.VERSION_NAME}",
+        modifier = modifier.semantics {
+            contentDescription = "App version ${BuildConfig.VERSION_NAME}"
+        },
+        color = if (onDark) TextMuted.copy(alpha = 0.75f) else TextMuted,
+        fontSize = 12.sp,
+        fontWeight = FontWeight.Medium,
+        textAlign = TextAlign.Center,
+    )
 }
 
 @Composable
@@ -75,7 +107,7 @@ fun TopBar(
     ) {
         if (showBack && onBack != null) {
             TextButton(onClick = onBack) {
-                Text("← Back")
+                Text("Back")
             }
         }
         if (showBrand) {
@@ -88,15 +120,21 @@ fun TopBar(
 fun VendorBottomBar(
     selected: VendorTab,
     onQueue: () -> Unit,
+    onBranches: () -> Unit,
+    onServices: () -> Unit,
     onProfile: () -> Unit,
     onSignOut: () -> Unit,
 ) {
-    Column(modifier = Modifier.background(NavyElevated)) {
+    Column(
+        modifier = Modifier
+            .background(NavyElevated)
+            .semantics { contentDescription = "Main navigation" },
+    ) {
         HorizontalDivider(color = TextMuted.copy(alpha = 0.2f))
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 6.dp),
+                .padding(horizontal = 2.dp, vertical = 6.dp),
             horizontalArrangement = Arrangement.SpaceEvenly,
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -105,13 +143,31 @@ fun VendorBottomBar(
                 label = "Queue",
                 icon = Icons.Filled.Home,
                 onClick = onQueue,
+                role = BottomRole.Tab,
+                modifier = Modifier.weight(1f),
+            )
+            BottomItem(
+                selected = selected == VendorTab.Branches,
+                label = "Branches",
+                icon = Icons.Filled.AccountTree,
+                onClick = onBranches,
+                role = BottomRole.Tab,
+                modifier = Modifier.weight(1f),
+            )
+            BottomItem(
+                selected = selected == VendorTab.Services,
+                label = "Services",
+                icon = Icons.Filled.MiscellaneousServices,
+                onClick = onServices,
+                role = BottomRole.Tab,
                 modifier = Modifier.weight(1f),
             )
             BottomItem(
                 selected = selected == VendorTab.Profile,
-                label = "Profile",
+                label = "Hours",
                 icon = Icons.Filled.Person,
                 onClick = onProfile,
+                role = BottomRole.Tab,
                 modifier = Modifier.weight(1f),
             )
             BottomItem(
@@ -119,11 +175,20 @@ fun VendorBottomBar(
                 label = "Sign out",
                 icon = Icons.AutoMirrored.Filled.Logout,
                 onClick = onSignOut,
+                role = BottomRole.Button,
                 modifier = Modifier.weight(1f),
             )
         }
+        AppVersionLabel(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 8.dp),
+            onDark = true,
+        )
     }
 }
+
+private enum class BottomRole { Tab, Button }
 
 @Composable
 private fun BottomItem(
@@ -131,11 +196,20 @@ private fun BottomItem(
     label: String,
     icon: ImageVector,
     onClick: () -> Unit,
+    role: BottomRole,
     modifier: Modifier = Modifier,
 ) {
     val tint = if (selected) Lime else TextMuted
     Column(
         modifier = modifier
+            .semantics(mergeDescendants = true) {
+                this.role = if (role == BottomRole.Tab) Role.Tab else Role.Button
+                contentDescription = label
+                if (role == BottomRole.Tab) {
+                    this.selected = selected
+                    stateDescription = if (selected) "Selected" else "Not selected"
+                }
+            }
             .clickable(onClick = onClick)
             .padding(vertical = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -143,14 +217,14 @@ private fun BottomItem(
     ) {
         Icon(
             imageVector = icon,
-            contentDescription = label,
+            contentDescription = null,
             tint = tint,
             modifier = Modifier.size(22.dp),
         )
         Text(
             text = label,
             color = tint,
-            fontSize = 12.sp,
+            fontSize = 11.sp,
             fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
         )
     }

@@ -42,7 +42,7 @@ android {
             buildConfigField(
                 "String",
                 "API_BASE_URL",
-                "\"${apiUrl("queueless.api.local", "http://10.0.2.2:4000/api")}\"",
+                "\"${apiUrl("queueless.api.local", "https://homiest-psychopharmacologic-anaya.ngrok-free.dev/api")}\"",
             )
         }
         create("dev") {

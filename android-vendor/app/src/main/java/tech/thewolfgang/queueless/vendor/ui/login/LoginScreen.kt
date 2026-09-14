@@ -18,6 +18,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -35,7 +36,8 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import tech.thewolfgang.queueless.vendor.BuildConfig
+import tech.thewolfgang.queueless.vendor.ui.components.AppVersionLabel
+import tech.thewolfgang.queueless.vendor.ui.components.liveStatus
 import tech.thewolfgang.queueless.vendor.ui.theme.Danger
 import tech.thewolfgang.queueless.vendor.ui.theme.Lime
 import tech.thewolfgang.queueless.vendor.ui.theme.Navy
@@ -43,6 +45,8 @@ import tech.thewolfgang.queueless.vendor.ui.theme.NavyElevated
 import tech.thewolfgang.queueless.vendor.ui.theme.SurfaceCard
 import tech.thewolfgang.queueless.vendor.ui.theme.TextMuted
 import tech.thewolfgang.queueless.vendor.ui.theme.TextPrimary
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 
 @Composable
 fun LoginScreen(
@@ -86,78 +90,220 @@ fun LoginScreen(
                 fontSize = 34.sp,
             )
             Text(
-                text = "Vendor sign in — manage your business queues.",
+                text = when (state.step) {
+                    LoginStep.Phone -> "Vendor sign in — use your phone number."
+                    LoginStep.Pin -> "Enter your 4-digit PIN."
+                    LoginStep.Otp -> "Enter the SMS code we sent you."
+                    LoginStep.SetPin -> "Create and confirm your 4-digit PIN."
+                },
                 color = TextMuted,
             )
-            if (BuildConfig.ENV_NAME != "production") {
-                Text(
-                    text = "${BuildConfig.ENV_NAME.uppercase()} · ${BuildConfig.API_BASE_URL}",
-                    color = Lime,
-                    fontSize = 12.sp,
-                )
-            }
-            Spacer(Modifier.height(8.dp))
-            OutlinedTextField(
-                value = state.username,
-                onValueChange = viewModel::onUsernameChange,
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("Username or email") },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(
-                    keyboardType = KeyboardType.Email,
-                    imeAction = ImeAction.Next,
-                ),
-                colors = fieldColors(),
-            )
-            OutlinedTextField(
-                value = state.password,
-                onValueChange = viewModel::onPasswordChange,
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("Password") },
-                singleLine = true,
-                visualTransformation = PasswordVisualTransformation(),
-                keyboardOptions = KeyboardOptions(
-                    keyboardType = KeyboardType.Password,
-                    imeAction = ImeAction.Done,
-                ),
-                keyboardActions = KeyboardActions(
-                    onDone = {
-                        focusManager.clearFocus()
-                        viewModel.login()
-                    },
-                ),
-                colors = fieldColors(),
-            )
-            Button(
-                onClick = {
-                    focusManager.clearFocus()
-                    viewModel.login()
-                },
-                enabled = !state.loading,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 8.dp)
-                    .height(52.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = Lime,
-                    contentColor = Navy,
-                    disabledContainerColor = Lime.copy(alpha = 0.5f),
-                ),
-                shape = RoundedCornerShape(10.dp),
-            ) {
-                if (state.loading) {
-                    CircularProgressIndicator(
-                        color = Navy,
-                        strokeWidth = 2.dp,
-                        modifier = Modifier.height(22.dp),
+            Spacer(Modifier.height(4.dp))
+
+            when (state.step) {
+                LoginStep.Phone -> {
+                    OutlinedTextField(
+                        value = state.phone,
+                        onValueChange = viewModel::onPhoneChange,
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("Phone number") },
+                        placeholder = { Text("07XXXXXXXX") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Phone,
+                            imeAction = ImeAction.Done,
+                        ),
+                        keyboardActions = KeyboardActions(
+                            onDone = {
+                                focusManager.clearFocus()
+                                viewModel.continueWithPhone()
+                            },
+                        ),
+                        colors = fieldColors(),
                     )
-                } else {
-                    Text("Sign in", fontWeight = FontWeight.SemiBold)
+                    PrimaryButton(
+                        label = "Continue",
+                        loading = state.loading,
+                        onClick = {
+                            focusManager.clearFocus()
+                            viewModel.continueWithPhone()
+                        },
+                    )
+                }
+
+                LoginStep.Pin -> {
+                    Text(text = "+${state.phone}", color = TextPrimary, fontWeight = FontWeight.SemiBold)
+                    OutlinedTextField(
+                        value = state.pin,
+                        onValueChange = viewModel::onPinChange,
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("PIN") },
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.NumberPassword,
+                            imeAction = ImeAction.Done,
+                        ),
+                        keyboardActions = KeyboardActions(
+                            onDone = {
+                                focusManager.clearFocus()
+                                viewModel.loginWithPin()
+                            },
+                        ),
+                        colors = fieldColors(),
+                    )
+                    PrimaryButton(
+                        label = "Sign in",
+                        loading = state.loading,
+                        onClick = {
+                            focusManager.clearFocus()
+                            viewModel.loginWithPin()
+                        },
+                    )
+                    TextButton(onClick = viewModel::forgotPin, enabled = !state.loading) {
+                        Text("Forgot PIN?", color = TextMuted)
+                    }
+                    TextButton(onClick = viewModel::backToPhone, enabled = !state.loading) {
+                        Text("Use a different number", color = TextMuted)
+                    }
+                }
+
+                LoginStep.Otp -> {
+                    Text(text = "+${state.phone}", color = TextPrimary, fontWeight = FontWeight.SemiBold)
+                    OutlinedTextField(
+                        value = state.otp,
+                        onValueChange = viewModel::onOtpChange,
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("SMS code") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Number,
+                            imeAction = ImeAction.Done,
+                        ),
+                        keyboardActions = KeyboardActions(
+                            onDone = {
+                                focusManager.clearFocus()
+                                viewModel.verifyOtp()
+                            },
+                        ),
+                        colors = fieldColors(),
+                    )
+                    PrimaryButton(
+                        label = "Verify code",
+                        loading = state.loading,
+                        onClick = {
+                            focusManager.clearFocus()
+                            viewModel.verifyOtp()
+                        },
+                    )
+                    TextButton(onClick = viewModel::resendOtp, enabled = !state.loading) {
+                        Text("Resend code", color = TextMuted)
+                    }
+                    TextButton(onClick = viewModel::backToPhone, enabled = !state.loading) {
+                        Text("Use a different number", color = TextMuted)
+                    }
+                }
+
+                LoginStep.SetPin -> {
+                    Text(text = "+${state.phone}", color = TextPrimary, fontWeight = FontWeight.SemiBold)
+                    OutlinedTextField(
+                        value = state.pin,
+                        onValueChange = viewModel::onPinChange,
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("New PIN") },
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.NumberPassword,
+                            imeAction = ImeAction.Next,
+                        ),
+                        colors = fieldColors(),
+                    )
+                    OutlinedTextField(
+                        value = state.confirmPin,
+                        onValueChange = viewModel::onConfirmPinChange,
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("Confirm PIN") },
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.NumberPassword,
+                            imeAction = ImeAction.Done,
+                        ),
+                        keyboardActions = KeyboardActions(
+                            onDone = {
+                                focusManager.clearFocus()
+                                viewModel.savePin()
+                            },
+                        ),
+                        colors = fieldColors(),
+                    )
+                    PrimaryButton(
+                        label = "Save PIN & sign in",
+                        loading = state.loading,
+                        onClick = {
+                            focusManager.clearFocus()
+                            viewModel.savePin()
+                        },
+                    )
                 }
             }
-            if (!state.error.isNullOrBlank()) {
-                Text(text = state.error ?: "", color = Danger)
+
+            if (!state.info.isNullOrBlank()) {
+                Text(
+                    text = state.info ?: "",
+                    color = Lime,
+                    modifier = Modifier.liveStatus(),
+                )
             }
+            if (!state.error.isNullOrBlank()) {
+                Text(
+                    text = state.error ?: "",
+                    color = Danger,
+                    modifier = Modifier.liveStatus(),
+                )
+            }
+        }
+
+        AppVersionLabel(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 28.dp),
+            onDark = true,
+        )
+    }
+}
+
+@Composable
+private fun PrimaryButton(
+    label: String,
+    loading: Boolean,
+    onClick: () -> Unit,
+) {
+    Button(
+        onClick = onClick,
+        enabled = !loading,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 8.dp)
+            .height(52.dp),
+        colors = ButtonDefaults.buttonColors(
+            containerColor = Lime,
+            contentColor = Navy,
+            disabledContainerColor = Lime.copy(alpha = 0.5f),
+        ),
+        shape = RoundedCornerShape(10.dp),
+    ) {
+        if (loading) {
+            CircularProgressIndicator(
+                color = Navy,
+                strokeWidth = 2.dp,
+                modifier = Modifier
+                    .height(22.dp)
+                    .semantics { contentDescription = "Loading" },
+            )
+        } else {
+            Text(label, fontWeight = FontWeight.SemiBold)
         }
     }
 }
@@ -171,4 +317,6 @@ private fun fieldColors() = OutlinedTextFieldDefaults.colors(
     cursorColor = Lime,
     focusedTextColor = TextPrimary,
     unfocusedTextColor = TextPrimary,
+    focusedPlaceholderColor = TextMuted,
+    unfocusedPlaceholderColor = TextMuted,
 )

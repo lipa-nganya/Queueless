@@ -41,7 +41,7 @@ class QueueViewModel(
         pollJob = viewModelScope.launch {
             refresh(initial = true)
             while (isActive && pollingEnabled) {
-                delay(POLL_MS)
+                delay(pollDelayMs(_uiState.value.data))
                 if (pollingEnabled) refresh(initial = false)
             }
         }
@@ -51,6 +51,17 @@ class QueueViewModel(
         pollingEnabled = false
         pollJob?.cancel()
         pollJob = null
+    }
+
+    private fun pollDelayMs(data: QueueResponse?): Long {
+        val waiting = data?.business?.waitingTotal
+            ?: data?.entries?.sumOf { it.partySize.coerceAtLeast(1) }
+            ?: 0
+        return when {
+            waiting <= 0 -> POLL_MS_EMPTY
+            waiting <= 3 -> POLL_MS
+            else -> POLL_MS_BUSY
+        }
     }
 
     fun refresh(initial: Boolean) {
@@ -133,6 +144,8 @@ class QueueViewModel(
 
     companion object {
         private const val POLL_MS = 8_000L
+        private const val POLL_MS_EMPTY = 20_000L
+        private const val POLL_MS_BUSY = 12_000L
 
         fun factory(businessId: Int, repository: VendorRepository) =
             object : ViewModelProvider.Factory {

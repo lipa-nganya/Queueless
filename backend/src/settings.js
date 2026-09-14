@@ -10,8 +10,11 @@ import { query } from "./db.js";
 
 export const SMS_ENABLED = "sms_enabled";
 export const WHATSAPP_ENABLED = "whatsapp_enabled";
+export const QUEUE_ALERT_CHANNEL = "queue_alert_channel";
 export const CONTACT_PHONE = "contact_phone";
 export const CONTACT_EMAIL = "contact_email";
+
+export const QUEUE_ALERT_CHANNELS = ["whatsapp", "sms"];
 
 const DEFAULT_CONTACT_PHONE = "+254712674333";
 
@@ -42,6 +45,13 @@ export async function getSetting(key, fallback = null) {
 export async function getBoolSetting(key, fallback = false) {
   const value = await getSetting(key, null);
   return value === null ? fallback : parseBool(value);
+}
+
+export async function getQueueAlertChannel() {
+  const value = String((await getSetting(QUEUE_ALERT_CHANNEL, "whatsapp")) || "whatsapp")
+    .trim()
+    .toLowerCase();
+  return QUEUE_ALERT_CHANNELS.includes(value) ? value : "whatsapp";
 }
 
 export async function setSetting(key, value, adminId = null) {
@@ -82,6 +92,10 @@ export async function seedSettings() {
   await query(
     `INSERT INTO settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING`,
     [WHATSAPP_ENABLED, String(whatsappProviderConfigured())]
+  );
+  await query(
+    `INSERT INTO settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING`,
+    [QUEUE_ALERT_CHANNEL, "whatsapp"]
   );
   await loadSettings();
 }

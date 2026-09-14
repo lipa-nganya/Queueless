@@ -1,6 +1,7 @@
 package tech.thewolfgang.queueless.vendor.ui.profile
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -9,29 +10,51 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TimePicker
+import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import tech.thewolfgang.queueless.vendor.data.AccessibilityOptions
+import tech.thewolfgang.queueless.vendor.data.DayHours
+import tech.thewolfgang.queueless.vendor.data.OperatingHours
 import tech.thewolfgang.queueless.vendor.ui.components.TopBar
 import tech.thewolfgang.queueless.vendor.ui.components.VendorBottomBar
 import tech.thewolfgang.queueless.vendor.ui.components.VendorTab
+import tech.thewolfgang.queueless.vendor.ui.components.liveStatus
 import tech.thewolfgang.queueless.vendor.ui.theme.Danger
 import tech.thewolfgang.queueless.vendor.ui.theme.Lime
 import tech.thewolfgang.queueless.vendor.ui.theme.Navy
@@ -39,14 +62,19 @@ import tech.thewolfgang.queueless.vendor.ui.theme.SurfaceCard
 import tech.thewolfgang.queueless.vendor.ui.theme.TextMuted
 import tech.thewolfgang.queueless.vendor.ui.theme.TextPrimary
 
+private data class TimePickerTarget(val day: String, val field: String)
+
 @Composable
 fun ProfileScreen(
     viewModel: ProfileViewModel,
     onOpenQueue: () -> Unit,
+    onOpenBranches: () -> Unit,
+    onOpenServices: () -> Unit,
     onSignOut: () -> Unit,
     onUnauthorized: () -> Unit,
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    var timePickerTarget by remember { mutableStateOf<TimePickerTarget?>(null) }
 
     LaunchedEffect(state.unauthorized) {
         if (state.unauthorized) onUnauthorized()
@@ -94,14 +122,14 @@ fun ProfileScreen(
                             Text(text = state.groupName ?: "", color = TextMuted)
                         }
 
-                    OutlinedTextField(
-                        value = state.name,
-                        onValueChange = viewModel::onNameChange,
-                        modifier = Modifier.fillMaxWidth(),
-                        label = { Text("Branch name") },
-                        singleLine = true,
-                        colors = fieldColors(),
-                    )
+                        OutlinedTextField(
+                            value = state.name,
+                            onValueChange = viewModel::onNameChange,
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("Branch name") },
+                            singleLine = true,
+                            colors = fieldColors(),
+                        )
 
                         Column(
                             modifier = Modifier
@@ -140,24 +168,108 @@ fun ProfileScreen(
                             }
                         }
 
-                        OutlinedTextField(
-                            value = state.operatingHours,
-                            onValueChange = viewModel::onOperatingHoursChange,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(140.dp),
-                            label = { Text("Operating hours") },
-                            placeholder = {
-                                Text("e.g. Mon–Fri: 8:00 AM–6:00 PM\nSat: 9:00 AM–2:00 PM\nSun: Closed")
-                            },
-                            colors = fieldColors(),
+                        Text(
+                            text = "Business hours",
+                            color = TextPrimary,
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Text(
+                            text = "Toggle each day, then set start and end times.",
+                            color = TextMuted,
                         )
 
+                        state.schedule.forEach { day ->
+                            DayHoursRow(
+                                day = day,
+                                onOpenChange = { open -> viewModel.onDayOpenChange(day.day, open) },
+                                onPickStart = {
+                                    timePickerTarget = TimePickerTarget(day.day, "start")
+                                },
+                                onPickEnd = {
+                                    timePickerTarget = TimePickerTarget(day.day, "end")
+                                },
+                            )
+                        }
+
+                        Text(
+                            text = "Accessibility",
+                            color = TextPrimary,
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Text(
+                            text = "Select the options this branch can offer customers.",
+                            color = TextMuted,
+                        )
+
+                        AccessibilityOptions.all.forEach { option ->
+                            val checked = option.id in state.accessibilityOptions
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(SurfaceCard, RoundedCornerShape(14.dp))
+                                    .clickable {
+                                        viewModel.onAccessibilityToggle(option.id, !checked)
+                                    }
+                                    .padding(horizontal = 12.dp, vertical = 10.dp)
+                                    .semantics(mergeDescendants = true) {
+                                        role = Role.Checkbox
+                                        selected = checked
+                                        contentDescription = "${option.label}. ${option.description}"
+                                        stateDescription = if (checked) "Selected" else "Not selected"
+                                    },
+                                verticalAlignment = Alignment.Top,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            ) {
+                                Checkbox(
+                                    checked = checked,
+                                    onCheckedChange = { enabled ->
+                                        viewModel.onAccessibilityToggle(option.id, enabled)
+                                    },
+                                    colors = CheckboxDefaults.colors(
+                                        checkedColor = Lime,
+                                        checkmarkColor = Navy,
+                                        uncheckedColor = TextMuted,
+                                    ),
+                                )
+                                Icon(
+                                    imageVector = option.icon,
+                                    contentDescription = null,
+                                    tint = TextPrimary,
+                                    modifier = Modifier
+                                        .padding(top = 8.dp)
+                                        .size(22.dp),
+                                )
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = option.label,
+                                        color = TextPrimary,
+                                        fontWeight = FontWeight.SemiBold,
+                                    )
+                                    Text(
+                                        text = option.description,
+                                        color = TextMuted,
+                                        fontSize = 13.sp,
+                                        modifier = Modifier.padding(top = 4.dp),
+                                    )
+                                }
+                            }
+                        }
+
                         if (!state.error.isNullOrBlank()) {
-                            Text(text = state.error ?: "", color = Danger)
+                            Text(
+                                text = state.error ?: "",
+                                color = Danger,
+                                modifier = Modifier.liveStatus(),
+                            )
                         }
                         if (!state.savedMessage.isNullOrBlank()) {
-                            Text(text = state.savedMessage ?: "", color = Lime)
+                            Text(
+                                text = state.savedMessage ?: "",
+                                color = Lime,
+                                modifier = Modifier.liveStatus(),
+                            )
                         }
 
                         Button(
@@ -192,10 +304,182 @@ fun ProfileScreen(
         VendorBottomBar(
             selected = VendorTab.Profile,
             onQueue = onOpenQueue,
+            onBranches = onOpenBranches,
+            onServices = onOpenServices,
             onProfile = {},
             onSignOut = onSignOut,
         )
     }
+
+    val picker = timePickerTarget
+    if (picker != null) {
+        val current = state.schedule.find { it.day == picker.day }
+        val initial = if (picker.field == "start") {
+            current?.start ?: "08:00"
+        } else {
+            current?.end ?: "18:00"
+        }
+        TimePickerDialog(
+            initial = initial,
+            title = if (picker.field == "start") "Start time" else "End time",
+            onDismiss = { timePickerTarget = null },
+            onConfirm = { value ->
+                if (picker.field == "start") {
+                    viewModel.onDayStartChange(picker.day, value)
+                } else {
+                    viewModel.onDayEndChange(picker.day, value)
+                }
+                timePickerTarget = null
+            },
+        )
+    }
+}
+
+@Composable
+private fun DayHoursRow(
+    day: DayHours,
+    onOpenChange: (Boolean) -> Unit,
+    onPickStart: () -> Unit,
+    onPickEnd: () -> Unit,
+) {
+    val label = OperatingHours.weekDays.find { it.key == day.day }?.label ?: day.day
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(SurfaceCard, RoundedCornerShape(14.dp))
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                Text(text = label, color = TextPrimary, fontWeight = FontWeight.SemiBold)
+                Text(
+                    text = if (day.open) "Open" else "Closed",
+                    color = if (day.open) Lime else TextMuted,
+                    fontSize = 13.sp,
+                )
+            }
+            Button(
+                onClick = { onOpenChange(!day.open) },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (day.open) Lime else Navy.copy(alpha = 0.35f),
+                    contentColor = if (day.open) Navy else TextMuted,
+                ),
+                shape = RoundedCornerShape(999.dp),
+                modifier = Modifier
+                    .height(36.dp)
+                    .semantics {
+                        role = Role.Switch
+                        contentDescription = "$label ${if (day.open) "Open" else "Closed"}"
+                        stateDescription = if (day.open) "Open" else "Closed"
+                    },
+            ) {
+                Text(
+                    text = if (day.open) "Open" else "Closed",
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 13.sp,
+                )
+            }
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            TimeChip(
+                label = "Start",
+                value = day.start,
+                enabled = day.open,
+                onClick = onPickStart,
+                modifier = Modifier.weight(1f),
+            )
+            Text(text = "to", color = TextMuted)
+            TimeChip(
+                label = "End",
+                value = day.end,
+                enabled = day.open,
+                onClick = onPickEnd,
+                modifier = Modifier.weight(1f),
+            )
+        }
+    }
+}
+
+@Composable
+private fun TimeChip(
+    label: String,
+    value: String,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .background(
+                if (enabled) Navy.copy(alpha = 0.35f) else Navy.copy(alpha = 0.15f),
+                RoundedCornerShape(10.dp),
+            )
+            .clickable(enabled = enabled, onClick = onClick)
+            .semantics(mergeDescendants = true) {
+                role = Role.Button
+                contentDescription = "$label ${OperatingHours.formatDisplay(value)}"
+                if (!enabled) stateDescription = "Disabled"
+            }
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+    ) {
+        Text(text = label, color = TextMuted, fontSize = 12.sp)
+        Text(
+            text = OperatingHours.formatDisplay(value),
+            color = if (enabled) TextPrimary else TextMuted,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(top = 2.dp),
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun TimePickerDialog(
+    initial: String,
+    title: String,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit,
+) {
+    val normalized = OperatingHours.normalizeTime(initial)
+    val hour = normalized.substring(0, 2).toInt()
+    val minute = normalized.substring(3).toInt()
+    val pickerState = rememberTimePickerState(
+        initialHour = hour,
+        initialMinute = minute,
+        is24Hour = false,
+    )
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            TimePicker(state = pickerState)
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    val value = "%02d:%02d".format(pickerState.hour, pickerState.minute)
+                    onConfirm(value)
+                },
+            ) {
+                Text("Set")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        },
+    )
 }
 
 @Composable

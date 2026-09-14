@@ -23,6 +23,10 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -35,6 +39,7 @@ import tech.thewolfgang.queueless.vendor.ui.components.TopBar
 import tech.thewolfgang.queueless.vendor.ui.components.VendorBottomBar
 import tech.thewolfgang.queueless.vendor.ui.components.VendorTab
 import tech.thewolfgang.queueless.vendor.ui.components.formatWaitMinutes
+import tech.thewolfgang.queueless.vendor.ui.components.liveStatus
 import tech.thewolfgang.queueless.vendor.ui.theme.Danger
 import tech.thewolfgang.queueless.vendor.ui.theme.Lime
 import tech.thewolfgang.queueless.vendor.ui.theme.Navy
@@ -46,6 +51,8 @@ import tech.thewolfgang.queueless.vendor.ui.theme.TextPrimary
 fun QueueScreen(
     viewModel: QueueViewModel,
     onBack: () -> Unit,
+    onOpenBranches: () -> Unit,
+    onOpenServices: () -> Unit,
     onOpenProfile: () -> Unit,
     onSignOut: () -> Unit,
     onUnauthorized: () -> Unit,
@@ -96,13 +103,20 @@ fun QueueScreen(
                         verticalArrangement = Arrangement.Center,
                         horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
-                        CircularProgressIndicator(color = Lime)
+                        CircularProgressIndicator(
+                            color = Lime,
+                            modifier = Modifier.semantics { contentDescription = "Loading queue" },
+                        )
                         Text("Loading queue…", color = TextMuted, modifier = Modifier.padding(top = 12.dp))
                     }
                 }
 
                 state.data == null && !state.error.isNullOrBlank() -> {
-                    Text(text = state.error ?: "", color = Danger)
+                    Text(
+                        text = state.error ?: "",
+                        color = Danger,
+                        modifier = Modifier.liveStatus(),
+                    )
                 }
 
                 state.data != null -> {
@@ -154,7 +168,11 @@ fun QueueScreen(
 
                         if (!state.error.isNullOrBlank()) {
                             item {
-                                Text(text = state.error ?: "", color = Danger)
+                                Text(
+                                    text = state.error ?: "",
+                                    color = Danger,
+                                    modifier = Modifier.liveStatus(),
+                                )
                             }
                         }
 
@@ -163,7 +181,9 @@ fun QueueScreen(
                                 Text(
                                     text = "Queue is clear. Waiting for the next customer.",
                                     color = TextMuted,
-                                    modifier = Modifier.padding(vertical = 24.dp),
+                                    modifier = Modifier
+                                        .padding(vertical = 24.dp)
+                                        .liveStatus(),
                                 )
                             }
                         } else {
@@ -186,6 +206,8 @@ fun QueueScreen(
         VendorBottomBar(
             selected = VendorTab.Queue,
             onQueue = {},
+            onBranches = onOpenBranches,
+            onServices = onOpenServices,
             onProfile = onOpenProfile,
             onSignOut = onSignOut,
         )
@@ -197,6 +219,9 @@ private fun StatCard(label: String, value: String, modifier: Modifier = Modifier
     Column(
         modifier = modifier
             .background(SurfaceCard, RoundedCornerShape(12.dp))
+            .semantics(mergeDescendants = true) {
+                contentDescription = "$label: $value"
+            }
             .padding(12.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
@@ -234,18 +259,29 @@ private fun WalkInStepper(
                 onClick = onDecrease,
                 enabled = enabled && count > 0,
                 shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.semantics {
+                    contentDescription = "Decrease walk-ins"
+                },
             ) { Text("−", fontSize = 20.sp) }
             Text(
                 text = "$count",
                 color = TextPrimary,
                 fontWeight = FontWeight.Bold,
                 fontSize = 20.sp,
-                modifier = Modifier.padding(horizontal = 12.dp),
+                modifier = Modifier
+                    .padding(horizontal = 12.dp)
+                    .semantics {
+                        contentDescription = "$count walk-ins"
+                        liveRegion = LiveRegionMode.Polite
+                    },
             )
             OutlinedButton(
                 onClick = onIncrease,
                 enabled = enabled && count < 500,
                 shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.semantics {
+                    contentDescription = "Increase walk-ins"
+                },
             ) { Text("+", fontSize = 20.sp) }
         }
     }
@@ -259,6 +295,8 @@ private fun QueueCard(
     onServe: () -> Unit,
     onNoShow: () -> Unit,
 ) {
+    val name = entry.customerFirstName ?: "Customer"
+    val partyLabel = if (entry.partySize > 1) ", party of ${entry.partySize}" else ""
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -266,6 +304,14 @@ private fun QueueCard(
                 if (isNow) SurfaceCard.copy(alpha = 1f) else SurfaceCard.copy(alpha = 0.7f),
                 RoundedCornerShape(14.dp),
             )
+            .semantics(mergeDescendants = true) {
+                contentDescription = buildString {
+                    append(name)
+                    append(partyLabel)
+                    append(if (isNow) ", now serving" else ", position ${entry.position}")
+                    append(", estimated wait ${formatWaitMinutes(entry.estimatedWaitMinutes)}")
+                }
+            }
             .padding(16.dp),
     ) {
         Row(
@@ -279,7 +325,10 @@ private fun QueueCard(
                     fontWeight = FontWeight.Medium,
                 )
                 Text(
-                    text = entry.customerFirstName ?: "Customer",
+                    text = buildString {
+                        append(name)
+                        if (entry.partySize > 1) append(" +${entry.partySize - 1}")
+                    },
                     color = TextPrimary,
                     fontSize = 20.sp,
                     fontWeight = FontWeight.SemiBold,
@@ -290,6 +339,20 @@ private fun QueueCard(
                     color = TextMuted,
                     modifier = Modifier.padding(top = 2.dp),
                 )
+                if (entry.partySize > 1 || entry.partyNames.size > 1) {
+                    Text(
+                        text = buildString {
+                            if (entry.partySize > 1) append("Party of ${entry.partySize}")
+                            if (entry.partyNames.isNotEmpty()) {
+                                if (isNotEmpty()) append(" · ")
+                                append(entry.partyNames.joinToString(", "))
+                            }
+                        },
+                        color = TextMuted,
+                        fontSize = 13.sp,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
+                }
             }
             Column(horizontalAlignment = Alignment.End) {
                 Text(
@@ -308,7 +371,8 @@ private fun QueueCard(
                     enabled = !busy,
                     modifier = Modifier
                         .weight(1f)
-                        .height(48.dp),
+                        .height(48.dp)
+                        .semantics { contentDescription = "Serve $name" },
                     colors = ButtonDefaults.buttonColors(
                         containerColor = Lime,
                         contentColor = Navy,
@@ -322,7 +386,8 @@ private fun QueueCard(
                     enabled = !busy,
                     modifier = Modifier
                         .weight(1f)
-                        .height(48.dp),
+                        .height(48.dp)
+                        .semantics { contentDescription = "Mark $name as no-show" },
                     colors = ButtonDefaults.buttonColors(
                         containerColor = Danger,
                         contentColor = TextPrimary,
