@@ -689,7 +689,7 @@ function tabbar(active) {
 
 function appVersion() {
   return (
-    String(window.QUEUELESS_CUSTOMER_APP_VERSION || "1.1.0").trim() || "1.1.0"
+    String(window.QUEUELESS_CUSTOMER_APP_VERSION || "1.2.0").trim() || "1.2.0"
   );
 }
 

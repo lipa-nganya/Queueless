@@ -479,7 +479,7 @@ function formatTrialEndsAt(value) {
 }
 
 function appVersion() {
-  return String(window.QUEUELESS_ADMIN_APP_VERSION || "1.1.0").trim() || "1.1.0";
+  return String(window.QUEUELESS_ADMIN_APP_VERSION || "1.2.0").trim() || "1.2.0";
 }
 
 function appVersionHtml({ onDark = false } = {}) {
