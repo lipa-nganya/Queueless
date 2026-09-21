@@ -47,6 +47,7 @@ class ApiClient(
         .build()
 
     private val mediaType = "application/json; charset=utf-8".toMediaType()
+    private val etagCache = java.util.concurrent.ConcurrentHashMap<String, Pair<String, String>>()
 
     suspend fun phoneStatus(phone: String): PhoneStatusResponse =
         request(
@@ -98,6 +99,30 @@ class ApiClient(
             authenticated = false,
         )
 
+    suspend fun registerPushToken(token: String, deviceLabel: String? = null): PushTokenResponse =
+        request(
+            method = "POST",
+            path = "/vendor/push-tokens",
+            bodyJson = json.encodeToString(
+                PushTokenRequest(token = token, deviceLabel = deviceLabel),
+            ),
+            authenticated = true,
+        )
+
+    suspend fun registerPendingPushToken(
+        phone: String,
+        token: String,
+        deviceLabel: String? = null,
+    ): PushTokenResponse =
+        request(
+            method = "POST",
+            path = "/vendor/push-tokens/pending",
+            bodyJson = json.encodeToString(
+                PushTokenRequest(token = token, phone = phone, deviceLabel = deviceLabel),
+            ),
+            authenticated = false,
+        )
+
     suspend fun getBusinesses(): List<BusinessSummary> =
         request(method = "GET", path = "/vendor/businesses")
 
@@ -132,6 +157,13 @@ class ApiClient(
             method = "PUT",
             path = "/vendor/businesses/$businessId/walk-ins",
             bodyJson = json.encodeToString(WalkInsRequest(queueSize = queueSize)),
+        )
+
+    suspend fun setQueuePaused(businessId: Int, paused: Boolean): QueuePauseResponse =
+        request(
+            method = "PUT",
+            path = "/vendor/businesses/$businessId/queue-pause",
+            bodyJson = json.encodeToString(QueuePauseRequest(paused = paused)),
         )
 
     suspend fun serve(entryId: Int) {
@@ -193,12 +225,26 @@ class ApiClient(
     suspend fun getBranches(branchId: Int): BranchesResponse =
         request(method = "GET", path = "/vendor/businesses/$branchId/branches")
 
+    suspend fun searchPlaces(query: String): List<PlaceSuggestion> {
+        val encoded = java.net.URLEncoder.encode(query.trim(), Charsets.UTF_8.name())
+        return request(method = "GET", path = "/places/search?q=$encoded")
+    }
+
+    suspend fun reverseGeocode(latitude: Double, longitude: Double): PlaceSuggestion =
+        request(
+            method = "GET",
+            path = "/places/reverse?lat=$latitude&lon=$longitude",
+        )
+
     suspend fun createBranch(
         branchId: Int,
         name: String,
         location: String?,
+        landmark: String?,
         phone: String?,
         isActive: Boolean,
+        latitude: Double? = null,
+        longitude: Double? = null,
     ): BusinessProfile =
         request(
             method = "POST",
@@ -207,7 +253,10 @@ class ApiClient(
                 UpsertBranchRequest(
                     name = name,
                     location = location,
+                    landmark = landmark,
                     phone = phone,
+                    latitude = latitude,
+                    longitude = longitude,
                     isActive = isActive,
                 ),
             ),
@@ -217,8 +266,11 @@ class ApiClient(
         branchId: Int,
         name: String,
         location: String?,
+        landmark: String?,
         phone: String?,
         isActive: Boolean,
+        latitude: Double? = null,
+        longitude: Double? = null,
     ): BusinessProfile =
         request(
             method = "PUT",
@@ -227,7 +279,10 @@ class ApiClient(
                 UpsertBranchRequest(
                     name = name,
                     location = location,
+                    landmark = landmark,
                     phone = phone,
+                    latitude = latitude,
+                    longitude = longitude,
                     isActive = isActive,
                 ),
             ),
@@ -282,14 +337,23 @@ class ApiClient(
                 builder.header("Authorization", "Bearer $token")
             }
         }
+        if (method == "GET") {
+            etagCache[path]?.first?.let { builder.header("If-None-Match", it) }
+        }
 
         client.newCall(builder.build()).execute().use { response ->
+            if (response.code == 304) {
+                val cached = etagCache[path]?.second
+                if (!cached.isNullOrBlank()) return cached
+            }
+
             val text = response.body?.string().orEmpty()
             val errorPayload = runCatching {
                 json.decodeFromString<ErrorResponse>(text)
             }.getOrNull()
             if (response.code == 401 && authenticated) {
                 tokenStore.clear()
+                etagCache.clear()
                 throw ApiException(
                     errorPayload?.error ?: "Session expired. Please sign in again.",
                     401,
@@ -303,7 +367,15 @@ class ApiClient(
                     errorPayload,
                 )
             }
-            return text.ifBlank { "{}" }
+            val body = text.ifBlank { "{}" }
+            if (method == "GET") {
+                response.header("ETag")?.let { etag ->
+                    etagCache[path] = etag to body
+                }
+            } else if (path.contains("/queue")) {
+                etagCache.keys.filter { it.contains("/queue") }.forEach { etagCache.remove(it) }
+            }
+            return body
         }
     }
 }

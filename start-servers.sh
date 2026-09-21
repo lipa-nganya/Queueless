@@ -6,6 +6,7 @@ RUNTIME_DIR="$ROOT/.runtime"
 PID_FILE="$RUNTIME_DIR/servers.pid"
 LOG_DIR="$RUNTIME_DIR/logs"
 
+LANDING_URL="http://localhost:8080/"
 ADMIN_URL="http://localhost:4000/"
 CUSTOMER_URL="http://localhost:3000/"
 VENDOR_URL="http://localhost:3500/"
@@ -52,9 +53,10 @@ open_or_refresh_chrome() {
 
 open_frontends() {
   echo "Opening frontends in Google Chrome..."
-  open_or_refresh_chrome "$ADMIN_URL"
+  open_or_refresh_chrome "$LANDING_URL"
   open_or_refresh_chrome "$CUSTOMER_URL"
   open_or_refresh_chrome "$VENDOR_URL"
+  open_or_refresh_chrome "$ADMIN_URL"
 }
 
 mkdir -p "$RUNTIME_DIR" "$LOG_DIR"
@@ -70,9 +72,10 @@ if [[ -f "$PID_FILE" ]]; then
   done < "$PID_FILE"
   if [[ "$alive" -eq 1 ]]; then
     echo "Servers already appear to be running."
-    echo "  Admin:    $ADMIN_URL"
+    echo "  Landing:  $LANDING_URL"
     echo "  Customer: $CUSTOMER_URL"
     echo "  Vendor:   $VENDOR_URL"
+    echo "  Admin:    $ADMIN_URL"
     open_frontends
     exit 0
   fi
@@ -98,6 +101,11 @@ if [[ ! -d "$ROOT/backend/node_modules" ]]; then
   (cd "$ROOT/backend" && npm install)
 fi
 
+if [[ ! -d "$ROOT/node_modules/express" ]]; then
+  echo "Installing root dependencies (landing)..."
+  (cd "$ROOT" && npm install)
+fi
+
 if [[ ! -d "$ROOT/customer/node_modules" ]]; then
   echo "Installing customer dependencies..."
   (cd "$ROOT/customer" && npm install)
@@ -109,6 +117,13 @@ if [[ ! -d "$ROOT/vendor/node_modules" ]]; then
 fi
 
 : > "$PID_FILE"
+
+echo "Starting landing page on :8080..."
+(
+  cd "$ROOT"
+  nohup node landing-server.js >"$LOG_DIR/landing.log" 2>&1 &
+  echo $! >> "$PID_FILE"
+)
 
 echo "Starting admin + API on :4000..."
 (
@@ -133,7 +148,8 @@ echo "Starting vendor app on :3500..."
 
 # Wait briefly for HTTP readiness
 for _ in $(seq 1 20); do
-  if curl -sf "http://localhost:4000/health" >/dev/null \
+  if curl -sf "http://localhost:8080/" >/dev/null \
+    && curl -sf "http://localhost:4000/health" >/dev/null \
     && curl -sf "http://localhost:3000/" >/dev/null \
     && curl -sf "http://localhost:3500/" >/dev/null; then
     break
@@ -143,9 +159,10 @@ done
 
 echo
 echo "Servers started."
-echo "  Admin:    $ADMIN_URL"
+echo "  Landing:  $LANDING_URL"
 echo "  Customer: $CUSTOMER_URL"
 echo "  Vendor:   $VENDOR_URL"
+echo "  Admin:    $ADMIN_URL"
 echo "  pgAdmin:  http://localhost:5050/"
 
 if [[ "${SKIP_NGROK:-0}" != "1" ]] && command -v ngrok >/dev/null 2>&1; then

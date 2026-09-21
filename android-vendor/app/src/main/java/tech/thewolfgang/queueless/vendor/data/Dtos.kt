@@ -15,6 +15,9 @@ data class PhoneStatusResponse(
     @SerialName("has_pin") val hasPin: Boolean = false,
     @SerialName("needs_otp") val needsOtp: Boolean = false,
     @SerialName("needs_pin_setup") val needsPinSetup: Boolean = false,
+    @SerialName("pending_activation") val pendingActivation: Boolean = false,
+    val activated: Boolean = false,
+    @SerialName("can_register") val canRegister: Boolean = false,
     val username: String? = null,
 )
 
@@ -65,12 +68,30 @@ data class LoginRequest(
 )
 
 @Serializable
-data class LoginResponse(
+data class PushTokenRequest(
     val token: String,
+    val platform: String = "android",
+    val phone: String? = null,
+    @SerialName("device_label") val deviceLabel: String? = null,
+)
+
+@Serializable
+data class PushTokenResponse(
+    val ok: Boolean = false,
+    val id: Int? = null,
+    val pending: Boolean = false,
+    val error: String? = null,
+)
+
+@Serializable
+data class LoginResponse(
+    val token: String? = null,
     val username: String? = null,
     val email: String? = null,
     val phone: String? = null,
     val message: String? = null,
+    @SerialName("pending_activation") val pendingActivation: Boolean = false,
+    val activated: Boolean = false,
 )
 
 @Serializable
@@ -79,7 +100,9 @@ data class ErrorResponse(
     @SerialName("needs_otp") val needsOtp: Boolean = false,
     @SerialName("needs_pin_setup") val needsPinSetup: Boolean = false,
     @SerialName("not_registered") val notRegistered: Boolean = false,
+    @SerialName("pending_activation") val pendingActivation: Boolean = false,
     @SerialName("has_pin") val hasPin: Boolean = false,
+    @SerialName("can_register") val canRegister: Boolean = false,
     val phone: String? = null,
 )
 
@@ -90,6 +113,7 @@ data class BusinessSummary(
     @SerialName("business_id") val businessId: Int? = null,
     @SerialName("business_name") val businessName: String? = null,
     val location: String? = null,
+    val landmark: String? = null,
     val phone: String? = null,
     @SerialName("operating_hours") val operatingHours: String? = null,
     @SerialName("image_url") val imageUrl: String? = null,
@@ -124,6 +148,7 @@ data class BusinessProfile(
     @SerialName("business_id") val businessId: Int? = null,
     @SerialName("business_name") val businessName: String? = null,
     val location: String? = null,
+    val landmark: String? = null,
     val phone: String? = null,
     @SerialName("operating_hours") val operatingHours: String? = null,
     @SerialName("operating_schedule") val operatingSchedule: List<DayHours>? = null,
@@ -148,8 +173,18 @@ data class UpdateBusinessProfileRequest(
 data class UpsertBranchRequest(
     val name: String,
     val location: String? = null,
+    val landmark: String? = null,
     val phone: String? = null,
+    val latitude: Double? = null,
+    val longitude: Double? = null,
     @SerialName("is_active") val isActive: Boolean = true,
+)
+
+@Serializable
+data class PlaceSuggestion(
+    val label: String,
+    val latitude: Double,
+    val longitude: Double,
 )
 
 @Serializable
@@ -173,6 +208,7 @@ data class QueueBusiness(
     @SerialName("business_group_name") val businessGroupName: String? = null,
     @SerialName("waiting_total") val waitingTotal: Int = 0,
     @SerialName("app_waiting") val appWaiting: Int = 0,
+    @SerialName("queue_paused") val queuePaused: Boolean = false,
 )
 
 @Serializable
@@ -197,6 +233,20 @@ data class QueueResponse(
 )
 
 @Serializable
+data class QueuePauseRequest(
+    val paused: Boolean,
+)
+
+@Serializable
+data class QueuePauseResponse(
+    val ok: Boolean = true,
+    val id: Int? = null,
+    val name: String? = null,
+    @SerialName("queue_paused") val queuePaused: Boolean = false,
+    @SerialName("is_active") val isActive: Boolean? = null,
+)
+
+@Serializable
 data class WalkInsRequest(
     @SerialName("queue_size") val queueSize: Int,
 )
@@ -213,6 +263,7 @@ data class WalkInsResponse(
 data class BusinessService(
     val id: Int,
     @SerialName("business_id") val businessId: Int? = null,
+    @SerialName("branch_id") val branchId: Int? = null,
     val name: String,
     @SerialName("duration_minutes") val durationMinutes: Int = 15,
     val description: String? = null,

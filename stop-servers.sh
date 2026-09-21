@@ -25,7 +25,7 @@ stop_pid() {
   fi
 }
 
-echo "Stopping Node servers..."
+echo "Stopping Node servers (landing :8080, customer :3000, vendor :3500, API :4000)..."
 if [[ -f "$PID_FILE" ]]; then
   while read -r pid; do
     stop_pid "$pid"
@@ -34,7 +34,7 @@ if [[ -f "$PID_FILE" ]]; then
 fi
 
 # Fallback: free the app ports even if PID file is missing/stale
-for port in 3000 3500 4000; do
+for port in 8080 3000 3500 4000; do
   if command -v lsof >/dev/null 2>&1; then
     pids="$(lsof -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null || true)"
     if [[ -n "${pids:-}" ]]; then

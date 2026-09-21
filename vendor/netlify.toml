@@ -5,6 +5,19 @@
   publish = "."
   command = "echo Static site - no build"
 
+# Keep the messaging service worker and its config as real files (not SPA fallback).
+[[redirects]]
+  from = "/firebase-messaging-sw.js"
+  to = "/firebase-messaging-sw.js"
+  status = 200
+  force = false
+
+[[redirects]]
+  from = "/firebase-web-config.js"
+  to = "/firebase-web-config.js"
+  status = 200
+  force = false
+
 # The vendor UI is a single-page app routed by hash, so every path serves index.html.
 [[redirects]]
   from = "/*"
@@ -13,6 +26,17 @@
 
 [[headers]]
   for = "/index.html"
+  [headers.values]
+    Cache-Control = "no-cache"
+
+[[headers]]
+  for = "/firebase-messaging-sw.js"
+  [headers.values]
+    Cache-Control = "no-cache"
+    Service-Worker-Allowed = "/"
+
+[[headers]]
+  for = "/firebase-web-config.js"
   [headers.values]
     Cache-Control = "no-cache"
 

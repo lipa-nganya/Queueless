@@ -12,3 +12,8 @@ node_modules/
 # Railway CLI scratch dirs
 .railway/
 .railway-config-pull-*/
+
+# Firebase / FCM secrets (never commit)
+backend/secrets/
+android-vendor/app/google-services.json
+firebase-debug.log

@@ -77,3 +77,30 @@ Postgres is also exposed on the host at `localhost:5434` (mapped away from the l
 - After OTP verification, customers log in with **phone + PIN**
 
 Advanta credentials are stored in `backend/.env` for when you switch `OTP_MODE=sms`.
+
+### Vendor push (FCM)
+
+Vendor activation, trial, and queue alerts prefer **device push** (Android + vendor web) instead of SMS (OTP still uses SMS).
+
+In `backend/.env`:
+
+```bash
+# Service account JSON from Firebase Console → Project settings → Service accounts
+FIREBASE_SERVICE_ACCOUNT_PATH=/absolute/path/to/firebase-adminsdk.json
+# Or inline:
+# FIREBASE_SERVICE_ACCOUNT_JSON={"type":"service_account",...}
+
+# Vendor web (browser) FCM — Firebase Console → Project settings → Your apps → Web + VAPID key
+# FIREBASE_WEB_CONFIG_JSON={"apiKey":"...","authDomain":"...","projectId":"...","messagingSenderId":"...","appId":"...","vapidKey":"..."}
+# Or individual FIREBASE_WEB_API_KEY / FIREBASE_WEB_PROJECT_ID / FIREBASE_WEB_APP_ID /
+# FIREBASE_WEB_MESSAGING_SENDER_ID / FIREBASE_WEB_VAPID_KEY
+
+# Optional: also SMS/WhatsApp queue alerts to vendor phones when set to 1
+# VENDOR_PUSH_SMS_FALLBACK=0
+```
+
+On Android, add `android-vendor/app/google-services.json` (see that folder’s README).
+Vendor web registers after sign-in (custom in-app toasts when the tab is open; system notifications in the background).
+CLI helpers:
+- `source ./scripts/use-queueless-firebase.sh` — point `firebase` + `gcloud` at `queueless-kenya`
+- `./scripts/setup-firebase-push.sh` — apps, Admin SDK key, web client env keys

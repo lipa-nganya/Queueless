@@ -10,6 +10,7 @@ import {
   vendorLogin,
   vendorLoginWithPin,
   requireAdmin,
+  requireAdminOrVendor,
   requireCustomer,
   requireVendor,
   signCustomerToken,
@@ -39,12 +40,22 @@ import {
   whatsappProviderConfigured,
 } from "./settings.js";
 import {
+  buildQueueJoinMessage,
+  buildQueueLeaveMessage,
   notifyQueueEvent,
   normalizeWhatsAppPhone,
   sendWhatsAppText,
   sendWhatsAppTemplate,
   whatsappConfigured,
 } from "./whatsapp.js";
+import {
+  deleteVendorPushToken,
+  getFirebaseWebClientConfig,
+  notifyVendorsPushByIds,
+  notifyVendorsPushByPhones,
+  pushConfigured,
+  upsertVendorPushToken,
+} from "./push.js";
 import {
   enrichHoursFields,
   resolveOperatingHoursFromBody,
@@ -56,6 +67,14 @@ import {
   mergeAccessibilityOptionLists,
   resolveAccessibilityOptionsFromBody,
 } from "./accessibilityOptions.js";
+import {
+  getCachedPlacesReverse,
+  getCachedPlacesSearch,
+  reverseCacheKey,
+  sendJsonEtag,
+  setCachedPlacesReverse,
+  setCachedPlacesSearch,
+} from "./httpCache.js";
 
 function enrichBranchFields(row) {
   return enrichAccessibilityFields(enrichHoursFields(row));
@@ -81,6 +100,10 @@ async function searchPlacesKenya(q, { limit = 8 } = {}) {
   const queryText = String(q || "").trim();
   if (queryText.length < 2) return [];
 
+  const cacheKey = `${queryText.toLowerCase()}|${limit}`;
+  const cached = getCachedPlacesSearch(cacheKey);
+  if (cached) return cached;
+
   const url = new URL("https://photon.komoot.io/api/");
   url.searchParams.set("q", queryText);
   url.searchParams.set("limit", String(Math.min(12, Math.max(1, limit))));
@@ -102,7 +125,7 @@ async function searchPlacesKenya(q, { limit = 8 } = {}) {
 
   const payload = await response.json().catch(() => ({}));
   const features = Array.isArray(payload.features) ? payload.features : [];
-  return features
+  const places = features
     .filter((feature) => {
       const code = String(feature?.properties?.countrycode || "").toLowerCase();
       return !code || code === "ke";
@@ -122,6 +145,56 @@ async function searchPlacesKenya(q, { limit = 8 } = {}) {
         Number.isFinite(place.latitude) &&
         Number.isFinite(place.longitude)
     );
+
+  setCachedPlacesSearch(cacheKey, places);
+  return places;
+}
+
+async function reverseGeocodeKenya(lat, lon) {
+  const latitude = parseCoord(lat, -90, 90);
+  const longitude = parseCoord(lon, -180, 180);
+  if (latitude == null || longitude == null) return null;
+
+  const cacheKey = reverseCacheKey(latitude, longitude);
+  const cached = getCachedPlacesReverse(cacheKey);
+  if (cached) return cached;
+
+  const url = new URL("https://photon.komoot.io/reverse");
+  url.searchParams.set("lat", String(latitude));
+  url.searchParams.set("lon", String(longitude));
+  url.searchParams.set("lang", "en");
+
+  const response = await fetch(url, {
+    headers: {
+      Accept: "application/json",
+      "User-Agent": "QueuelessKenya/1.0 (Kenya reverse geocode)",
+    },
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!response.ok) {
+    throw new Error("Reverse geocode is temporarily unavailable.");
+  }
+
+  const payload = await response.json().catch(() => ({}));
+  const feature = Array.isArray(payload.features) ? payload.features[0] : null;
+  let place;
+  if (!feature) {
+    place = {
+      label: `Near ${latitude.toFixed(5)}, ${longitude.toFixed(5)}`,
+      latitude,
+      longitude,
+    };
+  } else {
+    const [featureLon, featureLat] = feature.geometry?.coordinates || [];
+    place = {
+      label: placeLabel(feature.properties),
+      latitude: Number.isFinite(Number(featureLat)) ? Number(featureLat) : latitude,
+      longitude: Number.isFinite(Number(featureLon)) ? Number(featureLon) : longitude,
+    };
+  }
+
+  setCachedPlacesReverse(cacheKey, place);
+  return place;
 }
 
 async function resolveBusinessCoords(row) {
@@ -1021,7 +1094,6 @@ router.get("/businesses", requireAdmin, async (_req, res) => {
         b.location,
         b.latitude,
         b.longitude,
-        b.phone,
         b.operating_hours,
         b.image_url,
         b.is_active,
@@ -1034,7 +1106,7 @@ router.get("/businesses", requireAdmin, async (_req, res) => {
     `);
     const branches = await query(`
       SELECT
-        id, business_id, name, location, latitude, longitude, phone,
+        id, business_id, name, location, landmark, latitude, longitude, phone,
         operating_hours, accessibility_options, queue_size, avg_wait_minutes,
         is_active, created_at
       FROM business_branches
@@ -1042,7 +1114,7 @@ router.get("/businesses", requireAdmin, async (_req, res) => {
     `);
     const services = await query(`
       SELECT
-        id, business_id, name, duration_minutes, description, is_active, created_at
+        id, business_id, branch_id, name, duration_minutes, description, is_active, created_at
       FROM business_services
       ORDER BY name ASC, id ASC
     `);
@@ -1052,18 +1124,28 @@ router.get("/businesses", requireAdmin, async (_req, res) => {
       list.push(enrichBranchFields(branch));
       byBusiness.set(branch.business_id, list);
     }
+    const servicesByBranch = new Map();
     const servicesByBusiness = new Map();
     for (const service of services.rows) {
-      const list = servicesByBusiness.get(service.business_id) || [];
-      list.push(service);
-      servicesByBusiness.set(service.business_id, list);
+      const branchList = servicesByBranch.get(service.branch_id) || [];
+      branchList.push(service);
+      servicesByBranch.set(service.branch_id, branchList);
+      const bizList = servicesByBusiness.get(service.business_id) || [];
+      bizList.push(service);
+      servicesByBusiness.set(service.business_id, bizList);
     }
     return res.json(
-      result.rows.map((row) => ({
-        ...row,
-        branches: byBusiness.get(row.id) || [],
-        services: servicesByBusiness.get(row.id) || [],
-      }))
+      result.rows.map((row) => {
+        const branchRows = (byBusiness.get(row.id) || []).map((branch) => ({
+          ...branch,
+          services: servicesByBranch.get(branch.id) || [],
+        }));
+        return {
+          ...row,
+          branches: branchRows,
+          services: servicesByBusiness.get(row.id) || [],
+        };
+      })
     );
   } catch (error) {
     console.error("List businesses failed:", error);
@@ -1072,8 +1154,8 @@ router.get("/businesses", requireAdmin, async (_req, res) => {
 });
 
 // Kenya-only place search via Photon (OSM). Proxied so we can set a proper
-// User-Agent and keep autocomplete credentials/keys out of the admin UI later.
-router.get("/places/search", requireAdmin, async (req, res) => {
+// User-Agent and keep autocomplete credentials/keys out of the client UIs.
+router.get("/places/search", requireAdminOrVendor, async (req, res) => {
   try {
     const q = String(req.query.q || "").trim();
     if (q.length < 2) return res.json([]);
@@ -1083,6 +1165,19 @@ router.get("/places/search", requireAdmin, async (req, res) => {
   } catch (error) {
     console.error("Place search failed:", error);
     return res.status(502).json({ error: "Could not search places." });
+  }
+});
+
+router.get("/places/reverse", requireAdminOrVendor, async (req, res) => {
+  try {
+    const place = await reverseGeocodeKenya(req.query.lat, req.query.lon);
+    if (!place) {
+      return res.status(400).json({ error: "Provide valid latitude and longitude." });
+    }
+    return res.json(place);
+  } catch (error) {
+    console.error("Reverse geocode failed:", error);
+    return res.status(502).json({ error: "Could not resolve current location." });
   }
 });
 
@@ -1190,6 +1285,7 @@ router.post("/businesses/:id/branches", requireAdmin, async (req, res) => {
     const branch = await createBusinessBranch(businessId, {
       name: payload.name,
       location: payload.location,
+      landmark: payload.landmark,
       latitude,
       longitude,
       phone: payload.phone,
@@ -1237,18 +1333,20 @@ router.put("/businesses/:id/branches/:branchId", requireAdmin, async (req, res) 
         UPDATE business_branches
         SET name = $1,
             location = $2,
-            phone = $3,
-            operating_hours = $4,
-            latitude = $5,
-            longitude = $6,
-            accessibility_options = COALESCE($7, accessibility_options)
+            landmark = $3,
+            phone = $4,
+            operating_hours = $5,
+            latitude = $6,
+            longitude = $7,
+            accessibility_options = COALESCE($8, accessibility_options)
             ${payload.hasActive ? `, is_active = ${payload.isActive ? "true" : "false"}` : ""}
-        WHERE id = $8 AND business_id = $9
+        WHERE id = $9 AND business_id = $10
         RETURNING *
       `,
       [
         payload.name,
         payload.location,
+        payload.landmark,
         payload.phone,
         payload.operatingHours,
         latitude,
@@ -1312,6 +1410,215 @@ function parseServicePayload(body = {}) {
   return { name, description, durationMinutes, hasActive, isActive };
 }
 
+/** Average active service period for a branch (minutes), or null if none. */
+async function averageServiceDurationForBranch(branchId) {
+  const result = await query(
+    `
+      SELECT ROUND(AVG(duration_minutes))::int AS avg_duration
+      FROM business_services
+      WHERE branch_id = $1 AND is_active = true
+    `,
+    [branchId]
+  );
+  const avg = Number(result.rows[0]?.avg_duration);
+  return Number.isInteger(avg) && avg > 0 ? avg : null;
+}
+
+/** Keep a branch's avg_wait_minutes in sync with its service periods. */
+async function syncBranchWaitFromServices(branchId) {
+  const avg = await averageServiceDurationForBranch(branchId);
+  if (!avg) return null;
+  const updated = await query(
+    `
+      UPDATE business_branches
+      SET avg_wait_minutes = $1
+      WHERE id = $2
+      RETURNING business_id
+    `,
+    [avg, branchId]
+  );
+  const businessId = updated.rows[0]?.business_id;
+  if (businessId) {
+    await query(
+      `
+        UPDATE businesses
+        SET avg_wait_minutes = COALESCE((
+          SELECT ROUND(AVG(avg_wait_minutes))::int
+          FROM business_branches
+          WHERE business_id = $1
+        ), avg_wait_minutes)
+        WHERE id = $1
+      `,
+      [businessId]
+    );
+  }
+  return avg;
+}
+
+/** @deprecated use syncBranchWaitFromServices */
+async function syncBusinessWaitFromServices(businessId) {
+  const branches = await query(
+    `SELECT id FROM business_branches WHERE business_id = $1`,
+    [businessId]
+  );
+  for (const row of branches.rows) {
+    await syncBranchWaitFromServices(row.id);
+  }
+  return averageServiceDurationForBranch(branches.rows[0]?.id);
+}
+
+async function listActiveServicesForBranch(branchId) {
+  const result = await query(
+    `
+      SELECT id, business_id, branch_id, name, duration_minutes, description, is_active
+      FROM business_services
+      WHERE branch_id = $1 AND is_active = true
+      ORDER BY duration_minutes ASC, name ASC
+    `,
+    [branchId]
+  );
+  return result.rows;
+}
+
+function summarizeServices(services = []) {
+  if (!services.length) {
+    return {
+      services: [],
+      avg_wait_minutes: null,
+      service_duration_min: null,
+      service_duration_max: null,
+    };
+  }
+  const durations = services.map((s) => Number(s.duration_minutes) || 0);
+  return {
+    services,
+    avg_wait_minutes: Math.round(
+      durations.reduce((sum, value) => sum + value, 0) / durations.length
+    ),
+    service_duration_min: Math.min(...durations),
+    service_duration_max: Math.max(...durations),
+  };
+}
+
+/** Attach active services onto each branch, and roll up onto the business row. */
+async function attachBranchServices(rows) {
+  if (!rows?.length) return rows || [];
+  const branchIds = [
+    ...new Set(
+      rows.flatMap((row) =>
+        (Array.isArray(row.branches) ? row.branches : [])
+          .map((branch) => Number(branch.id))
+          .filter((id) => id > 0)
+      )
+    ),
+  ];
+  if (!branchIds.length) {
+    return rows.map((row) => ({
+      ...row,
+      services: [],
+      service_duration_min: null,
+      service_duration_max: null,
+    }));
+  }
+
+  const result = await query(
+    `
+      SELECT id, business_id, branch_id, name, duration_minutes, description, is_active
+      FROM business_services
+      WHERE branch_id = ANY($1::int[]) AND is_active = true
+      ORDER BY duration_minutes ASC, name ASC
+    `,
+    [branchIds]
+  );
+  const byBranch = new Map();
+  for (const service of result.rows) {
+    const list = byBranch.get(service.branch_id) || [];
+    list.push(service);
+    byBranch.set(service.branch_id, list);
+  }
+
+  return rows.map((row) => {
+    const branches = (Array.isArray(row.branches) ? row.branches : []).map((branch) => {
+      const summary = summarizeServices(byBranch.get(branch.id) || []);
+      return {
+        ...branch,
+        ...summary,
+        avg_wait_minutes: summary.avg_wait_minutes || branch.avg_wait_minutes,
+      };
+    });
+    const allServices = branches.flatMap((branch) => branch.services || []);
+    const rolled = summarizeServices(allServices);
+    // Join/default catalog: first (primary) branch — customer join uses default branch.
+    const primary = branches[0];
+    const primarySummary = summarizeServices(primary?.services || []);
+    return {
+      ...row,
+      branches,
+      services: primary?.services || [],
+      avg_wait_minutes:
+        primarySummary.avg_wait_minutes ||
+        rolled.avg_wait_minutes ||
+        row.avg_wait_minutes,
+      service_duration_min:
+        primarySummary.service_duration_min ?? rolled.service_duration_min,
+      service_duration_max:
+        primarySummary.service_duration_max ?? rolled.service_duration_max,
+    };
+  });
+}
+
+/** Resolve which service a customer is joining for at a branch. */
+async function resolveJoinService(branchId, requestedServiceId) {
+  const services = await listActiveServicesForBranch(branchId);
+  if (!services.length) {
+    return { serviceId: null, service: null, services };
+  }
+  const requested = Number(requestedServiceId);
+  if (Number.isInteger(requested) && requested > 0) {
+    const found = services.find((service) => service.id === requested);
+    if (!found) {
+      const err = new Error("That service is not available at this branch.");
+      err.status = 404;
+      throw err;
+    }
+    return { serviceId: found.id, service: found, services };
+  }
+  if (services.length === 1) {
+    return { serviceId: services[0].id, service: services[0], services };
+  }
+  const err = new Error("Choose a service before joining the queue.");
+  err.status = 400;
+  err.needs_service = true;
+  err.services = services;
+  throw err;
+}
+
+const BRANCH_SERVICE_AVG_SQL = `
+  COALESCE(
+    (
+      SELECT ROUND(AVG(s.duration_minutes))::int
+      FROM business_services s
+      WHERE s.branch_id = br.id AND s.is_active = true
+    ),
+    br.avg_wait_minutes,
+    b.avg_wait_minutes,
+    15
+  )
+`;
+
+const SERVICE_AVG_SQL = `
+  COALESCE(
+    (
+      SELECT ROUND(AVG(s.duration_minutes))::int
+      FROM business_services s
+      INNER JOIN business_branches br ON br.id = s.branch_id
+      WHERE br.business_id = b.id AND s.is_active = true
+    ),
+    b.avg_wait_minutes,
+    15
+  )
+`;
+
 router.get("/businesses/:id/services", requireAdmin, async (req, res) => {
   try {
     const businessId = Number(req.params.id);
@@ -1320,14 +1627,22 @@ router.get("/businesses/:id/services", requireAdmin, async (req, res) => {
     }
     const business = await query("SELECT id FROM businesses WHERE id = $1", [businessId]);
     if (!business.rows[0]) return res.status(404).json({ error: "Business not found." });
+
+    const branchId = Number(req.query.branch_id);
+    const params = [businessId];
+    let where = "business_id = $1";
+    if (Number.isInteger(branchId) && branchId > 0) {
+      params.push(branchId);
+      where += ` AND branch_id = $${params.length}`;
+    }
     const result = await query(
       `
-        SELECT id, business_id, name, duration_minutes, description, is_active, created_at
+        SELECT id, business_id, branch_id, name, duration_minutes, description, is_active, created_at
         FROM business_services
-        WHERE business_id = $1
+        WHERE ${where}
         ORDER BY name ASC, id ASC
       `,
-      [businessId]
+      params
     );
     return res.json(result.rows);
   } catch (error) {
@@ -1345,6 +1660,19 @@ router.post("/businesses/:id/services", requireAdmin, async (req, res) => {
     const business = await query("SELECT id FROM businesses WHERE id = $1", [businessId]);
     if (!business.rows[0]) return res.status(404).json({ error: "Business not found." });
 
+    let branchId = Number(req.body?.branch_id);
+    if (!Number.isInteger(branchId) || branchId < 1) {
+      const fallback = await getDefaultBranchForBusiness(businessId, { activeOnly: false });
+      branchId = fallback?.id || null;
+    } else {
+      const owned = await query(
+        `SELECT id FROM business_branches WHERE id = $1 AND business_id = $2`,
+        [branchId, businessId]
+      );
+      if (!owned.rows[0]) return res.status(404).json({ error: "Branch not found." });
+    }
+    if (!branchId) return res.status(400).json({ error: "Add a branch before creating services." });
+
     const payload = parseServicePayload(req.body);
     if (!payload.name) return res.status(400).json({ error: "Service name is required." });
     if (!Number.isFinite(payload.durationMinutes) || payload.durationMinutes < 1 || payload.durationMinutes > 24 * 60) {
@@ -1353,22 +1681,26 @@ router.post("/businesses/:id/services", requireAdmin, async (req, res) => {
 
     const result = await query(
       `
-        INSERT INTO business_services (business_id, name, duration_minutes, description, is_active)
-        VALUES ($1, $2, $3, $4, $5)
-        RETURNING id, business_id, name, duration_minutes, description, is_active, created_at
+        INSERT INTO business_services (
+          business_id, branch_id, name, duration_minutes, description, is_active
+        )
+        VALUES ($1, $2, $3, $4, $5, $6)
+        RETURNING id, business_id, branch_id, name, duration_minutes, description, is_active, created_at
       `,
       [
         businessId,
+        branchId,
         payload.name,
         Math.round(payload.durationMinutes),
         payload.description,
         payload.hasActive ? Boolean(payload.isActive) : true,
       ]
     );
+    await syncBranchWaitFromServices(branchId);
     return res.status(201).json(result.rows[0]);
   } catch (error) {
     if (error.code === "23505") {
-      return res.status(409).json({ error: "That service name already exists for this business." });
+      return res.status(409).json({ error: "That service name already exists for this branch." });
     }
     console.error("Create service failed:", error);
     return res.status(500).json({ error: "Could not create service." });
@@ -1389,15 +1721,26 @@ router.put("/businesses/:id/services/:serviceId", requireAdmin, async (req, res)
       return res.status(400).json({ error: "Service period must be between 1 and 1440 minutes." });
     }
 
+    let nextBranchId = Number(req.body?.branch_id);
+    if (!Number.isInteger(nextBranchId) || nextBranchId < 1) nextBranchId = null;
+    if (nextBranchId) {
+      const owned = await query(
+        `SELECT id FROM business_branches WHERE id = $1 AND business_id = $2`,
+        [nextBranchId, businessId]
+      );
+      if (!owned.rows[0]) return res.status(404).json({ error: "Branch not found." });
+    }
+
     const result = await query(
       `
         UPDATE business_services
         SET name = $1,
             duration_minutes = $2,
             description = $3
+            ${nextBranchId ? `, branch_id = ${nextBranchId}` : ""}
             ${payload.hasActive ? `, is_active = ${payload.isActive ? "true" : "false"}` : ""}
         WHERE id = $4 AND business_id = $5
-        RETURNING id, business_id, name, duration_minutes, description, is_active, created_at
+        RETURNING id, business_id, branch_id, name, duration_minutes, description, is_active, created_at
       `,
       [
         payload.name,
@@ -1408,10 +1751,11 @@ router.put("/businesses/:id/services/:serviceId", requireAdmin, async (req, res)
       ]
     );
     if (!result.rows[0]) return res.status(404).json({ error: "Service not found." });
+    await syncBranchWaitFromServices(result.rows[0].branch_id);
     return res.json(result.rows[0]);
   } catch (error) {
     if (error.code === "23505") {
-      return res.status(409).json({ error: "That service name already exists for this business." });
+      return res.status(409).json({ error: "That service name already exists for this branch." });
     }
     console.error("Update service failed:", error);
     return res.status(500).json({ error: "Could not update service." });
@@ -1429,11 +1773,12 @@ router.delete("/businesses/:id/services/:serviceId", requireAdmin, async (req, r
       `
         DELETE FROM business_services
         WHERE id = $1 AND business_id = $2
-        RETURNING id
+        RETURNING id, branch_id
       `,
       [serviceId, businessId]
     );
     if (!result.rows[0]) return res.status(404).json({ error: "Service not found." });
+    await syncBranchWaitFromServices(result.rows[0].branch_id);
     return res.json({ ok: true, id: result.rows[0].id });
   } catch (error) {
     console.error("Delete service failed:", error);
@@ -1448,7 +1793,7 @@ router.get("/businesses/:id", requireAdmin, async (req, res) => {
       `
         SELECT
           b.id, b.name, b.description, b.location, b.latitude, b.longitude,
-          b.phone, b.operating_hours, b.image_url, b.is_active, b.business_group_id,
+          b.operating_hours, b.image_url, b.is_active, b.business_group_id,
           bg.name AS business_group_name, b.created_at
         FROM businesses b
         INNER JOIN business_groups bg ON bg.id = b.business_group_id
@@ -1471,7 +1816,6 @@ router.put("/businesses/:id", requireAdmin, async (req, res) => {
     const businessGroupId = Number(req.body?.business_group_id);
     const description = String(req.body?.description || "").trim() || null;
     const location = String(req.body?.location || "").trim() || null;
-    const phone = String(req.body?.phone || "").trim() || null;
     const operatingHours = String(req.body?.operating_hours || "").trim() || null;
     let latitude = location ? parseCoord(req.body?.latitude, -90, 90) : null;
     let longitude = location ? parseCoord(req.body?.longitude, -180, 180) : null;
@@ -1496,16 +1840,16 @@ router.put("/businesses/:id", requireAdmin, async (req, res) => {
     const result = await query(
       `
         UPDATE businesses
-        SET name = $1, business_group_id = $2, description = $3, location = $4, phone = $5,
-            operating_hours = $6, latitude = $7, longitude = $8
+        SET name = $1, business_group_id = $2, description = $3, location = $4,
+            operating_hours = $5, latitude = $6, longitude = $7
           ${queueSize != null ? ", queue_size = " + Math.max(0, Math.round(queueSize)) : ""}
           ${avgWait != null ? ", avg_wait_minutes = " + Math.max(1, Math.round(avgWait)) : ""}
           ${hasActive ? ", is_active = " + (isActive ? "true" : "false") : ""}
-        WHERE id = $9
+        WHERE id = $8
         RETURNING id, name, business_group_id, description, location, latitude, longitude,
-          phone, operating_hours, image_url, is_active, queue_size, avg_wait_minutes, created_at
+          operating_hours, image_url, is_active, queue_size, avg_wait_minutes, created_at
       `,
-      [name, businessGroupId, description, location, phone, operatingHours, latitude, longitude, id]
+      [name, businessGroupId, description, location, operatingHours, latitude, longitude, id]
     );
 
     if (!result.rows[0]) return res.status(404).json({ error: "Business not found." });
@@ -1970,34 +2314,112 @@ router.get("/customer/me", requireCustomer, async (req, res) => {
 
 router.get("/customer/contact", requireCustomer, async (_req, res) => {
   try {
-    return res.json({
+    const payload = {
       phone: (await getSetting(CONTACT_PHONE, "")) || "",
       email: (await getSetting(CONTACT_EMAIL, "")) || "",
-    });
+    };
+    res.setHeader("Cache-Control", "private, max-age=300");
+    return res.json(payload);
   } catch (error) {
     console.error("Customer contact failed:", error);
     return res.status(500).json({ error: "Could not load contact details." });
   }
 });
 
+async function listCustomerBusinessGroups() {
+  const result = await query(`
+    SELECT bg.id, bg.name, bg.icon, bg.created_at
+    FROM business_groups bg
+    WHERE EXISTS (
+      SELECT 1
+      FROM businesses b
+      INNER JOIN business_branches br
+        ON br.business_id = b.id AND br.is_active = true
+      WHERE b.business_group_id = bg.id
+        AND b.is_active = true
+    )
+    ORDER BY bg.name ASC
+  `);
+  return result.rows;
+}
+
+const customerBusinessesCache = new Map();
+const CUSTOMER_BUSINESSES_TTL_MS = 20000;
+
+function clearCustomerBusinessesCache() {
+  customerBusinessesCache.clear();
+}
+
+async function listCustomerBusinesses(groupId = null) {
+  const cacheKey = Number.isInteger(groupId) && groupId > 0 ? String(groupId) : "all";
+  const cached = customerBusinessesCache.get(cacheKey);
+  if (cached && Date.now() - cached.at < CUSTOMER_BUSINESSES_TTL_MS) {
+    return cached.rows;
+  }
+
+  const params = [];
+  const clauses = [
+    "b.is_active = true",
+    `EXISTS (
+      SELECT 1 FROM business_branches br
+      WHERE br.business_id = b.id AND br.is_active = true
+    )`,
+  ];
+  if (Number.isInteger(groupId) && groupId > 0) {
+    params.push(groupId);
+    clauses.push(`b.business_group_id = $${params.length}`);
+  }
+  const where = `WHERE ${clauses.join(" AND ")}`;
+
+  const result = await query(
+    `
+      SELECT
+        b.id,
+        b.name,
+        b.location,
+        b.latitude,
+        b.longitude,
+        b.image_url,
+        b.queue_size,
+        ${SERVICE_AVG_SQL} AS avg_wait_minutes,
+        b.business_group_id,
+        bg.name AS business_group_name
+      FROM businesses b
+      INNER JOIN business_groups bg ON bg.id = b.business_group_id
+      ${where}
+      ORDER BY b.name ASC
+    `,
+    params
+  );
+  const rows = result.rows.map((row) => ({
+    ...row,
+    latitude: parseCoord(row.latitude, -90, 90),
+    longitude: parseCoord(row.longitude, -180, 180),
+  }));
+  const withBranches = await attachActiveBranches(rows);
+  const withServices = await attachBranchServices(withBranches);
+  const enriched = await attachBusinessAccessibility(withServices);
+  customerBusinessesCache.set(cacheKey, { at: Date.now(), rows: enriched });
+  if (customerBusinessesCache.size > 20) {
+    const oldest = customerBusinessesCache.keys().next().value;
+    customerBusinessesCache.delete(oldest);
+  }
+  return enriched;
+}
+
+async function listCustomerQueue(customerId) {
+  const result = await query(
+    `${QUEUE_ENTRY_SELECT} WHERE qe.customer_id = $1 AND qe.status = 'waiting' ORDER BY qe.joined_at ASC`,
+    [customerId]
+  );
+  return result.rows.map(decorateQueueEntry);
+}
+
 router.get("/customer/business-groups", requireCustomer, async (_req, res) => {
   try {
-    // Only categories that currently have at least one active business with an
-    // active branch — empty icons clutter discover.
-    const result = await query(`
-      SELECT bg.id, bg.name, bg.icon, bg.created_at
-      FROM business_groups bg
-      WHERE EXISTS (
-        SELECT 1
-        FROM businesses b
-        INNER JOIN business_branches br
-          ON br.business_id = b.id AND br.is_active = true
-        WHERE b.business_group_id = bg.id
-          AND b.is_active = true
-      )
-      ORDER BY bg.name ASC
-    `);
-    return res.json(result.rows);
+    const rows = await listCustomerBusinessGroups();
+    res.setHeader("Cache-Control", "private, max-age=60");
+    return res.json(rows);
   } catch (error) {
     console.error("Customer groups failed:", error);
     return res.status(500).json({ error: "Could not load categories." });
@@ -2007,50 +2429,46 @@ router.get("/customer/business-groups", requireCustomer, async (_req, res) => {
 router.get("/customer/businesses", requireCustomer, async (req, res) => {
   try {
     const groupId = Number(req.query.group_id);
-    const params = [];
-    const clauses = [
-      "b.is_active = true",
-      `EXISTS (
-        SELECT 1 FROM business_branches br
-        WHERE br.business_id = b.id AND br.is_active = true
-      )`,
-    ];
-    if (Number.isInteger(groupId) && groupId > 0) {
-      params.push(groupId);
-      clauses.push(`b.business_group_id = $${params.length}`);
-    }
-    const where = `WHERE ${clauses.join(" AND ")}`;
-
-    const result = await query(
-      `
-        SELECT
-          b.id,
-          b.name,
-          b.location,
-          b.latitude,
-          b.longitude,
-          b.image_url,
-          b.queue_size,
-          b.avg_wait_minutes,
-          b.business_group_id,
-          bg.name AS business_group_name
-        FROM businesses b
-        INNER JOIN business_groups bg ON bg.id = b.business_group_id
-        ${where}
-        ORDER BY b.name ASC
-      `,
-      params
+    const rows = await listCustomerBusinesses(
+      Number.isInteger(groupId) && groupId > 0 ? groupId : null
     );
-    const rows = result.rows.map((row) => ({
-      ...row,
-      latitude: parseCoord(row.latitude, -90, 90),
-      longitude: parseCoord(row.longitude, -180, 180),
-    }));
-    const withBranches = await attachActiveBranches(rows);
-    return res.json(await attachBusinessAccessibility(withBranches));
+    return res.json(rows);
   } catch (error) {
     console.error("Customer businesses failed:", error);
     return res.status(500).json({ error: "Could not load businesses." });
+  }
+});
+
+/** One round-trip for the customer home screen (me + groups + businesses + queue). */
+router.get("/customer/home", requireCustomer, async (req, res) => {
+  try {
+    const customerId = req.customer.sub;
+    const [meResult, groups, businesses, myQueue] = await Promise.all([
+      query(
+        `
+          SELECT id, first_name, phone, phone_verified_at, created_at
+          FROM customers
+          WHERE id = $1
+          LIMIT 1
+        `,
+        [customerId]
+      ),
+      listCustomerBusinessGroups(),
+      listCustomerBusinesses(null),
+      listCustomerQueue(customerId),
+    ]);
+    if (!meResult.rows[0]) {
+      return res.status(404).json({ error: "Customer not found." });
+    }
+    return res.json({
+      me: meResult.rows[0],
+      groups,
+      businesses,
+      my_queue: myQueue,
+    });
+  } catch (error) {
+    console.error("Customer home failed:", error);
+    return res.status(500).json({ error: "Could not load home." });
   }
 });
 
@@ -2066,10 +2484,9 @@ router.get("/customer/businesses/:id", requireCustomer, async (req, res) => {
           b.location,
           b.latitude,
           b.longitude,
-          b.phone,
           b.image_url,
           b.queue_size,
-          b.avg_wait_minutes,
+          ${SERVICE_AVG_SQL} AS avg_wait_minutes,
           b.created_at,
           b.business_group_id,
           bg.name AS business_group_name
@@ -2087,7 +2504,8 @@ router.get("/customer/businesses/:id", requireCustomer, async (req, res) => {
     if (!result.rows[0]) return res.status(404).json({ error: "Business not found." });
     const row = await resolveBusinessCoords(result.rows[0]);
     const [withBranches] = await attachActiveBranches([row]);
-    const [enriched] = await attachBusinessAccessibility([withBranches]);
+    const [withServices] = await attachBranchServices([withBranches]);
+    const [enriched] = await attachBusinessAccessibility([withServices]);
     return res.json(enriched);
   } catch (error) {
     console.error("Customer business detail failed:", error);
@@ -2156,11 +2574,13 @@ async function attachActiveBranches(rows) {
         business_id,
         name,
         location,
+        landmark,
         latitude,
         longitude,
         phone,
         queue_size,
-        avg_wait_minutes
+        avg_wait_minutes,
+        queue_paused
       FROM business_branches
       WHERE business_id = ANY($1::int[])
         AND is_active = true
@@ -2176,17 +2596,23 @@ async function attachActiveBranches(rows) {
       id: row.id,
       name: row.name,
       location: row.location,
+      landmark: row.landmark,
       latitude: parseCoord(row.latitude, -90, 90),
       longitude: parseCoord(row.longitude, -180, 180),
       phone: row.phone,
       queue_size: row.queue_size,
       avg_wait_minutes: row.avg_wait_minutes,
+      queue_paused: Boolean(row.queue_paused),
     });
     byBusiness.set(row.business_id, list);
   }
 
+  // Prefer service-derived averages already on the business row when present.
   return rows.map((row) => {
-    const branches = byBusiness.get(row.id) || [];
+    const branches = (byBusiness.get(row.id) || []).map((branch) => ({
+      ...branch,
+      avg_wait_minutes: row.avg_wait_minutes ?? branch.avg_wait_minutes,
+    }));
     // Prefer primary branch coords when the brand row has none.
     const primary = branches[0];
     const latitude =
@@ -2194,11 +2620,14 @@ async function attachActiveBranches(rows) {
     const longitude =
       parseCoord(row.longitude, -180, 180) ?? primary?.longitude ?? null;
     const location = row.location || primary?.location || null;
+    const queuePaused =
+      branches.length > 0 && branches.every((branch) => Boolean(branch.queue_paused));
     return {
       ...row,
       location,
       latitude,
       longitude,
+      queue_paused: queuePaused,
       branches,
     };
   });
@@ -2211,6 +2640,7 @@ router.get("/accessibility-options", (_req, res) => {
 async function createBusinessBranch(businessId, {
   name = "Main",
   location = null,
+  landmark = null,
   latitude = null,
   longitude = null,
   phone = null,
@@ -2224,16 +2654,17 @@ async function createBusinessBranch(businessId, {
   const result = await query(
     `
       INSERT INTO business_branches (
-        business_id, name, location, latitude, longitude, phone, operating_hours,
+        business_id, name, location, landmark, latitude, longitude, phone, operating_hours,
         accessibility_options, queue_size, avg_wait_minutes, is_active
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
       RETURNING *
     `,
     [
       businessId,
       branchName,
       location,
+      landmark,
       latitude,
       longitude,
       phone,
@@ -2251,7 +2682,7 @@ async function listBranchesForBusiness(businessId) {
   const result = await query(
     `
       SELECT
-        id, business_id, name, location, latitude, longitude, phone,
+        id, business_id, name, location, landmark, latitude, longitude, phone,
         operating_hours, accessibility_options, queue_size, avg_wait_minutes,
         is_active, created_at
       FROM business_branches
@@ -2281,6 +2712,7 @@ async function getDefaultBranchForBusiness(businessId, { activeOnly = true } = {
 function parseBranchPayload(body = {}) {
   const name = String(body?.name || "").trim();
   const location = String(body?.location || "").trim() || null;
+  const landmark = String(body?.landmark || "").trim() || null;
   const phone = String(body?.phone || "").trim() || null;
   const operatingHours = resolveOperatingHoursFromBody(body);
   const accessibilityOptions = resolveAccessibilityOptionsFromBody(body);
@@ -2293,6 +2725,7 @@ function parseBranchPayload(body = {}) {
   return {
     name,
     location,
+    landmark,
     phone,
     operatingHours,
     accessibilityOptions,
@@ -2303,7 +2736,8 @@ function parseBranchPayload(body = {}) {
   };
 }
 
-const BOOKING_WINDOW_HOURS = 24;
+const BOOKING_WINDOW_DAYS = 14;
+const BOOKING_WINDOW_MS = BOOKING_WINDOW_DAYS * 24 * 60 * 60 * 1000;
 
 // Wraps a queue_entries row with the derived position figures the UI needs.
 const MAX_PARTY_SIZE = 10;
@@ -2313,6 +2747,7 @@ const QUEUE_ENTRY_SELECT = `
     qe.id,
     qe.business_id,
     qe.branch_id,
+    qe.service_id,
     qe.joined_at,
     qe.booking_id,
     COALESCE(qe.party_size, 1) AS party_size,
@@ -2321,7 +2756,17 @@ const QUEUE_ENTRY_SELECT = `
     COALESCE(br.name, 'Main') AS branch_name,
     b.image_url,
     COALESCE(br.location, b.location) AS location,
-    COALESCE(br.avg_wait_minutes, b.avg_wait_minutes) AS avg_wait_minutes,
+    svc.name AS service_name,
+    svc.duration_minutes AS service_duration_minutes,
+    COALESCE(
+      (
+        SELECT ROUND(AVG(s.duration_minutes))::int
+        FROM business_services s
+        WHERE s.branch_id = COALESCE(qe.branch_id, br.id) AND s.is_active = true
+      ),
+      COALESCE(br.avg_wait_minutes, b.avg_wait_minutes),
+      15
+    ) AS avg_wait_minutes,
     COALESCE(br.queue_size, b.queue_size, 0) AS walk_in_baseline,
     bg.name AS business_group_name,
     c.first_name AS customer_first_name,
@@ -2337,6 +2782,28 @@ const QUEUE_ENTRY_SELECT = `
         )
     ) AS app_people_ahead,
     (
+      SELECT COALESCE(SUM(
+        COALESCE(ahead.party_size, 1) * COALESCE(
+          ahead_svc.duration_minutes,
+          (
+            SELECT ROUND(AVG(s.duration_minutes))::int
+            FROM business_services s
+            WHERE s.branch_id = COALESCE(qe.branch_id, br.id) AND s.is_active = true
+          ),
+          COALESCE(br.avg_wait_minutes, b.avg_wait_minutes),
+          15
+        )
+      ), 0)::int
+      FROM queue_entries ahead
+      LEFT JOIN business_services ahead_svc ON ahead_svc.id = ahead.service_id
+      WHERE ahead.status = 'waiting'
+        AND ahead.joined_at < qe.joined_at
+        AND (
+          (qe.branch_id IS NOT NULL AND ahead.branch_id = qe.branch_id)
+          OR (qe.branch_id IS NULL AND ahead.business_id = qe.business_id AND ahead.branch_id IS NULL)
+        )
+    ) AS app_wait_ahead_minutes,
+    (
       SELECT COALESCE(SUM(COALESCE(total.party_size, 1)), 0)::int
       FROM queue_entries total
       WHERE total.status = 'waiting'
@@ -2350,6 +2817,7 @@ const QUEUE_ENTRY_SELECT = `
   INNER JOIN business_groups bg ON bg.id = b.business_group_id
   INNER JOIN customers c ON c.id = qe.customer_id
   LEFT JOIN business_branches br ON br.id = qe.branch_id
+  LEFT JOIN business_services svc ON svc.id = qe.service_id
 `;
 
 function normalizePartyNames(value, partySize) {
@@ -2380,6 +2848,12 @@ function decorateQueueEntry(row) {
   const partySize = Math.max(1, Number(row.party_size) || 1);
   const partyNames = normalizePartyNames(row.party_names, partySize);
   const ahead = row.walk_in_baseline + row.app_people_ahead;
+  const minutesPerPerson = Math.max(1, Number(row.avg_wait_minutes) || 15);
+  const walkInWait = (Number(row.walk_in_baseline) || 0) * minutesPerPerson;
+  const appWaitAhead = Number(row.app_wait_ahead_minutes);
+  const estimatedWait = Number.isFinite(appWaitAhead)
+    ? walkInWait + appWaitAhead
+    : ahead * minutesPerPerson;
   return {
     ...row,
     party_size: partySize,
@@ -2387,57 +2861,105 @@ function decorateQueueEntry(row) {
     people_ahead: ahead,
     position: ahead + 1,
     queue_length: row.walk_in_baseline + row.app_queue_length,
-    estimated_wait_minutes: ahead * row.avg_wait_minutes,
+    avg_wait_minutes: minutesPerPerson,
+    estimated_wait_minutes: estimatedWait,
   };
 }
 
-/** Phones that should get join/leave alerts for this business. */
-async function queueAlertRecipients(businessId, businessPhone = null) {
-  const recipients = new Set();
+/**
+ * Queue alert targets: assigned vendors get FCM push; HQ / branch contact
+ * phones still use the Admin Settings WhatsApp/SMS channel.
+ */
+async function queueAlertTargets(businessId, branchPhone = null) {
+  const otherPhones = new Set();
 
-  // Explicit opt-in list (comma-separated) — keep HQ alerts intentional.
   for (const phone of String(process.env.WHATSAPP_NOTIFY_PHONES || "").split(",")) {
     const trimmed = phone.trim();
-    if (trimmed) recipients.add(trimmed);
+    if (trimmed) otherPhones.add(trimmed);
   }
 
-  // Optional: include global contact phone (off by default to cut SMS fan-out).
   if (process.env.QUEUE_ALERT_INCLUDE_CONTACT === "1") {
     const contactPhone = await getSetting(CONTACT_PHONE, "");
-    if (contactPhone) recipients.add(contactPhone);
+    if (contactPhone) otherPhones.add(contactPhone);
   }
 
-  if (businessPhone) recipients.add(businessPhone);
+  if (branchPhone) otherPhones.add(branchPhone);
 
-  // Vendors assigned to this brand — they operate the queue.
   const vendors = await query(
     `
-      SELECT v.phone
+      SELECT v.id, v.phone
       FROM vendors v
       INNER JOIN vendor_businesses vb ON vb.vendor_id = v.id
-      WHERE vb.business_id = $1 AND v.phone IS NOT NULL AND v.phone <> ''
+      WHERE vb.business_id = $1
     `,
     [businessId]
   );
-  for (const row of vendors.rows) recipients.add(row.phone);
+  const vendorIds = vendors.rows.map((row) => row.id).filter(Boolean);
+  const vendorPhones = vendors.rows
+    .map((row) => row.phone)
+    .filter((phone) => phone && String(phone).trim());
 
-  // Cap paid sends per event (vendors + branch phone cover normal ops).
+  // Cap paid legacy sends (HQ / branch). Vendors use push separately.
   const maxRecipients = Math.max(
     1,
     Math.min(10, Number(process.env.QUEUE_ALERT_MAX_RECIPIENTS || 5) || 5)
   );
-  return [...recipients].slice(0, maxRecipients);
+
+  return {
+    vendorIds,
+    vendorPhones,
+    otherPhones: [...otherPhones].slice(0, maxRecipients),
+  };
 }
 
-function fireQueueWhatsApp(action, businessId, businessPhone, details) {
+function fireQueueAlerts(action, businessId, branchPhone, details) {
   void (async () => {
     try {
-      const recipients = await queueAlertRecipients(businessId, businessPhone);
-      await notifyQueueEvent(action, recipients, details);
+      const { vendorIds, vendorPhones, otherPhones } = await queueAlertTargets(
+        businessId,
+        branchPhone
+      );
+      const message =
+        action === "leave"
+          ? buildQueueLeaveMessage(details)
+          : buildQueueJoinMessage(details);
+      const title =
+        action === "leave" ? "Customer left the queue" : "Customer joined the queue";
+
+      if (vendorIds.length) {
+        await notifyVendorsPushByIds({
+          vendorIds,
+          title,
+          body: message,
+          data: {
+            type: action === "leave" ? "queue_leave" : "queue_join",
+            business_id: String(businessId),
+            business_name: details.businessName || "",
+            title,
+            body: message,
+            link: `/#queue-${businessId}`,
+          },
+        });
+      }
+
+      // Optional SMS/WhatsApp fallback for vendors with no registered device.
+      const legacyPhones = [...otherPhones];
+      if (process.env.VENDOR_PUSH_SMS_FALLBACK === "1" && vendorPhones.length) {
+        for (const phone of vendorPhones) legacyPhones.push(phone);
+      }
+
+      if (legacyPhones.length) {
+        await notifyQueueEvent(action, legacyPhones, details);
+      }
     } catch (error) {
-      console.error(`Queue ${action} WhatsApp notify failed:`, error);
+      console.error(`Queue ${action} notify failed:`, error);
     }
   })();
+}
+
+/** @deprecated alias — prefer fireQueueAlerts */
+function fireQueueWhatsApp(action, businessId, branchPhone, details) {
+  fireQueueAlerts(action, businessId, branchPhone, details);
 }
 
 router.post("/customer/businesses/:id/queue", requireCustomer, async (req, res) => {
@@ -2448,7 +2970,7 @@ router.post("/customer/businesses/:id/queue", requireCustomer, async (req, res) 
     }
 
     const business = await query(
-      "SELECT id, name, phone FROM businesses WHERE id = $1 AND is_active = true",
+      "SELECT id, name FROM businesses WHERE id = $1 AND is_active = true",
       [businessId]
     );
     if (!business.rows[0]) return res.status(404).json({ error: "Business not found." });
@@ -2470,6 +2992,13 @@ router.post("/customer/businesses/:id/queue", requireCustomer, async (req, res) 
       if (!branch) return res.status(404).json({ error: "No active branch available." });
     }
 
+    if (branch.queue_paused) {
+      return res.status(409).json({
+        error: "This location is on a short break. Please try again shortly.",
+        queue_paused: true,
+      });
+    }
+
     const existing = await query(
       `
         SELECT id FROM queue_entries
@@ -2487,6 +3016,20 @@ router.post("/customer/businesses/:id/queue", requireCustomer, async (req, res) 
 
     const bookingId = req.body?.booking_id ? Number(req.body.booking_id) : null;
     const { partySize, partyNames } = parsePartyPayload(req.body);
+    let serviceId = null;
+    try {
+      const resolved = await resolveJoinService(branch.id, req.body?.service_id);
+      serviceId = resolved.serviceId;
+    } catch (error) {
+      if (error.status) {
+        return res.status(error.status).json({
+          error: error.message,
+          needs_service: Boolean(error.needs_service),
+          services: error.services || undefined,
+        });
+      }
+      throw error;
+    }
     const namesForStore =
       partyNames.length > 0
         ? partyNames
@@ -2497,9 +3040,9 @@ router.post("/customer/businesses/:id/queue", requireCustomer, async (req, res) 
     const created = await query(
       `
         INSERT INTO queue_entries (
-          business_id, branch_id, customer_id, booking_id, party_size, party_names
+          business_id, branch_id, customer_id, booking_id, party_size, party_names, service_id
         )
-        VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+        VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)
         RETURNING id
       `,
       [
@@ -2509,6 +3052,7 @@ router.post("/customer/businesses/:id/queue", requireCustomer, async (req, res) 
         bookingId,
         partySize,
         JSON.stringify(namesForStore),
+        serviceId,
       ]
     );
 
@@ -2522,7 +3066,7 @@ router.post("/customer/businesses/:id/queue", requireCustomer, async (req, res) 
     const entry = await query(`${QUEUE_ENTRY_SELECT} WHERE qe.id = $1`, [created.rows[0].id]);
     const decorated = decorateQueueEntry(entry.rows[0]);
 
-    fireQueueWhatsApp("join", businessId, branch.phone || business.rows[0].phone, {
+    fireQueueWhatsApp("join", businessId, branch.phone || null, {
       customerName: req.customer.first_name || null,
       customerPhone: req.customer.phone || null,
       businessName: decorated.business_name || business.rows[0].name,
@@ -2540,11 +3084,8 @@ router.post("/customer/businesses/:id/queue", requireCustomer, async (req, res) 
 
 router.get("/customer/queue", requireCustomer, async (req, res) => {
   try {
-    const result = await query(
-      `${QUEUE_ENTRY_SELECT} WHERE qe.customer_id = $1 AND qe.status = 'waiting' ORDER BY qe.joined_at ASC`,
-      [req.customer.sub]
-    );
-    return res.json(result.rows.map(decorateQueueEntry));
+    const entries = await listCustomerQueue(req.customer.sub);
+    return sendJsonEtag(req, res, entries);
   } catch (error) {
     console.error("Load queue failed:", error);
     return res.status(500).json({ error: "Could not load your queue." });
@@ -2560,9 +3101,10 @@ router.post("/customer/queue/:id/leave", requireCustomer, async (req, res) => {
           qe.id,
           qe.business_id,
           b.name AS business_name,
-          b.phone AS business_phone
+          br.phone AS branch_phone
         FROM queue_entries qe
         INNER JOIN businesses b ON b.id = qe.business_id
+        LEFT JOIN business_branches br ON br.id = qe.branch_id
         WHERE qe.id = $1 AND qe.customer_id = $2 AND qe.status = 'waiting'
       `,
       [entryId, req.customer.sub]
@@ -2581,7 +3123,7 @@ router.post("/customer/queue/:id/leave", requireCustomer, async (req, res) => {
     if (!result.rows[0]) return res.status(404).json({ error: "Queue entry not found." });
 
     const row = existing.rows[0];
-    fireQueueWhatsApp("leave", row.business_id, row.business_phone, {
+    fireQueueWhatsApp("leave", row.business_id, row.branch_phone || null, {
       customerName: req.customer.first_name || null,
       customerPhone: req.customer.phone || null,
       businessName: row.business_name,
@@ -2610,9 +3152,9 @@ router.post("/customer/businesses/:id/bookings", requireCustomer, async (req, re
     if (scheduledFor.getTime() <= now) {
       return res.status(400).json({ error: "Pick a time in the future." });
     }
-    if (scheduledFor.getTime() > now + BOOKING_WINDOW_HOURS * 60 * 60 * 1000) {
+    if (scheduledFor.getTime() > now + BOOKING_WINDOW_MS) {
       return res.status(400).json({
-        error: `Bookings can only be made up to ${BOOKING_WINDOW_HOURS} hours in advance.`,
+        error: `Bookings can only be made up to ${BOOKING_WINDOW_DAYS} days in advance.`,
       });
     }
 
@@ -2825,7 +3367,7 @@ router.post("/vendor/phone-status", async (req, res) => {
 
     const result = await query(
       `
-        SELECT id, username, phone, pin_hash, phone_verified_at
+        SELECT id, username, phone, pin_hash, phone_verified_at, activated_at
         FROM vendors
         WHERE phone = $1
         LIMIT 1
@@ -2835,22 +3377,36 @@ router.post("/vendor/phone-status", async (req, res) => {
     const vendor = result.rows[0];
 
     if (!vendor) {
-      // Auto-provision so invited numbers that aren't in DB yet, or self-serve
-      // first open, can complete OTP + PIN. Admin can assign businesses later.
+      // Unknown number can self-sign-up via OTP + PIN, then waits for admin activation.
       return res.json({
         phone,
         registered: false,
         needs_otp: true,
         needs_pin_setup: true,
+        can_register: true,
       });
     }
 
+    const activated = Boolean(vendor.activated_at);
     if (!vendor.pin_hash) {
       return res.json({
         phone,
         registered: true,
         needs_otp: true,
         needs_pin_setup: true,
+        pending_activation: !activated,
+        activated,
+        username: vendor.username,
+      });
+    }
+
+    if (!activated) {
+      return res.json({
+        phone,
+        registered: true,
+        has_pin: true,
+        pending_activation: true,
+        activated: false,
         username: vendor.username,
       });
     }
@@ -2859,6 +3415,8 @@ router.post("/vendor/phone-status", async (req, res) => {
       phone,
       registered: true,
       has_pin: true,
+      pending_activation: false,
+      activated: true,
       username: vendor.username,
     });
   } catch (error) {
@@ -2899,7 +3457,7 @@ router.post("/vendor/request-otp", async (req, res) => {
       const created = await query(
         `
           INSERT INTO vendors (username, phone, password_hash, activated_at)
-          VALUES ($1, $2, NULL, NOW())
+          VALUES ($1, $2, NULL, NULL)
           RETURNING id, username, phone, pin_hash, otp_expires_at, otp_resend_count, otp_last_sent_at
         `,
         [username, phone]
@@ -3174,17 +3732,30 @@ router.post("/vendor/set-pin", async (req, res) => {
             otp_code = NULL,
             otp_expires_at = NULL,
             otp_resend_count = 0,
-            otp_last_sent_at = NULL,
-            activated_at = COALESCE(activated_at, NOW())
+            otp_last_sent_at = NULL
         WHERE id = $2
-        RETURNING id, username, email, phone
+        RETURNING id, username, email, phone, activated_at
       `,
       [pinHash, vendor.id]
     );
 
     const sessionVendor = updated.rows[0];
+    if (!sessionVendor.activated_at) {
+      return res.json({
+        pending_activation: true,
+        activated: false,
+        username: sessionVendor.username,
+        email: sessionVendor.email,
+        phone: sessionVendor.phone,
+        message:
+          "PIN saved. Your account is waiting for admin activation. We'll notify you on this device when it's ready.",
+      });
+    }
+
     return res.json({
       token: signVendorToken(sessionVendor),
+      pending_activation: false,
+      activated: true,
       username: sessionVendor.username,
       email: sessionVendor.email,
       phone: sessionVendor.phone,
@@ -3208,7 +3779,7 @@ router.post("/vendor/login", async (req, res) => {
       }
 
       const existing = await query(
-        `SELECT id, pin_hash FROM vendors WHERE phone = $1 LIMIT 1`,
+        `SELECT id, pin_hash, activated_at FROM vendors WHERE phone = $1 LIMIT 1`,
         [phone]
       );
       if (!existing.rows[0]) {
@@ -3216,6 +3787,7 @@ router.post("/vendor/login", async (req, res) => {
           error: "That number isn't registered as a vendor yet.",
           not_registered: true,
           needs_otp: true,
+          can_register: true,
           phone,
         });
       }
@@ -3224,6 +3796,14 @@ router.post("/vendor/login", async (req, res) => {
           error: "Set up your PIN first. We'll text you a code.",
           needs_otp: true,
           needs_pin_setup: true,
+          phone,
+        });
+      }
+      if (!existing.rows[0].activated_at) {
+        return res.status(403).json({
+          error:
+            "Your account is waiting for admin activation. We'll notify you on this device when it's ready.",
+          pending_activation: true,
           phone,
         });
       }
@@ -3269,6 +3849,114 @@ router.get("/vendor/me", requireVendor, async (req, res) => {
   }
 });
 
+/**
+ * Public Firebase web config for vendor browser notifications (FCM).
+ * Safe to expose — same values as a Firebase web app snippet + VAPID key.
+ */
+router.get("/vendor/push-config", (_req, res) => {
+  try {
+    const config = getFirebaseWebClientConfig();
+    if (!config) {
+      return res.json({
+        enabled: false,
+        push_backend: pushConfigured(),
+        error:
+          "Web push is not configured. Set FIREBASE_WEB_CONFIG_JSON (or FIREBASE_WEB_* + VAPID key).",
+      });
+    }
+    return res.json({
+      enabled: true,
+      push_backend: pushConfigured(),
+      config,
+    });
+  } catch (error) {
+    console.error("Vendor push-config failed:", error);
+    return res.status(500).json({ enabled: false, error: "Could not load push config." });
+  }
+});
+
+/**
+ * Register an FCM device token for the signed-in vendor.
+ * Body: { token, platform?, device_label? }
+ */
+router.post("/vendor/push-tokens", requireVendor, async (req, res) => {
+  try {
+    const token = String(req.body?.token || "").trim();
+    if (!token || token.length < 20) {
+      return res.status(400).json({ error: "A valid push token is required." });
+    }
+    const row = await upsertVendorPushToken({
+      vendorId: req.vendor.sub,
+      token,
+      platform: String(req.body?.platform || "android").slice(0, 32),
+      deviceLabel: req.body?.device_label
+        ? String(req.body.device_label).slice(0, 120)
+        : null,
+    });
+    return res.json({ ok: true, id: row?.id || null });
+  } catch (error) {
+    console.error("Vendor push token register failed:", error);
+    return res.status(500).json({ error: "Could not register push token." });
+  }
+});
+
+/**
+ * Register FCM before activation (no JWT yet). Requires phone with PIN set.
+ * Body: { phone, token, platform?, device_label? }
+ */
+router.post("/vendor/push-tokens/pending", async (req, res) => {
+  try {
+    const phone = resolvePhone(req.body);
+    const token = String(req.body?.token || "").trim();
+    if (!phone) return res.status(400).json({ error: "Enter a valid phone number." });
+    if (!token || token.length < 20) {
+      return res.status(400).json({ error: "A valid push token is required." });
+    }
+
+    const result = await query(
+      `
+        SELECT id, pin_hash
+        FROM vendors WHERE phone = $1 LIMIT 1
+      `,
+      [phone]
+    );
+    const vendor = result.rows[0];
+    if (!vendor?.pin_hash) {
+      return res.status(403).json({
+        error: "Create your PIN before registering for notifications.",
+      });
+    }
+
+    const row = await upsertVendorPushToken({
+      vendorId: vendor.id,
+      token,
+      platform: String(req.body?.platform || "android").slice(0, 32),
+      deviceLabel: req.body?.device_label
+        ? String(req.body.device_label).slice(0, 120)
+        : null,
+    });
+    return res.json({ ok: true, id: row?.id || null, pending: true });
+  } catch (error) {
+    console.error("Pending push token register failed:", error);
+    return res.status(500).json({ error: "Could not register push token." });
+  }
+});
+
+router.delete("/vendor/push-tokens", requireVendor, async (req, res) => {
+  try {
+    const token = String(req.body?.token || req.query?.token || "").trim();
+    if (!token) return res.status(400).json({ error: "Push token is required." });
+    const removed = await deleteVendorPushToken({
+      vendorId: req.vendor.sub,
+      token,
+    });
+    return res.json({ ok: true, removed });
+  } catch (error) {
+    console.error("Vendor push token delete failed:", error);
+    return res.status(500).json({ error: "Could not remove push token." });
+  }
+});
+
 router.get("/vendor/businesses", requireVendor, async (req, res) => {
   try {
     // Vendors see every branch under their assigned businesses.
@@ -3280,6 +3968,7 @@ router.get("/vendor/businesses", requireVendor, async (req, res) => {
           b.name AS business_name,
           br.name,
           br.location,
+          br.landmark,
           br.phone,
           br.operating_hours,
           b.image_url,
@@ -3332,6 +4021,7 @@ router.get("/vendor/businesses/:id", requireVendor, async (req, res) => {
           b.name AS business_name,
           br.name,
           br.location,
+          br.landmark,
           br.phone,
           br.operating_hours,
           br.accessibility_options,
@@ -3398,6 +4088,7 @@ router.put("/vendor/businesses/:id", requireVendor, async (req, res) => {
 
     const hasLocation = typeof req.body?.location !== "undefined";
     const hasPhone = typeof req.body?.phone !== "undefined";
+    const hasLandmark = typeof req.body?.landmark !== "undefined";
     const sets = [
       "name = $1",
       "operating_hours = COALESCE($2, operating_hours)",
@@ -3413,6 +4104,10 @@ router.put("/vendor/businesses/:id", requireVendor, async (req, res) => {
       params.push(payload.location, latitude, longitude);
       sets.push(`location = $${params.length - 2}`, `latitude = $${params.length - 1}`, `longitude = $${params.length}`);
     }
+    if (hasLandmark) {
+      params.push(payload.landmark);
+      sets.push(`landmark = $${params.length}`);
+    }
     if (hasPhone) {
       params.push(payload.phone);
       sets.push(`phone = $${params.length}`);
@@ -3427,8 +4122,8 @@ router.put("/vendor/businesses/:id", requireVendor, async (req, res) => {
         SET ${sets.join(",\n            ")}
         WHERE id = $4
         RETURNING
-          id, business_id, name, location, phone, operating_hours,
-          accessibility_options, is_active
+          id, business_id, name, location, landmark, phone, operating_hours,
+          accessibility_options, is_active, latitude, longitude
       `,
       params
     );
@@ -3525,6 +4220,7 @@ router.post("/vendor/businesses/:id/branches", requireVendor, async (req, res) =
     const branch = await createBusinessBranch(owned.business_id, {
       name: payload.name,
       location: payload.location,
+      landmark: payload.landmark,
       latitude,
       longitude,
       phone: payload.phone,
@@ -3562,6 +4258,7 @@ router.get("/vendor/businesses/:id/queue", requireVendor, async (req, res) => {
           br.queue_size,
           br.avg_wait_minutes,
           br.is_active,
+          br.queue_paused,
           b.name AS business_name,
           bg.name AS business_group_name
         FROM business_branches br
@@ -3586,7 +4283,7 @@ router.get("/vendor/businesses/:id/queue", requireVendor, async (req, res) => {
       (sum, entry) => sum + (Number(entry.party_size) || 1),
       0
     );
-    return res.json({
+    return sendJsonEtag(req, res, {
       business: {
         id: br.id,
         business_id: br.business_id,
@@ -3596,6 +4293,7 @@ router.get("/vendor/businesses/:id/queue", requireVendor, async (req, res) => {
         queue_size: br.queue_size,
         avg_wait_minutes: br.avg_wait_minutes,
         is_active: br.is_active,
+        queue_paused: Boolean(br.queue_paused),
         business_group_name: br.business_group_name,
         waiting_total: (br.queue_size || 0) + appWaiting,
         app_waiting: appWaiting,
@@ -3606,6 +4304,48 @@ router.get("/vendor/businesses/:id/queue", requireVendor, async (req, res) => {
   } catch (error) {
     console.error("Vendor queue failed:", error);
     return res.status(500).json({ error: "Could not load the queue." });
+  }
+});
+
+router.put("/vendor/businesses/:id/queue-pause", requireVendor, async (req, res) => {
+  try {
+    const branchId = Number(req.params.id);
+    if (!Number.isInteger(branchId) || branchId < 1) {
+      return res.status(400).json({ error: "Invalid branch." });
+    }
+    if (!(await vendorOwnsBranch(req.vendor.sub, branchId))) {
+      return res.status(403).json({ error: "You do not manage this branch." });
+    }
+
+    const paused =
+      req.body?.paused === true ||
+      req.body?.paused === "true" ||
+      req.body?.queue_paused === true ||
+      req.body?.queue_paused === "true";
+
+    const result = await query(
+      `
+        UPDATE business_branches
+        SET queue_paused = $1
+        WHERE id = $2
+        RETURNING id, name, queue_paused, is_active
+      `,
+      [paused, branchId]
+    );
+    if (!result.rows[0]) return res.status(404).json({ error: "Branch not found." });
+
+    clearCustomerBusinessesCache();
+
+    return res.json({
+      ok: true,
+      id: result.rows[0].id,
+      name: result.rows[0].name,
+      queue_paused: Boolean(result.rows[0].queue_paused),
+      is_active: result.rows[0].is_active,
+    });
+  } catch (error) {
+    console.error("Vendor queue pause failed:", error);
+    return res.status(500).json({ error: "Could not update queue pause." });
   }
 });
 
@@ -3698,12 +4438,12 @@ router.get("/vendor/businesses/:id/services", requireVendor, async (req, res) =>
 
     const result = await query(
       `
-        SELECT id, business_id, name, duration_minutes, description, is_active, created_at
+        SELECT id, business_id, branch_id, name, duration_minutes, description, is_active, created_at
         FROM business_services
-        WHERE business_id = $1
+        WHERE branch_id = $1
         ORDER BY name ASC, id ASC
       `,
-      [owned.business_id]
+      [branchId]
     );
     return res.json(result.rows);
   } catch (error) {
@@ -3726,22 +4466,26 @@ router.post("/vendor/businesses/:id/services", requireVendor, async (req, res) =
 
     const result = await query(
       `
-        INSERT INTO business_services (business_id, name, duration_minutes, description, is_active)
-        VALUES ($1, $2, $3, $4, $5)
-        RETURNING id, business_id, name, duration_minutes, description, is_active, created_at
+        INSERT INTO business_services (
+          business_id, branch_id, name, duration_minutes, description, is_active
+        )
+        VALUES ($1, $2, $3, $4, $5, $6)
+        RETURNING id, business_id, branch_id, name, duration_minutes, description, is_active, created_at
       `,
       [
         owned.business_id,
+        branchId,
         payload.name,
         Math.round(payload.durationMinutes),
         payload.description,
         payload.hasActive ? Boolean(payload.isActive) : true,
       ]
     );
+    await syncBranchWaitFromServices(branchId);
     return res.status(201).json(result.rows[0]);
   } catch (error) {
     if (error.code === "23505") {
-      return res.status(409).json({ error: "That service name already exists for this business." });
+      return res.status(409).json({ error: "That service name already exists for this branch." });
     }
     console.error("Vendor create service failed:", error);
     return res.status(500).json({ error: "Could not create service." });
@@ -3771,22 +4515,23 @@ router.put("/vendor/businesses/:id/services/:serviceId", requireVendor, async (r
             duration_minutes = $2,
             description = $3
             ${payload.hasActive ? `, is_active = ${payload.isActive ? "true" : "false"}` : ""}
-        WHERE id = $4 AND business_id = $5
-        RETURNING id, business_id, name, duration_minutes, description, is_active, created_at
+        WHERE id = $4 AND branch_id = $5
+        RETURNING id, business_id, branch_id, name, duration_minutes, description, is_active, created_at
       `,
       [
         payload.name,
         Math.round(payload.durationMinutes),
         payload.description,
         serviceId,
-        owned.business_id,
+        branchId,
       ]
     );
     if (!result.rows[0]) return res.status(404).json({ error: "Service not found." });
+    await syncBranchWaitFromServices(branchId);
     return res.json(result.rows[0]);
   } catch (error) {
     if (error.code === "23505") {
-      return res.status(409).json({ error: "That service name already exists for this business." });
+      return res.status(409).json({ error: "That service name already exists for this branch." });
     }
     console.error("Vendor update service failed:", error);
     return res.status(500).json({ error: "Could not update service." });
@@ -3806,12 +4551,13 @@ router.delete("/vendor/businesses/:id/services/:serviceId", requireVendor, async
     const result = await query(
       `
         DELETE FROM business_services
-        WHERE id = $1 AND business_id = $2
+        WHERE id = $1 AND branch_id = $2
         RETURNING id
       `,
-      [serviceId, owned.business_id]
+      [serviceId, branchId]
     );
     if (!result.rows[0]) return res.status(404).json({ error: "Service not found." });
+    await syncBranchWaitFromServices(branchId);
     return res.json({ ok: true, id: result.rows[0].id });
   } catch (error) {
     console.error("Vendor delete service failed:", error);
@@ -3882,6 +4628,20 @@ function buildVendorInviteSmsMessage({ contactPhone, contactEmail, trialEndsAt }
   );
 }
 
+function buildVendorActivatedSmsMessage({ contactPhone, contactEmail, trialEndsAt }) {
+  const contacts = [contactPhone, contactEmail].filter(Boolean).join(" · ");
+  const trialLabel = formatTrialEndsAtForSms(trialEndsAt);
+  const trialLine = trialLabel
+    ? ` Your trial ends on ${trialLabel} EAT.`
+    : "";
+  return (
+    "Queueless: Your vendor account is now active. " +
+    "Sign in with your phone and PIN on the Queueless Vendor app." +
+    trialLine +
+    ` Contact Wolfgang: ${contacts}.`
+  );
+}
+
 function buildVendorTrialSmsMessage({ contactPhone, contactEmail, trialEndsAt }) {
   const contacts = [contactPhone, contactEmail].filter(Boolean).join(" · ");
   const trialLabel = formatTrialEndsAtForSms(trialEndsAt);
@@ -3933,20 +4693,96 @@ async function notifyVendorInvite({ phone, trialEndsAt = null }) {
   return result;
 }
 
-/** Notify vendor that their trial end date was set or updated. Never throws. */
-async function notifyVendorTrial({ phone, trialEndsAt }) {
+/** Notify vendor that an admin activated their account. Prefers FCM push; SMS only if no device token. Never throws. */
+async function notifyVendorActivated({ phone, trialEndsAt = null, vendorId = null }) {
   const contact = await wolfgangContactDetails();
   const result = {
+    push: { sent: false, reason: null, error: null },
+    sms: { sent: false, reason: null, error: null },
+    contact,
+  };
+
+  const message = buildVendorActivatedSmsMessage({
+    contactPhone: contact.phone,
+    contactEmail: contact.email,
+    trialEndsAt,
+  });
+  const title = "You're activated";
+  const data = {
+    type: "vendor_activated",
+    trial_ends_at: trialEndsAt ? String(trialEndsAt) : "",
+  };
+
+  if (vendorId || phone) {
+    try {
+      const push = vendorId
+        ? await notifyVendorsPushByIds({
+            vendorIds: [vendorId],
+            title,
+            body: message,
+            data,
+          })
+        : await notifyVendorsPushByPhones({
+            phones: [phone],
+            title,
+            body: message,
+            data,
+          });
+      result.push.sent = Boolean(push.sent);
+      result.push.reason = push.reason || null;
+      if (push.sent) {
+        console.log(
+          `[vendor-activated:push] sent to vendor ${vendorId || phone}`
+        );
+        return result;
+      }
+    } catch (error) {
+      result.push.reason = "failed";
+      result.push.error = error.message;
+      console.error(`[vendor-activated:push] failed:`, error.message);
+    }
+  } else {
+    result.push.reason = "no_phone";
+    result.sms.reason = "no_phone";
+    return result;
+  }
+
+  if (!phone) {
+    result.sms.reason = "no_phone";
+    return result;
+  }
+
+  if (!smsProviderConfigured()) {
+    result.sms.reason = "not_configured";
+    console.log(`[vendor-activated:sms:web] would notify ${phone}: ${message}`);
+    return result;
+  }
+
+  try {
+    await sendSms({ phone, message });
+    result.sms.sent = true;
+    console.log(`[vendor-activated:sms] fallback SMS sent to ${phone}`);
+  } catch (error) {
+    result.sms.reason = "failed";
+    result.sms.error = error.message;
+    console.error(`[vendor-activated:sms] failed for ${phone}:`, error.message);
+  }
+
+  return result;
+}
+
+/** Notify vendor that their trial end date was set or updated. Prefers push. Never throws. */
+async function notifyVendorTrial({ phone, trialEndsAt, vendorId = null }) {
+  const contact = await wolfgangContactDetails();
+  const result = {
+    push: { sent: false, reason: null, error: null },
     sms: { sent: false, reason: null, error: null },
     contact,
   };
 
   if (!trialEndsAt) {
+    result.push.reason = "no_trial";
     result.sms.reason = "no_trial";
-    return result;
-  }
-  if (!phone) {
-    result.sms.reason = "no_phone";
     return result;
   }
 
@@ -3955,6 +4791,48 @@ async function notifyVendorTrial({ phone, trialEndsAt }) {
     contactEmail: contact.email,
     trialEndsAt,
   });
+  const title = "Trial update";
+  const data = {
+    type: "vendor_trial",
+    trial_ends_at: String(trialEndsAt),
+  };
+
+  if (vendorId || phone) {
+    try {
+      const push = vendorId
+        ? await notifyVendorsPushByIds({
+            vendorIds: [vendorId],
+            title,
+            body: message,
+            data,
+          })
+        : await notifyVendorsPushByPhones({
+            phones: [phone],
+            title,
+            body: message,
+            data,
+          });
+      result.push.sent = Boolean(push.sent);
+      result.push.reason = push.reason || null;
+      if (push.sent) {
+        console.log(`[vendor-trial:push] sent to vendor ${vendorId || phone}`);
+        return result;
+      }
+    } catch (error) {
+      result.push.reason = "failed";
+      result.push.error = error.message;
+      console.error(`[vendor-trial:push] failed:`, error.message);
+    }
+  } else {
+    result.push.reason = "no_phone";
+    result.sms.reason = "no_phone";
+    return result;
+  }
+
+  if (!phone) {
+    result.sms.reason = "no_phone";
+    return result;
+  }
 
   if (!smsProviderConfigured()) {
     result.sms.reason = "not_configured";
@@ -3965,7 +4843,7 @@ async function notifyVendorTrial({ phone, trialEndsAt }) {
   try {
     await sendSms({ phone, message });
     result.sms.sent = true;
-    console.log(`[vendor-trial:sms] trial SMS sent to ${phone}`);
+    console.log(`[vendor-trial:sms] fallback SMS sent to ${phone}`);
   } catch (error) {
     result.sms.reason = "failed";
     result.sms.error = error.message;
@@ -3991,16 +4869,54 @@ function vendorInviteSummary(invite) {
   return "Vendor created.";
 }
 
-function vendorTrialSmsSummary(trialNotify) {
-  if (trialNotify?.sms?.sent) return "Trial SMS sent to the vendor.";
-  if (trialNotify?.sms?.reason === "no_phone") {
-    return "Trial saved. Add a WhatsApp phone to send the trial SMS.";
+function vendorActivatedNotifySummary(notify) {
+  if (notify?.push?.sent) return "Vendor activated. Push notification sent.";
+  if (notify?.sms?.sent) {
+    return "Vendor activated. No app device registered — activation SMS sent instead.";
+  }
+  if (notify?.sms?.reason === "no_phone" || notify?.push?.reason === "no_phone") {
+    return "Vendor activated. Add a phone so we can notify them.";
+  }
+  if (notify?.push?.reason === "no_tokens" && notify?.sms?.reason === "not_configured") {
+    return "Vendor activated. No app device registered, and Advanta is not configured for SMS fallback.";
+  }
+  if (notify?.sms?.reason === "not_configured" && !pushConfigured()) {
+    return "Vendor activated. Firebase push is not configured, and Advanta is not configured for SMS fallback.";
+  }
+  if (notify?.sms?.error) {
+    return `Vendor activated. Notification failed: ${notify.sms.error}`;
+  }
+  if (notify?.push?.error) {
+    return `Vendor activated. Push failed: ${notify.push.error}`;
+  }
+  if (notify?.push?.reason === "no_tokens") {
+    return "Vendor activated. Ask the vendor to open the Android app once so we can send push next time.";
+  }
+  return "Vendor activated.";
+}
+
+function vendorAccountStatus(vendor) {
+  if (vendor?.activated_at) return "active";
+  if (vendor?.pin_hash) return "pending_activation";
+  return "awaiting_pin";
+}
+
+function vendorTrialNotifySummary(trialNotify) {
+  if (trialNotify?.push?.sent) return "Trial push notification sent to the vendor.";
+  if (trialNotify?.sms?.sent) {
+    return "No app device registered — trial SMS sent instead.";
+  }
+  if (trialNotify?.sms?.reason === "no_phone" || trialNotify?.push?.reason === "no_phone") {
+    return "Trial saved. Add a phone so we can notify the vendor.";
   }
   if (trialNotify?.sms?.reason === "not_configured") {
-    return "Trial saved. Advanta is not configured, so the trial SMS was not sent.";
+    return "Trial saved. No app device registered, and Advanta is not configured for SMS fallback.";
   }
   if (trialNotify?.sms?.error) {
-    return `Trial saved. Trial SMS failed: ${trialNotify.sms.error}`;
+    return `Trial saved. Notification failed: ${trialNotify.sms.error}`;
+  }
+  if (trialNotify?.push?.reason === "no_tokens") {
+    return "Trial saved. Ask the vendor to open the Android app so push can be delivered.";
   }
   return "Trial saved.";
 }
@@ -4038,6 +4954,7 @@ router.get("/admins/vendors", requireAdmin, async (_req, res) => {
     return res.json(
       vendors.rows.map((vendor) => ({
         ...vendor,
+        status: vendorAccountStatus(vendor),
         has_pin: Boolean(vendor.pin_hash),
         pin_hash: undefined,
         otp_code:
@@ -4062,6 +4979,8 @@ router.post("/admins/vendors", requireAdmin, async (req, res) => {
     const phoneRaw = String(req.body?.phone || "").trim();
     const password = String(req.body?.password || "");
     const businessIds = req.body?.business_ids;
+    const activateNow =
+      req.body?.activate === true || req.body?.activate === "true";
     let trialEndsAt;
     try {
       trialEndsAt = parseTrialEndsAt(
@@ -4095,7 +5014,7 @@ router.post("/admins/vendors", requireAdmin, async (req, res) => {
     const created = await query(
       `
         INSERT INTO vendors (username, email, phone, password_hash, activated_at, trial_ends_at)
-        VALUES ($1, $2, $3, $4, NOW(), $5)
+        VALUES ($1, $2, $3, $4, ${activateNow ? "NOW()" : "NULL"}, $5)
         RETURNING id, username, email, phone, created_at, activated_at, trial_ends_at
       `,
       [username, email || null, phone, passwordHash, trialEndsAt]
@@ -4103,20 +5022,29 @@ router.post("/admins/vendors", requireAdmin, async (req, res) => {
 
     await replaceVendorBusinesses(created.rows[0].id, businessIds);
     const vendor = await vendorWithBusinesses(created.rows[0].id);
-    const invite = await notifyVendorInvite({
-      phone: vendor.phone,
-      trialEndsAt: vendor.trial_ends_at,
-    });
+
+    let activationNotify = null;
+    if (activateNow) {
+      activationNotify = await notifyVendorActivated({
+        phone: vendor.phone,
+        trialEndsAt: vendor.trial_ends_at,
+        vendorId: vendor.id,
+      });
+    }
 
     return res.status(201).json({
       ...vendor,
-      invite_sms: invite.sms,
-      contact_phone: invite.contact?.phone || null,
-      contact_email: invite.contact?.email || null,
+      status: vendorAccountStatus({ ...vendor, pin_hash: null }),
+      activation_push: activationNotify?.push || null,
+      activation_sms: activationNotify?.sms || null,
+      contact_phone: activationNotify?.contact?.phone || null,
+      contact_email: activationNotify?.contact?.email || null,
       vendor_web_url:
         process.env.VENDOR_PUBLIC_URL || "https://vendor.queueless.thewolfgang.tech",
       vendor_app_url: process.env.VENDOR_APP_URL || "",
-      message: vendorInviteSummary(invite),
+      message: activateNow
+        ? vendorActivatedNotifySummary(activationNotify)
+        : "Vendor pre-registered. They can create a PIN in the app; activate the account when ready.",
     });
   } catch (error) {
     if (error.status === 400) return res.status(400).json({ error: error.message });
@@ -4200,15 +5128,17 @@ router.put("/admins/vendors/:id", requireAdmin, async (req, res) => {
       trialNotify = await notifyVendorTrial({
         phone: vendor.phone,
         trialEndsAt: vendor.trial_ends_at,
+        vendorId: vendor.id,
       });
     }
 
     return res.json({
       ...vendor,
+      trial_push: trialNotify?.push || null,
       trial_sms: trialNotify?.sms || null,
       message: trialChanged
         ? vendor.trial_ends_at
-          ? vendorTrialSmsSummary(trialNotify)
+          ? vendorTrialNotifySummary(trialNotify)
           : "Trial end date cleared."
         : "Saved.",
     });
@@ -4275,6 +5205,55 @@ router.post("/admins/vendors/:id/invite", requireAdmin, async (req, res) => {
   } catch (error) {
     console.error("Vendor invite failed:", error);
     return res.status(500).json({ error: "Could not send vendor invite." });
+  }
+});
+
+router.post("/admins/vendors/:id/activate", requireAdmin, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id < 1) {
+      return res.status(400).json({ error: "Invalid vendor." });
+    }
+
+    const existing = await query(
+      `
+        SELECT id, phone, activated_at, trial_ends_at, pin_hash
+        FROM vendors
+        WHERE id = $1
+      `,
+      [id]
+    );
+    if (!existing.rows[0]) return res.status(404).json({ error: "Vendor not found." });
+    if (existing.rows[0].activated_at) {
+      return res.status(409).json({ error: "This vendor is already active." });
+    }
+    if (!existing.rows[0].phone) {
+      return res.status(400).json({
+        error: "Add a WhatsApp phone number before activating this vendor.",
+      });
+    }
+
+    await query(`UPDATE vendors SET activated_at = NOW() WHERE id = $1`, [id]);
+    const vendor = await vendorWithBusinesses(id);
+    const notify = await notifyVendorActivated({
+      phone: vendor.phone,
+      trialEndsAt: vendor.trial_ends_at,
+      vendorId: vendor.id,
+    });
+
+    return res.json({
+      ...vendor,
+      status: vendorAccountStatus({ ...vendor, pin_hash: existing.rows[0].pin_hash }),
+      has_pin: Boolean(existing.rows[0].pin_hash),
+      activation_push: notify.push,
+      activation_sms: notify.sms,
+      contact_phone: notify.contact?.phone || null,
+      contact_email: notify.contact?.email || null,
+      message: vendorActivatedNotifySummary(notify),
+    });
+  } catch (error) {
+    console.error("Vendor activate failed:", error);
+    return res.status(500).json({ error: "Could not activate vendor." });
   }
 });
 

@@ -66,24 +66,48 @@ function normalizeAccessibility(business) {
   return ACCESSIBILITY_OPTIONS.filter((option) => ids.includes(option.id));
 }
 
-function accessibilityChipsHtml(business, { compact = false } = {}) {
+function accessibilityChipsHtml(business, { compact = false, maxCompact = 6 } = {}) {
   const items = normalizeAccessibility(business);
   if (!items.length) return "";
+
+  if (compact) {
+    const visible = items.slice(0, Math.max(1, maxCompact));
+    const overflow = items.length - visible.length;
+    return `
+      <div class="a11y-chips a11y-chips-compact" role="list" aria-label="Accessibility: ${escapeHtml(
+        items.map((item) => item.label).join(", ")
+      )}">
+        ${visible
+          .map(
+            (item) => `
+          <span class="a11y-chip a11y-chip-icon-only" role="listitem" aria-label="${escapeHtml(item.label)}" title="${escapeHtml(item.label)}">
+            <span class="a11y-chip-icon" aria-hidden="true">${accessibilityIconSvg(item.id)}</span>
+          </span>`
+          )
+          .join("")}
+        ${
+          overflow > 0
+            ? `<span class="a11y-chip a11y-chip-more" role="listitem" title="${escapeHtml(
+                items
+                  .slice(visible.length)
+                  .map((item) => item.label)
+                  .join(", ")
+              )}" aria-label="${overflow} more accessibility options">+${overflow}</span>`
+            : ""
+        }
+      </div>
+    `;
+  }
+
   return `
-    <div class="a11y-chips${compact ? " a11y-chips-compact" : ""}" role="list" aria-label="Accessibility options">
+    <div class="a11y-chips" role="list" aria-label="Accessibility options">
       ${items
         .map(
-          (item) =>
-            compact
-              ? `
-            <span class="a11y-chip" role="listitem" aria-label="${escapeHtml(item.label)}" title="${escapeHtml(item.label)}">
-              <span class="a11y-chip-icon" aria-hidden="true">${accessibilityIconSvg(item.id)}</span>
-            </span>`
-              : `
-            <span class="a11y-chip" role="listitem" title="${escapeHtml(item.label)}">
-              <span class="a11y-chip-icon" aria-hidden="true">${accessibilityIconSvg(item.id)}</span>
-              <span class="a11y-chip-label">${escapeHtml(item.label)}</span>
-            </span>`
+          (item) => `
+        <span class="a11y-chip" role="listitem" title="${escapeHtml(item.label)}">
+          <span class="a11y-chip-icon" aria-hidden="true">${accessibilityIconSvg(item.id)}</span>
+          <span class="a11y-chip-label">${escapeHtml(item.label)}</span>
+        </span>`
         )
         .join("")}
     </div>
@@ -109,7 +133,7 @@ const LOCATION_KEY = "queueless_customer_location";
 const WALK_KMH = 5;
 const DRIVE_KMH = 25;
 const WALK_MAX_KM = 1.5;
-const HOME_CACHE_TTL_MS = 45000;
+const HOME_CACHE_TTL_MS = 90000;
 
 const app = document.getElementById("app");
 let discoverState = {
@@ -149,6 +173,21 @@ async function loadHomeBundle({ force = false } = {}) {
     Date.now() - homeBundleCache.at < HOME_CACHE_TTL_MS &&
     Array.isArray(homeBundleCache.businesses);
   if (fresh) return homeBundleCache;
+
+  try {
+    const bundle = await api("/customer/home");
+    homeBundleCache = {
+      at: Date.now(),
+      me: bundle.me,
+      groups: bundle.groups || [],
+      businesses: bundle.businesses || [],
+      myQueue: Array.isArray(bundle.my_queue) ? bundle.my_queue : [],
+    };
+    return homeBundleCache;
+  } catch (error) {
+    // Older deployments without /customer/home still work via the four calls.
+    if (error.status !== 404) throw error;
+  }
 
   const [me, groups, businesses, myQueue] = await Promise.all([
     api("/customer/me"),
@@ -462,7 +501,10 @@ function formPhonePayload(formData) {
   return { ...data, phone };
 }
 
+const etagCache = new Map();
+
 async function api(path, options = {}) {
+  const method = String(options.method || "GET").toUpperCase();
   const headers = {
     "Content-Type": "application/json",
     ...(options.headers || {}),
@@ -470,10 +512,19 @@ async function api(path, options = {}) {
   const token = getToken();
   if (token) headers.Authorization = `Bearer ${token}`;
 
+  if (method === "GET" && etagCache.has(path)) {
+    headers["If-None-Match"] = etagCache.get(path).etag;
+  }
+
   const response = await fetch(`${API_BASE}${path}`, {
     ...options,
     headers,
   });
+
+  if (response.status === 304 && etagCache.has(path)) {
+    return etagCache.get(path).data;
+  }
+
   const data = await response.json().catch(() => ({}));
 
   if (!response.ok) {
@@ -482,6 +533,18 @@ async function api(path, options = {}) {
     error.status = response.status;
     throw error;
   }
+
+  if (method === "GET") {
+    const etag = response.headers.get("ETag");
+    if (etag) etagCache.set(path, { etag, data });
+  } else {
+    for (const key of [...etagCache.keys()]) {
+      if (key.includes("/queue") || key.includes("/home") || key.includes("/businesses")) {
+        etagCache.delete(key);
+      }
+    }
+  }
+
   return data;
 }
 
@@ -624,6 +687,16 @@ function tabbar(active) {
   `;
 }
 
+function appVersion() {
+  return (
+    String(window.QUEUELESS_CUSTOMER_APP_VERSION || "1.1.0").trim() || "1.1.0"
+  );
+}
+
+function appVersionHtml({ onDark = false } = {}) {
+  return `<p class="app-version${onDark ? " app-version-on-dark" : ""}">v${escapeHtml(appVersion())}</p>`;
+}
+
 function bindTabs() {
   document.querySelectorAll("[data-tab]").forEach((button) => {
     button.addEventListener("click", () => go(button.getAttribute("data-tab")));
@@ -658,6 +731,7 @@ function renderSignup() {
         <button class="btn-link" type="button" id="to-login">Already have an account? Log in</button>
         <p class="message" id="message" role="status" aria-live="polite"></p>
       </form>
+      ${appVersionHtml({ onDark: true })}
       </main>
     </div>
   `;
@@ -727,6 +801,7 @@ function renderVerify() {
         <button class="btn-link" type="button" id="to-signup">Back to sign up</button>
         <p class="message" id="message" role="status" aria-live="polite"></p>
       </form>
+      ${appVersionHtml({ onDark: true })}
       </main>
     </div>
   `;
@@ -881,6 +956,7 @@ function renderLogin() {
           </button>
           <p class="message" id="message" role="status" aria-live="polite"></p>
         </form>
+        ${appVersionHtml({ onDark: true })}
         </main>
       </div>
     `;
@@ -985,8 +1061,22 @@ function formatWaitMinutes(minutes) {
   return mins === 0 ? `${hours}h` : `${hours}h ${mins}min`;
 }
 
+function formatServiceWaitLabel(business) {
+  const services = Array.isArray(business.services) ? business.services : [];
+  if (services.length === 1) {
+    return `${Number(services[0].duration_minutes) || 0} min`;
+  }
+  const min = business.service_duration_min ?? business.avg_wait_minutes;
+  const max = business.service_duration_max ?? business.avg_wait_minutes;
+  if (min != null && max != null && Number(min) !== Number(max)) {
+    return `${min}–${max} min`;
+  }
+  return `${business.avg_wait_minutes ?? 15} min`;
+}
+
 function enrichBusiness(business, index) {
   const i = index % DEMO_IMAGES.length;
+  const services = Array.isArray(business.services) ? business.services : [];
   const queueSize = business.queue_size ?? DEMO_QUEUE[i];
   const avgWait = business.avg_wait_minutes ?? DEMO_WAIT[i];
   const branches = (Array.isArray(business.branches) ? business.branches : [])
@@ -1017,12 +1107,21 @@ function enrichBusiness(business, index) {
 
   return {
     ...business,
+    // Phone is branch-level only — never use a business-wide number.
+    phone: branches.length === 1 ? branches[0].phone || null : null,
+    landmark: branches.length === 1 ? branches[0].landmark || null : null,
+    queue_paused:
+      branches.length > 0
+        ? branches.every((branch) => Boolean(branch.queue_paused))
+        : Boolean(business.queue_paused),
+    services,
     branches,
     place,
     rating: business.rating || DEMO_RATING[i],
     reviews: business.review_count || DEMO_REVIEWS[i],
     queueSize,
     avgWait,
+    waitLabel: formatServiceWaitLabel({ ...business, services, avg_wait_minutes: avgWait }),
     myEstimate: Math.round((queueSize + 1) * avgWait),
     thumb: resolveImageUrl(business.image_url) || DEMO_IMAGES[i],
     away,
@@ -1045,9 +1144,12 @@ function branchTravelHtml(branches, { compact = false } = {}) {
         .map((branch) => {
           const summary = branch.awaySummary;
           const location = branch.location ? escapeHtml(branch.location) : "";
+          const closed = branch.queue_paused
+            ? `<span class="branch-away-closed">Closed</span>`
+            : "";
           return `
             <div class="branch-away-line" role="listitem">
-              <span class="branch-away-name">${escapeHtml(branch.name || "Branch")}</span>
+              <span class="branch-away-name">${escapeHtml(branch.name || "Branch")}${closed}</span>
               ${
                 summary
                   ? `<span class="branch-away-meta">${escapeHtml(summary)}</span>`
@@ -1115,18 +1217,41 @@ function orderedHomeBusinesses() {
 }
 
 function positionBadge(entry, fallbackItem) {
-  if (!entry) {
-    return `<div class="wait">${fallbackItem.avgWait} min<small>${fallbackItem.queueSize} in queue</small></div>`;
+  if (entry) {
+    const wait = entry.estimated_wait_minutes ?? 0;
+    const waitLabel = wait <= 0 ? "You're next" : formatWaitMinutes(wait);
+    return `
+      <div class="wait wait-joined">
+        #${entry.position}
+        <small>${escapeHtml(waitLabel)}</small>
+      </div>
+    `;
   }
 
-  const wait = entry.estimated_wait_minutes ?? 0;
-  const waitLabel = wait <= 0 ? "You're next" : formatWaitMinutes(wait);
-  return `
-    <div class="wait wait-joined">
-      #${entry.position}
-      <small>${escapeHtml(waitLabel)}</small>
-    </div>
-  `;
+  if (fallbackItem.queue_paused) {
+    return `
+      <div class="wait wait-closed" title="Queue is on a break — you can still book ahead">
+        Closed
+        <small>Book ahead</small>
+      </div>
+    `;
+  }
+
+  const someClosed =
+    Array.isArray(fallbackItem.branches) &&
+    fallbackItem.branches.some((branch) => Boolean(branch.queue_paused)) &&
+    !fallbackItem.branches.every((branch) => Boolean(branch.queue_paused));
+
+  if (someClosed) {
+    return `
+      <div class="wait wait-partial" title="Some locations are on a break">
+        Mixed
+        <small>Check times</small>
+      </div>
+    `;
+  }
+
+  return `<div class="wait">${escapeHtml(fallbackItem.waitLabel || `${fallbackItem.avgWait} min`)}<small>${fallbackItem.queueSize} in queue</small></div>`;
 }
 
 function renderBusinessCards(list) {
@@ -1140,22 +1265,36 @@ function renderBusinessCards(list) {
         .map((business, index) => {
           const item = enrichBusiness(business, index);
           const entry = business.myQueueEntry || null;
+          const queuePaused = Boolean(item.queue_paused);
+          const someClosed =
+            !queuePaused &&
+            Array.isArray(item.branches) &&
+            item.branches.some((branch) => Boolean(branch.queue_paused));
           const statusLabel = entry
             ? `Joined, position ${entry.position}, ${entry.people_ahead} ahead`
-            : `${item.queueSize} in queue, about ${item.avgWait} minutes average wait`;
+            : queuePaused
+              ? "Queue closed — booking available"
+              : someClosed
+                ? "Some locations on a break — booking available"
+                : `${item.queueSize} in queue, about ${item.waitLabel || `${item.avgWait} minutes`} wait`;
           const branchTravel =
             item.branches?.length > 1
               ? item.branches
                   .map((branch) => {
                     const travel = branch.awaySummary || "distance unavailable";
-                    return `${branch.name || "Branch"}: ${travel}`;
+                    const closed = branch.queue_paused ? " (closed)" : "";
+                    return `${branch.name || "Branch"}${closed}: ${travel}`;
                   })
                   .join(". ")
               : item.away
                 ? formatAwaySummary(item.away)
                 : "";
+          const a11yItems = normalizeAccessibility(item);
+          const a11yLabel = a11yItems.length
+            ? `. Accessibility: ${a11yItems.map((entry) => entry.label).join(", ")}`
+            : "";
           return `
-            <article class="biz-card ${entry ? "biz-card-joined" : ""}" role="button" tabindex="0" data-biz-id="${item.id}" aria-label="${escapeHtml(item.name)}. ${statusLabel}${branchTravel ? `. ${escapeHtml(branchTravel)}` : ""}">
+            <article class="biz-card ${entry ? "biz-card-joined" : ""}${queuePaused ? " biz-card-closed" : ""}" role="button" tabindex="0" data-biz-id="${item.id}" aria-label="${escapeHtml(item.name)}. ${statusLabel}${branchTravel ? `. ${escapeHtml(branchTravel)}` : ""}${escapeHtml(a11yLabel)}">
               <img class="biz-thumb" src="${escapeHtml(item.thumb)}" alt="" loading="lazy" onerror="this.src='data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2270%22 height=%2270%22 fill=%22%23eef0f3%22%3E%3Crect width=%2270%22 height=%2270%22/%3E%3C/svg%3E'" />
               <div class="biz-meta">
                 <h2>${escapeHtml(item.name)}</h2>
@@ -1176,7 +1315,11 @@ function renderBusinessCards(list) {
                 ${
                   entry
                     ? `<div class="queue-position-line">Your position · ${entry.people_ahead} ahead</div>`
-                    : `<div class="rating">${icon("star")} ${item.rating} <span class="reviews">(${item.reviews})</span></div>`
+                    : queuePaused
+                      ? `<div class="queue-closed-line">Queue closed · Book a future visit</div>`
+                      : someClosed
+                        ? `<div class="queue-closed-line queue-closed-line-soft">Some locations on a break · Booking available</div>`
+                        : `<div class="rating">${icon("star")} ${item.rating} <span class="reviews">(${item.reviews})</span></div>`
                 }
                 ${accessibilityChipsHtml(item, { compact: true })}
               </div>
@@ -1404,7 +1547,9 @@ async function renderProfile() {
 
   try {
     const [me, contact] = await Promise.all([
-      api("/customer/me"),
+      homeBundleCache.me && Date.now() - homeBundleCache.at < HOME_CACHE_TTL_MS
+        ? Promise.resolve(homeBundleCache.me)
+        : api("/customer/me"),
       api("/customer/contact").catch(() => ({ phone: "", email: "" })),
     ]);
 
@@ -1479,6 +1624,7 @@ async function renderProfile() {
         </section>
 
         <button class="btn profile-logout" type="button" id="logout">Sign out</button>
+        ${appVersionHtml()}
         </main>
         ${tabbar("profile")}
       </div>
@@ -1540,7 +1686,7 @@ function renderTerms() {
         <li>Joining a queue or placing a booking does not guarantee an exact service time. Estimates are based on information provided by the business and may change.</li>
         <li>Businesses set their own service rules, opening hours, and capacity. Queueless does not provide the underlying service (for example, a haircut or clinic visit).</li>
         <li>You may leave a queue or cancel a booking through the app, subject to any limits shown at the time.</li>
-        <li>Bookings can only be made up to 24 hours in advance.</li>
+        <li>Bookings can be made up to 14 days in advance.</li>
       </ul>
 
       <h2>5. Acceptable use</h2>
@@ -1664,10 +1810,15 @@ async function renderBusinessDetail(id) {
     // If the check fails, leave the button enabled and let join handle conflicts.
   }
   const alreadyInQueue = Boolean(myEntry);
+  const queuePaused = Boolean(item.queue_paused);
 
   const queueBadgeColor = item.queueSize <= 3 ? "var(--emerald)" : item.queueSize <= 8 ? "var(--lime-deep)" : "var(--danger)";
   const queueLabel = item.queueSize === 0 ? "No queue" : item.queueSize === 1 ? "1 person" : `${item.queueSize} people`;
-  const joinLabel = alreadyInQueue ? `View my place · #${myEntry.position}` : "Join Queue";
+  const joinLabel = alreadyInQueue
+    ? `View my place · #${myEntry.position}`
+    : queuePaused
+      ? "On a break"
+      : "Join Queue";
 
   app.innerHTML = `
     <div class="detail-shell">
@@ -1699,6 +1850,21 @@ async function renderBusinessDetail(id) {
                           : ""
                       }
                       ${
+                        branch.phone
+                          ? `<div class="detail-row">${icon("call")}<a href="tel:${escapeHtml(String(branch.phone).replace(/\s+/g, ""))}">${escapeHtml(branch.phone)}</a></div>`
+                          : ""
+                      }
+                      ${
+                        branch.landmark
+                          ? `<div class="detail-row"><span>${escapeHtml(branch.landmark)}</span></div>`
+                          : ""
+                      }
+                      ${
+                        branch.queue_paused
+                          ? `<div class="detail-row"><span>On a break — not accepting new joins</span></div>`
+                          : ""
+                      }
+                      ${
                         summary
                           ? `<div class="detail-row away-detail"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l2.5 2.5"/></svg><span>${escapeHtml(summary)}</span></div>`
                           : ""
@@ -1727,6 +1893,10 @@ async function renderBusinessDetail(id) {
             ${icon("call")}
             <a href="tel:${escapeHtml(String(item.phone).replace(/\s+/g, ""))}">${escapeHtml(item.phone)}</a>
           </div>` : ""}
+        ${item.landmark && !(item.branches?.length > 1) ? `
+          <div class="detail-row">
+            <span>${escapeHtml(item.landmark)}</span>
+          </div>` : ""}
         ${item.description ? `<p class="detail-desc">${escapeHtml(item.description)}</p>` : ""}
 
         ${
@@ -1746,8 +1916,8 @@ async function renderBusinessDetail(id) {
           </div>
           <div class="queue-divider"></div>
           <div class="queue-stat">
-            <div class="queue-stat-value">${item.avgWait} min</div>
-            <div class="queue-stat-label">avg. per person</div>
+            <div class="queue-stat-value">${escapeHtml(item.waitLabel || `${item.avgWait} min`)}</div>
+            <div class="queue-stat-label">${item.services?.length > 1 ? "service times" : "per person"}</div>
           </div>
           <div class="queue-divider"></div>
           <div class="queue-stat">
@@ -1756,23 +1926,60 @@ async function renderBusinessDetail(id) {
           </div>
         </div>
 
+        ${
+          item.services?.length
+            ? `
+          <section class="detail-services" aria-labelledby="detail-services-heading">
+            <h2 id="detail-services-heading" class="detail-services-heading">Services</h2>
+            <ul class="service-list">
+              ${item.services
+                .map(
+                  (service) => `
+                <li class="service-row">
+                  <span class="service-name">${escapeHtml(service.name)}</span>
+                  <span class="service-duration">${Number(service.duration_minutes) || 0} min</span>
+                </li>`
+                )
+                .join("")}
+            </ul>
+          </section>`
+            : ""
+        }
+
         <div class="detail-rating">
           ${icon("star")} <strong>${item.rating}</strong> <span class="reviews">(${item.reviews} reviews)</span>
         </div>
 
         <div class="detail-actions">
+          ${
+            queuePaused && !alreadyInQueue
+              ? `
+          <button
+            class="btn detail-book-btn"
+            type="button"
+            aria-label="Book ${escapeHtml(item.name)} for a future time"
+          >Book a visit</button>
+          <button
+            class="btn btn-ghost detail-join-btn is-paused"
+            type="button"
+            id="detail-join-btn"
+            disabled
+            aria-label="Queue on a break at ${escapeHtml(item.name)}"
+          >On a break</button>`
+              : `
           <button
             class="btn detail-join-btn${alreadyInQueue ? " in-queue" : ""}"
             type="button"
             id="detail-join-btn"
             aria-label="${escapeHtml(joinLabel)} at ${escapeHtml(item.name)}"
           >${alreadyInQueue ? `${joinLabel} ${icon("chevron")}` : joinLabel}</button>
-          <button class="btn btn-ghost detail-book-btn" type="button" aria-label="Book ${escapeHtml(item.name)} for later">Book for later</button>
+          <button class="btn btn-ghost detail-book-btn" type="button" aria-label="Book ${escapeHtml(item.name)} for later">Book for later</button>`
+          }
         </div>
         <p class="message" id="detail-message" role="status" aria-live="polite"></p>
       </div>
       </main>
-      ${bookingSheetHtml(item)}
+      ${bookingSheetHtml(item, { queuePaused })}
       ${joinSheetHtml(item)}
       ${tabbar("home")}
     </div>
@@ -1784,10 +1991,7 @@ async function renderBusinessDetail(id) {
   const message = document.getElementById("detail-message");
   const joinBtn = document.querySelector(".detail-join-btn");
 
-  if (!alreadyInQueue) {
-    bindJoinSheet(item, message);
-    joinBtn.onclick = () => openJoinSheet();
-  } else {
+  if (alreadyInQueue) {
     joinBtn.onclick = () => goToQueue(item.id);
     message.textContent = `You're #${myEntry.position} in this queue · about ${formatWaitMinutes(
       myEntry.estimated_wait_minutes
@@ -1795,6 +1999,12 @@ async function renderBusinessDetail(id) {
       myEntry.party_size > 1 ? ` · party of ${myEntry.party_size}` : ""
     }.`;
     message.classList.add("success");
+  } else if (queuePaused) {
+    message.textContent =
+      "This location is on a break and not accepting walk-ins. Book a future date and time instead.";
+  } else {
+    bindJoinSheet(item, message);
+    joinBtn.onclick = () => openJoinSheet();
   }
 
   bindBookingSheet(item, message);
@@ -1803,47 +2013,113 @@ async function renderBusinessDetail(id) {
 
 /* ---------------------------------------------------------------- bookings */
 
-// Bookings are limited to the next 24 hours, so the picker never offers a
-// time the API would reject.
-const BOOKING_WINDOW_HOURS = 24;
+// Advance bookings: pick any future date/time within this window.
+const BOOKING_WINDOW_DAYS = 14;
 
-function bookingSlots(now = new Date()) {
-  const slots = [];
-  const start = new Date(now.getTime() + 15 * 60 * 1000);
-  start.setMinutes(Math.ceil(start.getMinutes() / 15) * 15, 0, 0);
-  const limit = now.getTime() + BOOKING_WINDOW_HOURS * 60 * 60 * 1000;
+function toDateInputValue(date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
 
-  for (let t = start.getTime(); t <= limit; t += 15 * 60 * 1000) {
-    slots.push(new Date(t));
+function bookingDateBounds(now = new Date()) {
+  const min = new Date(now);
+  const max = new Date(now.getTime() + BOOKING_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+  return {
+    min: toDateInputValue(min),
+    max: toDateInputValue(max),
+  };
+}
+
+function bookingTimesForDate(dateStr, now = new Date()) {
+  const [year, month, day] = String(dateStr || "")
+    .split("-")
+    .map((part) => Number(part));
+  if (!year || !month || !day) return [];
+
+  const dayStart = new Date(year, month - 1, day, 0, 0, 0, 0);
+  const times = [];
+  const isToday = dayStart.toDateString() === now.toDateString();
+  let cursor = new Date(dayStart);
+  cursor.setHours(6, 0, 0, 0); // morning start
+  const end = new Date(dayStart);
+  end.setHours(21, 0, 0, 0); // evening end
+
+  if (isToday) {
+    const soon = new Date(now.getTime() + 15 * 60 * 1000);
+    soon.setMinutes(Math.ceil(soon.getMinutes() / 15) * 15, 0, 0);
+    if (soon > cursor) cursor = soon;
   }
-  return slots;
+
+  while (cursor <= end) {
+    if (cursor.getTime() > now.getTime()) {
+      times.push(new Date(cursor));
+    }
+    cursor = new Date(cursor.getTime() + 15 * 60 * 1000);
+  }
+  return times;
+}
+
+function formatBookingTimeOption(date) {
+  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
 function slotLabel(date) {
   const today = new Date();
-  const sameDay = date.toDateString() === today.toDateString();
+  const tomorrow = new Date(today);
+  tomorrow.setDate(today.getDate() + 1);
   const time = date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  return sameDay ? `Today ${time}` : `Tomorrow ${time}`;
+  if (date.toDateString() === today.toDateString()) return `Today ${time}`;
+  if (date.toDateString() === tomorrow.toDateString()) return `Tomorrow ${time}`;
+  const day = date.toLocaleDateString([], {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  });
+  return `${day} · ${time}`;
 }
 
-function bookingSheetHtml(item) {
-  const slots = bookingSlots();
+function bookingSheetHtml(item, { queuePaused = false } = {}) {
+  const bounds = bookingDateBounds();
+  const initialTimes = bookingTimesForDate(bounds.min);
+  const lead = queuePaused
+    ? `The live queue is on a break. Pick a future date and time to visit ${escapeHtml(item.name)}.`
+    : `Reserve your place at ${escapeHtml(item.name)}. You can book up to ${BOOKING_WINDOW_DAYS} days ahead.`;
+
   return `
     <div class="sheet-overlay hidden" id="booking-sheet" role="dialog" aria-modal="true" aria-labelledby="booking-sheet-title">
       <div class="sheet">
         <div class="sheet-handle" aria-hidden="true"></div>
-        <h3 id="booking-sheet-title">Book a slot</h3>
-        <p class="sheet-lead">
-          Reserve your place at ${escapeHtml(item.name)}. You can book up to
-          ${BOOKING_WINDOW_HOURS} hours ahead.
-        </p>
-        <div class="field">
-          <label for="booking-slot">Arrival time</label>
-          <select id="booking-slot">
-            ${slots
-              .map((slot) => `<option value="${slot.toISOString()}">${escapeHtml(slotLabel(slot))}</option>`)
-              .join("")}
-          </select>
+        <h3 id="booking-sheet-title">${queuePaused ? "Book a visit" : "Book a slot"}</h3>
+        <p class="sheet-lead">${lead}</p>
+        <div class="booking-fields">
+          <div class="field">
+            <label for="booking-date">Date</label>
+            <input
+              id="booking-date"
+              type="date"
+              min="${bounds.min}"
+              max="${bounds.max}"
+              value="${bounds.min}"
+              required
+            />
+          </div>
+          <div class="field">
+            <label for="booking-time">Time</label>
+            <select id="booking-time" required>
+              ${
+                initialTimes.length
+                  ? initialTimes
+                      .map(
+                        (slot) =>
+                          `<option value="${slot.toISOString()}">${escapeHtml(formatBookingTimeOption(slot))}</option>`
+                      )
+                      .join("")
+                  : `<option value="">No times left today — pick another date</option>`
+              }
+            </select>
+          </div>
         </div>
         <button class="btn" type="button" id="booking-confirm">Confirm booking</button>
         <button class="btn-link" type="button" id="booking-cancel">Not now</button>
@@ -1856,6 +2132,34 @@ function bookingSheetHtml(item) {
 const MAX_PARTY_SIZE = 10;
 
 function joinSheetHtml(item) {
+  const services = Array.isArray(item.services) ? item.services : [];
+  const servicePicker =
+    services.length > 1
+      ? `
+        <fieldset class="service-picker">
+          <legend>Which service?</legend>
+          ${services
+            .map(
+              (service, index) => `
+            <label class="service-option">
+              <input
+                type="radio"
+                name="join_service"
+                value="${service.id}"
+                ${index === 0 ? "checked" : ""}
+              />
+              <span>
+                <strong>${escapeHtml(service.name)}</strong>
+                <small>${Number(service.duration_minutes) || 0} min</small>
+              </span>
+            </label>`
+            )
+            .join("")}
+        </fieldset>`
+      : services.length === 1
+        ? `<p class="sheet-service-note">${escapeHtml(services[0].name)} · ${Number(services[0].duration_minutes) || 0} min</p>`
+        : "";
+
   return `
     <div class="sheet-overlay hidden" id="join-sheet" role="dialog" aria-modal="true" aria-labelledby="join-sheet-title">
       <div class="sheet">
@@ -1864,6 +2168,7 @@ function joinSheetHtml(item) {
         <p class="sheet-lead">
           Add everyone you're bringing to ${escapeHtml(item.name)}. You'll keep one place in line for the whole party.
         </p>
+        ${servicePicker}
         <div class="field">
           <label id="party-size-label" for="party-count">How many people?</label>
           <div class="party-stepper" role="group" aria-labelledby="party-size-label">
@@ -1964,6 +2269,18 @@ function bindJoinSheet(item, detailMessage, { bookingId = null } = {}) {
     try {
       const body = { party_size: partySize, party_names };
       if (bookingId) body.booking_id = Number(bookingId);
+      const services = Array.isArray(item.services) ? item.services : [];
+      if (services.length === 1) {
+        body.service_id = Number(services[0].id);
+      } else if (services.length > 1) {
+        const selected = document.querySelector('input[name="join_service"]:checked');
+        if (!selected) {
+          sheetMessage.textContent = "Choose a service first.";
+          btn.disabled = false;
+          return;
+        }
+        body.service_id = Number(selected.value);
+      }
       await api(`/customer/businesses/${item.id}/queue`, {
         method: "POST",
         body: JSON.stringify(body),
@@ -1995,6 +2312,23 @@ function bindJoinSheet(item, detailMessage, { bookingId = null } = {}) {
 function bindBookingSheet(item, detailMessage) {
   const sheet = document.getElementById("booking-sheet");
   const sheetMessage = document.getElementById("booking-message");
+  const dateInput = document.getElementById("booking-date");
+  const timeSelect = document.getElementById("booking-time");
+
+  const refreshTimes = () => {
+    const times = bookingTimesForDate(dateInput.value);
+    if (!times.length) {
+      timeSelect.innerHTML = `<option value="">No times left on this day — pick another date</option>`;
+      return;
+    }
+    timeSelect.innerHTML = times
+      .map(
+        (slot) =>
+          `<option value="${slot.toISOString()}">${escapeHtml(formatBookingTimeOption(slot))}</option>`
+      )
+      .join("");
+  };
+
   const close = () => {
     sheet.classList.add("hidden");
     document.querySelector(".detail-book-btn")?.focus();
@@ -2002,9 +2336,11 @@ function bindBookingSheet(item, detailMessage) {
 
   document.querySelector(".detail-book-btn").onclick = () => {
     sheetMessage.textContent = "";
+    refreshTimes();
     sheet.classList.remove("hidden");
-    requestAnimationFrame(() => document.getElementById("booking-slot")?.focus());
+    requestAnimationFrame(() => dateInput?.focus());
   };
+  dateInput?.addEventListener("change", refreshTimes);
   document.getElementById("booking-cancel").onclick = close;
   sheet.addEventListener("click", (event) => {
     if (event.target === sheet) close();
@@ -2021,7 +2357,11 @@ function bindBookingSheet(item, detailMessage) {
 
   document.getElementById("booking-confirm").onclick = async (event) => {
     const btn = event.currentTarget;
-    const scheduledFor = document.getElementById("booking-slot").value;
+    const scheduledFor = timeSelect.value;
+    if (!scheduledFor) {
+      sheetMessage.textContent = "Choose a date and time.";
+      return;
+    }
     btn.disabled = true;
     sheetMessage.textContent = "";
     try {
@@ -2088,7 +2428,16 @@ async function renderBookings() {
                 <span class="booking-time">${escapeHtml(
                   when.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
                 )}</span>
-                <span class="booking-day">${escapeHtml(slotLabel(when).split(" ")[0])}</span>
+                <span class="booking-day">${escapeHtml(
+                  (() => {
+                    const today = new Date();
+                    const tomorrow = new Date(today);
+                    tomorrow.setDate(today.getDate() + 1);
+                    if (when.toDateString() === today.toDateString()) return "Today";
+                    if (when.toDateString() === tomorrow.toDateString()) return "Tomorrow";
+                    return when.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
+                  })()
+                )}</span>
               </div>
               <div class="booking-meta">
                 <h2>${escapeHtml(booking.business_name)}</h2>
@@ -2109,7 +2458,7 @@ async function renderBookings() {
     <div class="placeholder-page">
       <main id="main-content" tabindex="-1">
         <h1>Bookings</h1>
-        <p class="page-lead">Reserved slots for the next ${BOOKING_WINDOW_HOURS} hours.</p>
+        <p class="page-lead">Your upcoming reserved visits (up to ${BOOKING_WINDOW_DAYS} days ahead).</p>
         <div class="booking-list">${list}</div>
         <p class="message" id="bookings-message" role="status" aria-live="polite"></p>
       </main>
@@ -2148,6 +2497,9 @@ async function renderBookings() {
         go("queue");
       } catch (error) {
         if (error.status === 409) return go("queue");
+        if (error.status === 400 && error.payload?.needs_service) {
+          return go(`business-${Number(btn.dataset.join)}`);
+        }
         message.textContent = error.message;
         btn.disabled = false;
       }
@@ -2177,11 +2529,11 @@ function stopQueuePolling() {
  * every ten seconds.
  */
 function queuePollDelay(entries) {
-  if (!entries.length) return 30000;
+  if (!entries.length) return 45000;
   const soonest = Math.min(...entries.map((entry) => entry.position ?? Infinity));
-  if (soonest <= 3) return 10000;
-  if (soonest <= 8) return 20000;
-  return 45000;
+  if (soonest <= 3) return 12000;
+  if (soonest <= 8) return 25000;
+  return 60000;
 }
 
 function queueMilestone(position) {
@@ -2223,6 +2575,15 @@ function queueCardHtml(entry) {
           <div class="queue-facts">
             <span><strong>${ahead}</strong> ahead</span>
             <span><strong>${escapeHtml(waitLabel)}</strong> est. wait</span>
+            ${
+              entry.service_name
+                ? `<span><strong>${escapeHtml(entry.service_name)}</strong>${
+                    entry.service_duration_minutes
+                      ? ` · ${entry.service_duration_minutes} min`
+                      : ""
+                  }</span>`
+                : ""
+            }
             ${
               entry.party_size > 1
                 ? `<span><strong>${entry.party_size}</strong> in your party</span>`
@@ -2327,6 +2688,7 @@ async function renderQueue() {
   let navObserver = null;
 
   let lastAnnouncement = "";
+  let lastQueueFingerprint = "";
   const paint = (inner, nav = "", { announce = "" } = {}) => {
     const focusKey = document.getElementById("queue-body") ? captureFocusKey() : null;
     app.innerHTML = `
@@ -2390,6 +2752,20 @@ async function renderQueue() {
       if (waitDiff !== 0) return waitDiff;
       return (a.position ?? 0) - (b.position ?? 0);
     });
+
+    const fingerprint = JSON.stringify(
+      entries.map((entry) => [
+        entry.id,
+        entry.position,
+        entry.people_ahead,
+        entry.estimated_wait_minutes,
+        entry.queue_length,
+      ])
+    );
+    if (fingerprint === lastQueueFingerprint && document.getElementById("queue-body")) {
+      return;
+    }
+    lastQueueFingerprint = fingerprint;
 
     // Rebuilding the whole shell keeps the sticky nav in sync with the cards.
     navObserver?.disconnect();

@@ -3,18 +3,25 @@ package tech.thewolfgang.queueless.vendor.ui.services
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import tech.thewolfgang.queueless.vendor.data.ApiException
+import tech.thewolfgang.queueless.vendor.data.BusinessProfile
 import tech.thewolfgang.queueless.vendor.data.BusinessService
 import tech.thewolfgang.queueless.vendor.data.VendorRepository
 
 data class ServicesUiState(
     val loading: Boolean = true,
     val saving: Boolean = false,
+    val branchId: Int = 0,
+    val branchName: String = "",
+    val businessName: String? = null,
+    val location: String? = null,
+    val siblingBranches: List<BusinessProfile> = emptyList(),
     val services: List<BusinessService> = emptyList(),
     val editingId: Int? = null,
     val name: String = "",
@@ -24,13 +31,20 @@ data class ServicesUiState(
     val error: String? = null,
     val savedMessage: String? = null,
     val unauthorized: Boolean = false,
-)
+) {
+    val branchMeta: String?
+        get() = listOfNotNull(businessName, location)
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .joinToString(" · ")
+            .ifBlank { null }
+}
 
 class ServicesViewModel(
     private val branchId: Int,
     private val repository: VendorRepository,
 ) : ViewModel() {
-    private val _uiState = MutableStateFlow(ServicesUiState())
+    private val _uiState = MutableStateFlow(ServicesUiState(branchId = branchId))
     val uiState: StateFlow<ServicesUiState> = _uiState.asStateFlow()
 
     init {
@@ -41,9 +55,22 @@ class ServicesViewModel(
         viewModelScope.launch {
             _uiState.update { it.copy(loading = true, error = null) }
             try {
-                val services = repository.services(branchId)
+                val businessDeferred = async { repository.business(branchId) }
+                val branchesDeferred = async { repository.branches(branchId) }
+                val servicesDeferred = async { repository.services(branchId) }
+                val business = businessDeferred.await()
+                val branches = branchesDeferred.await()
+                val services = servicesDeferred.await()
                 _uiState.update {
-                    it.copy(loading = false, services = services)
+                    it.copy(
+                        loading = false,
+                        branchId = business.id,
+                        branchName = business.name,
+                        businessName = business.businessName ?: branches.businessName,
+                        location = business.location,
+                        siblingBranches = branches.branches,
+                        services = services,
+                    )
                 }
             } catch (e: ApiException) {
                 _uiState.update {

@@ -181,5 +181,20 @@ export function requireVendor(req, res, next) {
   }
 }
 
+/** Admin or vendor — used for shared tools like Kenya place search. */
+export function requireAdminOrVendor(req, res, next) {
+  try {
+    const payload = readToken(req);
+    if (!payload || (payload.role !== "admin" && payload.role !== "vendor")) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    if (payload.role === "admin") req.admin = payload;
+    if (payload.role === "vendor") req.vendor = payload;
+    return next();
+  } catch {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+}
+
 /** @deprecated use requireAdmin */
 export const requireAuth = requireAdmin;

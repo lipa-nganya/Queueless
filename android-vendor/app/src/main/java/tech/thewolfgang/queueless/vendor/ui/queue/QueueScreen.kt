@@ -166,6 +166,14 @@ fun QueueScreen(
                             )
                         }
 
+                        item {
+                            QueuePauseCard(
+                                paused = business.queuePaused,
+                                enabled = !state.actionBusy,
+                                onToggle = viewModel::toggleQueuePause,
+                            )
+                        }
+
                         if (!state.error.isNullOrBlank()) {
                             item {
                                 Text(
@@ -227,6 +235,63 @@ private fun StatCard(label: String, value: String, modifier: Modifier = Modifier
     ) {
         Text(text = value, color = Lime, fontSize = 22.sp, fontWeight = FontWeight.Bold)
         Text(text = label, color = TextMuted, fontSize = 12.sp)
+    }
+}
+
+@Composable
+private fun QueuePauseCard(
+    paused: Boolean,
+    enabled: Boolean,
+    onToggle: () -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(
+                if (paused) Danger.copy(alpha = 0.12f) else SurfaceCard,
+                RoundedCornerShape(14.dp),
+            )
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Column {
+            Text(
+                text = if (paused) "Queue paused" else "Queue open",
+                color = TextPrimary,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                text = if (paused) {
+                    "Customers cannot join right now. You can still serve people already waiting."
+                } else {
+                    "Customers can join this queue. Pause to take a short break."
+                },
+                color = TextMuted,
+                fontSize = 13.sp,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+        }
+        if (paused) {
+            Button(
+                onClick = onToggle,
+                enabled = enabled,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Lime,
+                    contentColor = Navy,
+                ),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Resume queue")
+            }
+        } else {
+            OutlinedButton(
+                onClick = onToggle,
+                enabled = enabled,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Pause / take a break")
+            }
+        }
     }
 }
 

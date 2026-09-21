@@ -165,6 +165,21 @@ export async function migrate() {
       ON vendors (phone)
       WHERE phone IS NOT NULL;
 
+    -- FCM device tokens for vendor push (activation, trial, queue alerts).
+    CREATE TABLE IF NOT EXISTS vendor_push_tokens (
+      id SERIAL PRIMARY KEY,
+      vendor_id INTEGER NOT NULL REFERENCES vendors(id) ON DELETE CASCADE,
+      token TEXT NOT NULL,
+      platform TEXT NOT NULL DEFAULT 'android',
+      device_label TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (token)
+    );
+
+    CREATE INDEX IF NOT EXISTS vendor_push_tokens_vendor_id
+      ON vendor_push_tokens (vendor_id);
+
     -- Branches are physical sites under a brand business. Existing businesses
     -- are backfilled as a single "Main" branch below.
     CREATE TABLE IF NOT EXISTS business_branches (
@@ -189,6 +204,12 @@ export async function migrate() {
     ALTER TABLE business_branches
       ADD COLUMN IF NOT EXISTS accessibility_options TEXT;
 
+    ALTER TABLE business_branches
+      ADD COLUMN IF NOT EXISTS landmark TEXT;
+
+    ALTER TABLE business_branches
+      ADD COLUMN IF NOT EXISTS queue_paused BOOLEAN NOT NULL DEFAULT false;
+
     INSERT INTO business_branches (
       business_id, name, location, latitude, longitude, phone, operating_hours,
       queue_size, avg_wait_minutes, is_active
@@ -208,6 +229,18 @@ export async function migrate() {
     WHERE NOT EXISTS (
       SELECT 1 FROM business_branches bb WHERE bb.business_id = b.id
     );
+
+    -- Phone lives on branches only: copy any leftover business phone onto
+    -- branches that still lack one, then clear the business-level column.
+    UPDATE business_branches bb
+    SET phone = b.phone
+    FROM businesses b
+    WHERE b.id = bb.business_id
+      AND b.phone IS NOT NULL
+      AND TRIM(b.phone) <> ''
+      AND (bb.phone IS NULL OR TRIM(bb.phone) = '');
+
+    UPDATE businesses SET phone = NULL WHERE phone IS NOT NULL;
 
     ALTER TABLE queue_entries ADD COLUMN IF NOT EXISTS branch_id INTEGER
       REFERENCES business_branches(id) ON DELETE CASCADE;
@@ -241,21 +274,100 @@ export async function migrate() {
       ON queue_entries (branch_id, joined_at)
       WHERE status = 'waiting';
 
-    -- Catalog of services offered by a business (shared across its branches).
-    -- duration_minutes is the service period used for wait estimates.
+    -- Catalog of services offered at a branch (wait estimates use duration_minutes).
     CREATE TABLE IF NOT EXISTS business_services (
       id SERIAL PRIMARY KEY,
       business_id INTEGER NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+      branch_id INTEGER REFERENCES business_branches(id) ON DELETE CASCADE,
       name TEXT NOT NULL,
       duration_minutes INTEGER NOT NULL DEFAULT 15,
       description TEXT,
       is_active BOOLEAN NOT NULL DEFAULT true,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      UNIQUE (business_id, name)
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
     CREATE INDEX IF NOT EXISTS business_services_business_id
       ON business_services (business_id);
+
+    -- Move legacy brand-level services onto branches (clone to every branch).
+    ALTER TABLE business_services
+      ADD COLUMN IF NOT EXISTS branch_id INTEGER REFERENCES business_branches(id) ON DELETE CASCADE;
+
+    ALTER TABLE business_services
+      DROP CONSTRAINT IF EXISTS business_services_business_id_name_key;
+
+    UPDATE business_services bs
+    SET branch_id = (
+      SELECT bb.id
+      FROM business_branches bb
+      WHERE bb.business_id = bs.business_id
+      ORDER BY bb.id ASC
+      LIMIT 1
+    )
+    WHERE bs.branch_id IS NULL;
+
+    INSERT INTO business_services (
+      business_id, branch_id, name, duration_minutes, description, is_active, created_at
+    )
+    SELECT
+      bs.business_id,
+      bb.id,
+      bs.name,
+      bs.duration_minutes,
+      bs.description,
+      bs.is_active,
+      NOW()
+    FROM business_services bs
+    INNER JOIN business_branches bb ON bb.business_id = bs.business_id
+    WHERE bs.branch_id IS NOT NULL
+      AND bb.id <> bs.branch_id
+      AND NOT EXISTS (
+        SELECT 1
+        FROM business_services existing
+        WHERE existing.branch_id = bb.id
+          AND existing.name = bs.name
+      );
+
+    DELETE FROM business_services WHERE branch_id IS NULL;
+
+    ALTER TABLE business_services
+      ALTER COLUMN branch_id SET NOT NULL;
+
+    CREATE UNIQUE INDEX IF NOT EXISTS business_services_branch_name_unique
+      ON business_services (branch_id, name);
+
+    CREATE INDEX IF NOT EXISTS business_services_branch_id
+      ON business_services (branch_id);
+
+    -- Which service a customer is waiting for (drives wait estimates).
+    ALTER TABLE queue_entries
+      ADD COLUMN IF NOT EXISTS service_id INTEGER REFERENCES business_services(id) ON DELETE SET NULL;
+
+    CREATE INDEX IF NOT EXISTS queue_entries_service_id
+      ON queue_entries (service_id)
+      WHERE service_id IS NOT NULL;
+
+    -- Keep branch avg wait aligned with that branch's active service periods.
+    UPDATE business_branches br
+    SET avg_wait_minutes = sub.avg_duration
+    FROM (
+      SELECT branch_id, ROUND(AVG(duration_minutes))::int AS avg_duration
+      FROM business_services
+      WHERE is_active = true
+      GROUP BY branch_id
+    ) sub
+    WHERE br.id = sub.branch_id
+      AND sub.avg_duration IS NOT NULL;
+
+    UPDATE businesses b
+    SET avg_wait_minutes = sub.avg_duration
+    FROM (
+      SELECT business_id, ROUND(AVG(avg_wait_minutes))::int AS avg_duration
+      FROM business_branches
+      GROUP BY business_id
+    ) sub
+    WHERE b.id = sub.business_id
+      AND sub.avg_duration IS NOT NULL;
   `);
 }
 

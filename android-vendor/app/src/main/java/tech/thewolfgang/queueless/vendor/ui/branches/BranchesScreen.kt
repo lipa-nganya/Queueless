@@ -1,5 +1,10 @@
 package tech.thewolfgang.queueless.vendor.ui.branches
 
+import android.Manifest
+import android.annotation.SuppressLint
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -15,6 +20,11 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
@@ -24,12 +34,22 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.google.android.gms.location.FusedLocationProviderClient
+import com.google.android.gms.location.LocationServices
+import com.google.android.gms.location.Priority
+import com.google.android.gms.tasks.CancellationTokenSource
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.tasks.await
 import tech.thewolfgang.queueless.vendor.data.BusinessProfile
 import tech.thewolfgang.queueless.vendor.ui.components.TopBar
 import tech.thewolfgang.queueless.vendor.ui.components.VendorBottomBar
@@ -41,6 +61,7 @@ import tech.thewolfgang.queueless.vendor.ui.theme.SurfaceCard
 import tech.thewolfgang.queueless.vendor.ui.theme.TextMuted
 import tech.thewolfgang.queueless.vendor.ui.theme.TextPrimary
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BranchesScreen(
     viewModel: BranchesViewModel,
@@ -52,9 +73,47 @@ fun BranchesScreen(
     onUnauthorized: () -> Unit,
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val fusedLocationClient = remember {
+        LocationServices.getFusedLocationProviderClient(context)
+    }
 
     LaunchedEffect(state.unauthorized) {
         if (state.unauthorized) onUnauthorized()
+    }
+
+    fun hasLocationPermission(): Boolean {
+        val fine = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.ACCESS_FINE_LOCATION,
+        ) == PackageManager.PERMISSION_GRANTED
+        val coarse = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.ACCESS_COARSE_LOCATION,
+        ) == PackageManager.PERMISSION_GRANTED
+        return fine || coarse
+    }
+
+    fun fetchCurrentLocation() {
+        scope.launch {
+            viewModel.beginLocating()
+            readDeviceLocation(fusedLocationClient)?.let { (lat, lon) ->
+                viewModel.applyCurrentLocation(lat, lon)
+            } ?: viewModel.onLocationUnavailable()
+        }
+    }
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { grants ->
+        val granted = grants[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
+            grants[Manifest.permission.ACCESS_COARSE_LOCATION] == true
+        if (granted) {
+            fetchCurrentLocation()
+        } else {
+            viewModel.onLocationPermissionDenied()
+        }
     }
 
     val fieldColors = OutlinedTextFieldDefaults.colors(
@@ -107,7 +166,7 @@ fun BranchesScreen(
                         )
                         Text(
                             text = state.businessName?.let {
-                                "Locations for $it. Hours and accessibility are edited per branch."
+                                "Locations for $it. Services and settings are managed per branch."
                             } ?: "Add and manage locations for this business.",
                             color = TextMuted,
                         )
@@ -147,14 +206,68 @@ fun BranchesScreen(
                             modifier = Modifier.fillMaxWidth(),
                             colors = fieldColors,
                         )
+
+                        ExposedDropdownMenuBox(
+                            expanded = state.locationMenuExpanded,
+                            onExpandedChange = { /* driven by suggestions */ },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            OutlinedTextField(
+                                value = state.location,
+                                onValueChange = viewModel::onLocationChange,
+                                label = { Text("Location") },
+                                placeholder = { Text("Start typing a Kenya place…") },
+                                singleLine = true,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .menuAnchor(MenuAnchorType.PrimaryEditable),
+                                colors = fieldColors,
+                            )
+                            ExposedDropdownMenu(
+                                expanded = state.locationMenuExpanded && state.locationSuggestions.isNotEmpty(),
+                                onDismissRequest = viewModel::dismissLocationSuggestions,
+                            ) {
+                                state.locationSuggestions.forEach { place ->
+                                    DropdownMenuItem(
+                                        text = { Text(place.label, color = TextPrimary) },
+                                        onClick = { viewModel.onPlaceSelected(place) },
+                                        contentPadding = ExposedDropdownMenuDefaults.ItemContentPadding,
+                                    )
+                                }
+                            }
+                        }
+
+                        OutlinedButton(
+                            onClick = {
+                                if (!hasLocationPermission()) {
+                                    permissionLauncher.launch(
+                                        arrayOf(
+                                            Manifest.permission.ACCESS_FINE_LOCATION,
+                                            Manifest.permission.ACCESS_COARSE_LOCATION,
+                                        ),
+                                    )
+                                } else {
+                                    fetchCurrentLocation()
+                                }
+                            },
+                            enabled = !state.locating && !state.saving,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(
+                                if (state.locating) "Finding location…" else "Use my current location",
+                            )
+                        }
+
                         OutlinedTextField(
-                            value = state.location,
-                            onValueChange = viewModel::onLocationChange,
-                            label = { Text("Location") },
+                            value = state.landmark,
+                            onValueChange = viewModel::onLandmarkChange,
+                            label = { Text("Landmark (optional)") },
+                            placeholder = { Text("e.g. Opposite Naivas, next to the blue gate") },
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth(),
                             colors = fieldColors,
                         )
+
                         OutlinedTextField(
                             value = state.phone,
                             onValueChange = viewModel::onPhoneChange,
@@ -229,6 +342,23 @@ fun BranchesScreen(
     }
 }
 
+@SuppressLint("MissingPermission")
+private suspend fun readDeviceLocation(
+    client: FusedLocationProviderClient,
+): Pair<Double, Double>? {
+    val cancellation = CancellationTokenSource()
+    return try {
+        val location = client
+            .getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, cancellation.token)
+            .await()
+        if (location != null) location.latitude to location.longitude else null
+    } catch (_: Exception) {
+        null
+    } finally {
+        cancellation.cancel()
+    }
+}
+
 @Composable
 private fun BranchCard(
     branch: BusinessProfile,
@@ -251,6 +381,7 @@ private fun BranchCard(
         Text(
             text = listOfNotNull(
                 branch.location?.takeIf { it.isNotBlank() } ?: "No location set",
+                branch.landmark?.takeIf { it.isNotBlank() },
                 branch.phone?.takeIf { it.isNotBlank() },
             ).joinToString(" · "),
             color = TextMuted,
@@ -264,7 +395,7 @@ private fun BranchCard(
                 Text("Edit")
             }
             OutlinedButton(onClick = onHours) {
-                Text("Hours")
+                Text("Settings")
             }
         }
     }

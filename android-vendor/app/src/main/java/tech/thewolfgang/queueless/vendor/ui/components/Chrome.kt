@@ -164,7 +164,7 @@ fun VendorBottomBar(
             )
             BottomItem(
                 selected = selected == VendorTab.Profile,
-                label = "Hours",
+                label = "Settings",
                 icon = Icons.Filled.Person,
                 onClick = onProfile,
                 role = BottomRole.Tab,

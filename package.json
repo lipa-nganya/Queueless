@@ -1,7 +1,9 @@
 {
   "name": "queueless-kenya",
   "private": true,
+  "type": "module",
   "dependencies": {
+    "express": "^4.21.2",
     "nodemailer": "^6.10.1"
   }
 }

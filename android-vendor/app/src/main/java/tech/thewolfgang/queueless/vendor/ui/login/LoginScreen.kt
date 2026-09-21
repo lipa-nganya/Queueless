@@ -52,12 +52,22 @@ import androidx.compose.ui.semantics.semantics
 fun LoginScreen(
     viewModel: LoginViewModel,
     onLoggedIn: () -> Unit,
+    onRegisterPush: suspend (phoneForPending: String?) -> Unit = {},
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val focusManager = LocalFocusManager.current
 
     LaunchedEffect(state.loggedIn) {
-        if (state.loggedIn) onLoggedIn()
+        if (state.loggedIn) {
+            onRegisterPush(null)
+            onLoggedIn()
+        }
+    }
+
+    LaunchedEffect(state.step, state.phone) {
+        if (state.step == LoginStep.PendingActivation && state.phone.isNotBlank()) {
+            onRegisterPush(state.phone)
+        }
     }
 
     Box(
@@ -91,10 +101,11 @@ fun LoginScreen(
             )
             Text(
                 text = when (state.step) {
-                    LoginStep.Phone -> "Vendor sign in — use your phone number."
+                    LoginStep.Phone -> "Vendor sign in or create an account with your phone number."
                     LoginStep.Pin -> "Enter your 4-digit PIN."
                     LoginStep.Otp -> "Enter the SMS code we sent you."
                     LoginStep.SetPin -> "Create and confirm your 4-digit PIN."
+                    LoginStep.PendingActivation -> "Account pending activation"
                 },
                 color = TextMuted,
             )
@@ -239,12 +250,29 @@ fun LoginScreen(
                         colors = fieldColors(),
                     )
                     PrimaryButton(
-                        label = "Save PIN & sign in",
+                        label = "Save PIN",
                         loading = state.loading,
                         onClick = {
                             focusManager.clearFocus()
                             viewModel.savePin()
                         },
+                    )
+                }
+
+                LoginStep.PendingActivation -> {
+                    Text(
+                        text = "+${state.phone}",
+                        color = TextPrimary,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(
+                        text = "We'll notify you on this device when an admin activates your account. Then sign in with your phone and PIN.",
+                        color = TextMuted,
+                    )
+                    PrimaryButton(
+                        label = "Back to sign in",
+                        loading = false,
+                        onClick = viewModel::backToPhone,
                     )
                 }
             }

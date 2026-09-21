@@ -3,11 +3,12 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Queueless Kenya — Coming Soon</title>
+    <title>Queueless — Smart service. Zero wait.</title>
     <meta
       name="description"
-      content="Queueless Kenya is coming soon. Smart service. Zero wait."
+      content="Queueless helps customers skip physical queues across Kenya, and helps businesses run live queues from web or Android."
     />
+    <meta name="theme-color" content="#0a0f1a" />
     <link rel="icon" href="assets/queueless-logo.png" type="image/png" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -15,343 +16,185 @@
       href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&display=swap"
       rel="stylesheet"
     />
-    <style>
-      :root {
-        --void: #000000;
-        --void-soft: #0a0a0a;
-        --lime: #b6e63a;
-        --lime-deep: #8fbf1f;
-        --lime-glow: rgba(182, 230, 58, 0.22);
-        --white: #ffffff;
-        --white-dim: rgba(255, 255, 255, 0.68);
-        --white-faint: rgba(255, 255, 255, 0.38);
-        --line: rgba(255, 255, 255, 0.14);
-        --font: "Montserrat", sans-serif;
-      }
-
-      *,
-      *::before,
-      *::after {
-        box-sizing: border-box;
-        margin: 0;
-        padding: 0;
-      }
-
-      html,
-      body {
-        height: 100%;
-      }
-
-      body {
-        font-family: var(--font);
-        color: var(--white);
-        background: var(--void);
-        overflow-x: hidden;
-        -webkit-font-smoothing: antialiased;
-      }
-
-      .stage {
-        position: relative;
-        min-height: 100dvh;
-        display: grid;
-        place-items: center;
-        padding: clamp(1.5rem, 4vw, 3rem);
-        isolation: isolate;
-      }
-
-      .sky {
-        position: absolute;
-        inset: 0;
-        z-index: -2;
-        background: #000000;
-      }
-
-      .glow {
-        position: absolute;
-        z-index: -1;
-        left: 50%;
-        top: 28%;
-        width: min(70vw, 520px);
-        height: min(40vw, 320px);
-        translate: -50% -50%;
-        background: radial-gradient(
-          ellipse at center,
-          var(--lime-glow),
-          transparent 68%
-        );
-        filter: blur(8px);
-        animation: glow-pulse 6.5s ease-in-out infinite;
-        pointer-events: none;
-      }
-
-      .content {
-        width: min(100%, 36rem);
-        text-align: center;
-      }
-
-      .logo {
-        display: block;
-        width: min(58vw, 16rem);
-        max-width: 536px;
-        height: auto;
-        margin-inline: auto;
-        image-rendering: auto;
-        opacity: 0;
-        animation: rise 0.95s cubic-bezier(0.22, 1, 0.36, 1) 0.1s forwards;
-      }
-
-      .headline {
-        margin-top: clamp(1.6rem, 4vw, 2.25rem);
-        font-size: clamp(1.15rem, 3vw, 1.45rem);
-        font-weight: 700;
-        letter-spacing: 0.22em;
-        text-transform: uppercase;
-        opacity: 0;
-        animation: rise 0.95s cubic-bezier(0.22, 1, 0.36, 1) 0.35s forwards;
-      }
-
-      .headline .accent {
-        color: var(--lime);
-      }
-
-      .support {
-        margin-top: 0.85rem;
-        font-size: clamp(0.95rem, 2.1vw, 1.05rem);
-        font-weight: 400;
-        line-height: 1.6;
-        color: var(--white-dim);
-        max-width: 26rem;
-        margin-inline: auto;
-        opacity: 0;
-        animation: rise 0.95s cubic-bezier(0.22, 1, 0.36, 1) 0.5s forwards;
-      }
-
-      .cta {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 0.65rem;
-        justify-content: center;
-        margin-top: clamp(1.6rem, 4vw, 2.2rem);
-        opacity: 0;
-        animation: rise 0.95s cubic-bezier(0.22, 1, 0.36, 1) 0.65s forwards;
-      }
-
-      .cta input {
-        flex: 1 1 14rem;
-        max-width: 18rem;
-        height: 3rem;
-        padding: 0 1.1rem;
-        border: 1px solid var(--line);
-        border-radius: 0;
-        background: rgba(0, 0, 0, 0.72);
-        color: var(--white);
-        font: inherit;
-        font-size: 0.9rem;
-        font-weight: 500;
-        outline: none;
-        transition: border-color 0.2s ease, background 0.2s ease;
-      }
-
-      .cta input::placeholder {
-        color: var(--white-faint);
-      }
-
-      .cta input:focus {
-        border-color: rgba(182, 230, 58, 0.7);
-        background: rgba(0, 0, 0, 0.95);
-      }
-
-      .cta button {
-        height: 3rem;
-        padding: 0 1.45rem;
-        border: none;
-        border-radius: 0;
-        background: var(--lime);
-        color: var(--void);
-        font-family: var(--font);
-        font-weight: 700;
-        font-size: 0.78rem;
-        letter-spacing: 0.12em;
-        text-transform: uppercase;
-        cursor: pointer;
-        transition: background 0.2s ease, transform 0.2s ease;
-      }
-
-      .cta button:hover {
-        background: #c8f04f;
-        transform: translateY(-1px);
-      }
-
-      .cta button:active {
-        transform: translateY(0);
-      }
-
-      .cta button:disabled {
-        opacity: 0.65;
-        cursor: wait;
-        transform: none;
-      }
-
-      .hp {
-        position: absolute;
-        left: -9999px;
-        width: 1px;
-        height: 1px;
-        opacity: 0;
-        pointer-events: none;
-      }
-
-      .note {
-        margin-top: 0.85rem;
-        font-size: 0.78rem;
-        font-weight: 500;
-        letter-spacing: 0.04em;
-        color: var(--white-faint);
-        min-height: 1.2em;
-        opacity: 0;
-        animation: rise 0.95s cubic-bezier(0.22, 1, 0.36, 1) 0.8s forwards;
-      }
-
-      .note.is-success {
-        color: var(--lime);
-      }
-
-      @keyframes rise {
-        from {
-          opacity: 0;
-          transform: translateY(1.15rem);
-        }
-        to {
-          opacity: 1;
-          transform: translateY(0);
-        }
-      }
-
-      @keyframes glow-pulse {
-        0%,
-        100% {
-          opacity: 0.7;
-          transform: translate(-50%, -50%) scale(1);
-        }
-        50% {
-          opacity: 1;
-          transform: translate(-50%, -50%) scale(1.08);
-        }
-      }
-
-      @media (prefers-reduced-motion: reduce) {
-        .glow,
-        .logo,
-        .headline,
-        .support,
-        .cta,
-        .note {
-          animation: none;
-          opacity: 1;
-          transform: none;
-        }
-      }
-    </style>
+    <link rel="stylesheet" href="./landing.css" />
   </head>
   <body>
-    <main class="stage">
-      <div class="sky" aria-hidden="true"></div>
-      <div class="glow" aria-hidden="true"></div>
+    <a class="skip-link" href="#main-content">Skip to main content</a>
 
-      <div class="content">
-        <h1>
-          <img
-            class="logo"
-            src="assets/queueless-logo.png"
-            width="536"
-            height="462"
-            alt="Queueless — Smart Service. Zero Wait."
-          />
-        </h1>
-        <p class="headline">Coming <span class="accent">Soon</span></p>
-        <p class="support">
-          We're building a smarter way to move through queues across Kenya.
+    <header class="site-header">
+      <span class="sr-only">Queueless</span>
+      <nav class="nav-links" aria-label="Landing">
+        <a href="#customers">Customers</a>
+        <a href="#vendors">Vendors</a>
+      </nav>
+    </header>
+
+    <main id="main-content">
+      <section class="hero" aria-label="Queueless">
+        <div class="hero-media" aria-hidden="true"></div>
+        <div class="hero-grid" aria-hidden="true"></div>
+        <div class="hero-glow" aria-hidden="true"></div>
+
+        <div class="hero-inner">
+          <div class="brand-lockup">
+            <h1>
+              <img
+                src="assets/queueless-logo.png"
+                width="536"
+                height="462"
+                alt="Queueless"
+              />
+            </h1>
+            <div class="hero-copy">
+              <p>Smart service. Zero wait — join live queues or run your counter from anywhere in Kenya.</p>
+            </div>
+            <div class="hero-actions">
+              <a class="btn btn-primary" id="cta-customer-hero" href="/customer/">Join a queue</a>
+              <a class="btn btn-ghost" href="#vendors">I’m a business</a>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="customers">
+        <p class="section-kicker">For customers</p>
+        <h2>Get in line without standing in one.</h2>
+        <p class="section-lead">
+          Find nearby services, check live wait times, join a queue or book ahead —
+          then show up when it’s nearly your turn.
         </p>
-        <form class="cta" id="notify-form" novalidate>
-          <label
-            class="visually-hidden"
-            for="email"
-            style="
-              position: absolute;
-              width: 1px;
-              height: 1px;
-              overflow: hidden;
-              clip: rect(0 0 0 0);
-            "
-          >
-            Email address
-          </label>
-          <input
-            id="email"
-            name="email"
-            type="email"
-            placeholder="Your email"
-            autocomplete="email"
-            required
-          />
-          <input
-            class="hp"
-            type="text"
-            name="company"
-            tabindex="-1"
-            autocomplete="off"
-            aria-hidden="true"
-          />
-          <button type="submit">Notify me</button>
-        </form>
-        <p class="note" id="form-note" role="status" aria-live="polite"></p>
-      </div>
+        <div class="path-grid">
+          <article class="path">
+            <h3>Open the customer app</h3>
+            <p class="path-version" id="customer-app-version">v1.1.0</p>
+            <p>
+              Sign in with your phone, discover businesses around you, and manage your
+              place in line from one screen.
+            </p>
+            <div class="path-actions">
+              <a class="btn btn-primary" id="cta-customer" href="/customer/">Go to Queueless</a>
+            </div>
+          </article>
+          <article class="path">
+            <h3>What you can do</h3>
+            <p>
+              See travel time to each branch, join with a party, track your position,
+              and leave when plans change — without losing the morning at the door.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section" id="vendors">
+        <p class="section-kicker">For vendors</p>
+        <h2>Run your queues from the counter or your pocket.</h2>
+        <p class="section-lead">
+          Create your vendor account yourself. After admin activation you’ll get an SMS,
+          then manage branches, hours, services, and live queues on web or Android.
+        </p>
+        <div class="path-grid">
+          <article class="path">
+            <h3>Vendor web</h3>
+            <p class="path-version" id="vendor-web-version">v1.1.0</p>
+            <p>
+              Self-register with your phone, set a PIN, and sign in once your account
+              is activated. Best for the desk and larger screens.
+            </p>
+            <div class="path-actions">
+              <a
+                class="btn btn-primary"
+                id="cta-vendor-web"
+                href="https://vendor.queueless.thewolfgang.tech"
+                >Create account / Sign in</a
+              >
+            </div>
+          </article>
+          <article class="path">
+            <h3>Vendor Android app</h3>
+            <p class="path-version" id="vendor-app-version">v1.1.0</p>
+            <p>
+              The same queue desk on your phone — walk the floor, mark walk-ins, and
+              call the next guest without leaving the counter.
+            </p>
+            <div class="path-actions">
+              <a
+                class="btn btn-primary"
+                id="cta-vendor-app"
+                hidden
+                href="#"
+                >Download Android app</a
+              >
+              <a
+                class="btn btn-ghost"
+                id="cta-vendor-web-secondary"
+                href="https://vendor.queueless.thewolfgang.tech"
+                >Use vendor web</a
+              >
+            </div>
+            <p class="path-note" id="vendor-app-note">
+              Android app installs are available for activated vendors. Start on web,
+              then ask Wolfgang for the app build if you need it on device.
+            </p>
+          </article>
+        </div>
+      </section>
     </main>
 
+    <footer class="site-footer">
+      <div class="site-footer-inner">
+        <p>© <span id="year"></span> Queueless · Kenya</p>
+        <p>
+          <a id="footer-customer" href="/customer/">Customer app</a>
+          ·
+          <a id="footer-vendor" href="https://vendor.queueless.thewolfgang.tech">Vendor</a>
+        </p>
+      </div>
+    </footer>
+
+    <script src="./landing-config.js"></script>
     <script>
-      const form = document.getElementById("notify-form");
-      const note = document.getElementById("form-note");
-      const button = form.querySelector('button[type="submit"]');
+      (function () {
+        const links = window.QUEUELESS_LANDING || {};
+        const customerUrl = links.customerUrl || "/customer/";
+        const vendorWebUrl =
+          links.vendorWebUrl || "https://vendor.queueless.thewolfgang.tech";
+        const vendorAppUrl = String(links.vendorAppUrl || "").trim();
 
-      form.addEventListener("submit", async (event) => {
-        event.preventDefault();
-        const data = new FormData(form);
-        const email = data.get("email")?.toString().trim();
-        const company = data.get("company")?.toString().trim();
+        const setHref = (id, href) => {
+          const el = document.getElementById(id);
+          if (el && href) el.setAttribute("href", href);
+        };
 
-        if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-          note.textContent = "Please enter a valid email.";
-          note.classList.remove("is-success");
-          return;
-        }
+        const setVersion = (id, version) => {
+          const el = document.getElementById(id);
+          const value = String(version || "").trim();
+          if (el && value) el.textContent = `v${value.replace(/^v/i, "")}`;
+        };
 
-        button.disabled = true;
-        note.textContent = "Sending…";
-        note.classList.remove("is-success");
+        setHref("cta-customer-hero", customerUrl);
+        setHref("cta-customer", customerUrl);
+        setHref("footer-customer", customerUrl);
+        setHref("cta-vendor-web", vendorWebUrl);
+        setHref("cta-vendor-web-secondary", vendorWebUrl);
+        setHref("footer-vendor", vendorWebUrl);
+        setVersion("customer-app-version", links.customerAppVersion);
+        setVersion("vendor-web-version", links.vendorWebVersion);
+        setVersion("vendor-app-version", links.vendorAppVersion);
 
-        try {
-          const response = await fetch("/.netlify/functions/notify", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ email, company }),
-          });
-          const result = await response.json().catch(() => ({}));
-
-          if (!response.ok) {
-            throw new Error(result.error || "Something went wrong.");
+        const appBtn = document.getElementById("cta-vendor-app");
+        const appNote = document.getElementById("vendor-app-note");
+        if (appBtn && vendorAppUrl) {
+          appBtn.hidden = false;
+          appBtn.href = vendorAppUrl;
+          if (appNote) {
+            appNote.textContent =
+              "Install the Queueless Vendor Android app, then sign in with the same phone and PIN.";
           }
-
-          note.textContent = "You're on the list. We'll be in touch.";
-          note.classList.add("is-success");
-          form.reset();
-        } catch (error) {
-          note.textContent =
-            error.message || "Could not submit right now. Try again.";
-          note.classList.remove("is-success");
-        } finally {
-          button.disabled = false;
         }
-      });
+
+        const year = document.getElementById("year");
+        if (year) year.textContent = String(new Date().getFullYear());
+      })();
     </script>
   </body>
 </html>

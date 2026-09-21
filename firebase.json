@@ -1,0 +1,7 @@
+{
+  "emulators": {
+    "ui": {
+      "enabled": false
+    }
+  }
+}

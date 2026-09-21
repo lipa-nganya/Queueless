@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import tech.thewolfgang.queueless.vendor.data.BusinessService
+import tech.thewolfgang.queueless.vendor.ui.components.BranchSwitcherCard
 import tech.thewolfgang.queueless.vendor.ui.components.TopBar
 import tech.thewolfgang.queueless.vendor.ui.components.VendorBottomBar
 import tech.thewolfgang.queueless.vendor.ui.components.VendorTab
@@ -47,6 +48,7 @@ fun ServicesScreen(
     onOpenQueue: () -> Unit,
     onOpenBranches: () -> Unit,
     onOpenProfile: () -> Unit,
+    onSwitchBranch: (Int) -> Unit,
     onSignOut: () -> Unit,
     onUnauthorized: () -> Unit,
 ) {
@@ -89,18 +91,45 @@ fun ServicesScreen(
                         verticalArrangement = Arrangement.spacedBy(14.dp),
                     ) {
                         Text(
-                            text = "Business services",
+                            text = state.branchName.ifBlank { "Branch services" },
                             color = TextPrimary,
                             fontSize = 28.sp,
                             fontWeight = FontWeight.Bold,
                         )
                         Text(
-                            text = "Shared across branches. Service period is used for wait estimates.",
+                            text = state.businessName?.takeIf { it.isNotBlank() }?.let {
+                                "$it — branch services"
+                            } ?: "Services for this location. Service time feeds wait estimates.",
                             color = TextMuted,
                         )
 
+                        BranchSwitcherCard(
+                            branchName = state.branchName.ifBlank { "Untitled branch" },
+                            meta = state.branchMeta,
+                            branches = state.siblingBranches,
+                            selectedId = state.branchId,
+                            onSelect = onSwitchBranch,
+                        )
+
                         if (state.services.isEmpty()) {
-                            Text(text = "No services yet.", color = TextMuted)
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(SurfaceCard, RoundedCornerShape(14.dp))
+                                    .padding(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
+                                Text(
+                                    text = "No services yet",
+                                    color = TextPrimary,
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 18.sp,
+                                )
+                                Text(
+                                    text = "Add the first service for ${state.branchName.ifBlank { "this branch" }}.",
+                                    color = TextMuted,
+                                )
+                            }
                         } else {
                             state.services.forEach { service ->
                                 ServiceRow(
@@ -119,6 +148,10 @@ fun ServicesScreen(
                             fontWeight = FontWeight.SemiBold,
                             modifier = Modifier.padding(top = 8.dp),
                         )
+                        Text(
+                            text = "Adding or editing services for ${state.branchName.ifBlank { "this branch" }}.",
+                            color = TextMuted,
+                        )
 
                         OutlinedTextField(
                             value = state.name,
@@ -132,7 +165,7 @@ fun ServicesScreen(
                             value = state.durationMinutes,
                             onValueChange = viewModel::onDurationChange,
                             modifier = Modifier.fillMaxWidth(),
-                            label = { Text("Service period (minutes)") },
+                            label = { Text("Service time (minutes)") },
                             singleLine = true,
                             colors = fieldColors(),
                         )
@@ -153,7 +186,15 @@ fun ServicesScreen(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Text("Service active", color = TextPrimary, fontWeight = FontWeight.Medium)
+                            Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                                Text("Service active", color = TextPrimary, fontWeight = FontWeight.Medium)
+                                Text(
+                                    text = "Inactive services stay hidden from customers.",
+                                    color = TextMuted,
+                                    fontSize = 13.sp,
+                                    modifier = Modifier.padding(top = 4.dp),
+                                )
+                            }
                             Switch(
                                 checked = state.isActive,
                                 onCheckedChange = viewModel::onActiveChange,

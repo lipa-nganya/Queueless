@@ -2,6 +2,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import express from "express";
 import cors from "cors";
+import compression from "compression";
 import dotenv from "dotenv";
 import { migrate, seedAdmin, seedVendor, seedBusinessGroups } from "./migrate.js";
 import { seedSettings } from "./settings.js";
@@ -33,6 +34,17 @@ const allowedOrigins = new Set(
 
 const app = express();
 
+app.set("trust proxy", 1);
+app.use(
+  compression({
+    threshold: 1024,
+    // Prefer Brotli/gzip when the platform supports it; skip already-compressed uploads.
+    filter(req, res) {
+      if (req.headers["x-no-compression"]) return false;
+      return compression.filter(req, res);
+    },
+  })
+);
 app.use(
   cors({
     origin(origin, callback) {
@@ -42,7 +54,7 @@ app.use(
     },
   })
 );
-app.use(express.json());
+app.use(express.json({ limit: "256kb" }));
 app.use("/api", routes);
 
 // Upload filenames embed a timestamp and are never rewritten, so they can be

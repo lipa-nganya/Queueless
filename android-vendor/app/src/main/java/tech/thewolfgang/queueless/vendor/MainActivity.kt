@@ -1,22 +1,31 @@
 package tech.thewolfgang.queueless.vendor
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import kotlinx.coroutines.launch
 import tech.thewolfgang.queueless.vendor.data.VendorRepository
+import tech.thewolfgang.queueless.vendor.push.PushRegistrar
 import tech.thewolfgang.queueless.vendor.ui.branches.BranchesPickerScreen
 import tech.thewolfgang.queueless.vendor.ui.branches.BranchesScreen
 import tech.thewolfgang.queueless.vendor.ui.branches.BranchesViewModel
@@ -36,10 +45,20 @@ import tech.thewolfgang.queueless.vendor.ui.theme.Navy
 import tech.thewolfgang.queueless.vendor.ui.theme.QueuelessTheme
 
 class MainActivity : ComponentActivity() {
+    private val notificationPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { /* no-op */ }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         val app = application as QueuelessVendorApp
+        PushRegistrar.ensureNotificationChannel(this)
+        maybeRequestNotificationPermission()
+        if (app.repository.hasSession()) {
+            lifecycleScope.launch {
+                PushRegistrar.register(this@MainActivity, app.repository)
+            }
+        }
         setContent {
             QueuelessTheme {
                 Surface(
@@ -51,6 +70,17 @@ class MainActivity : ComponentActivity() {
                     VendorNav(repository = app.repository)
                 }
             }
+        }
+    }
+
+    private fun maybeRequestNotificationPermission() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        val granted = ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.POST_NOTIFICATIONS,
+        ) == PackageManager.PERMISSION_GRANTED
+        if (!granted) {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
     }
 }
@@ -75,6 +105,7 @@ private object Routes {
 @Composable
 private fun VendorNav(repository: VendorRepository) {
     val navController = rememberNavController()
+    val context = LocalContext.current
     val startDestination = remember {
         if (repository.hasSession()) Routes.Businesses else Routes.Login
     }
@@ -141,6 +172,13 @@ private fun VendorNav(repository: VendorRepository) {
                         popUpTo(Routes.Login) { inclusive = true }
                     }
                 },
+                onRegisterPush = { phoneForPending ->
+                    PushRegistrar.register(
+                        context = context,
+                        repository = repository,
+                        phoneForPending = phoneForPending,
+                    )
+                },
             )
         }
 
@@ -204,6 +242,7 @@ private fun VendorNav(repository: VendorRepository) {
         ) { entry ->
             val businessId = entry.arguments?.getInt("businessId") ?: return@composable
             val vm: ProfileViewModel = viewModel(
+                key = "profile-$businessId",
                 factory = ProfileViewModel.factory(businessId, repository),
             )
             ProfileScreen(
@@ -215,6 +254,12 @@ private fun VendorNav(repository: VendorRepository) {
                 },
                 onOpenBranches = { goBranches(businessId) },
                 onOpenServices = { goServices(businessId) },
+                onSwitchBranch = { id ->
+                    navController.navigate(Routes.profile(id)) {
+                        popUpTo(Routes.profile(businessId)) { inclusive = true }
+                        launchSingleTop = true
+                    }
+                },
                 onSignOut = ::signOut,
                 onUnauthorized = ::onUnauthorized,
             )
@@ -246,6 +291,7 @@ private fun VendorNav(repository: VendorRepository) {
         ) { entry ->
             val businessId = entry.arguments?.getInt("businessId") ?: return@composable
             val vm: ServicesViewModel = viewModel(
+                key = "services-$businessId",
                 factory = ServicesViewModel.factory(businessId, repository),
             )
             ServicesScreen(
@@ -257,6 +303,12 @@ private fun VendorNav(repository: VendorRepository) {
                 },
                 onOpenBranches = { goBranches(businessId) },
                 onOpenProfile = { goProfile(businessId) },
+                onSwitchBranch = { id ->
+                    navController.navigate(Routes.services(id)) {
+                        popUpTo(Routes.services(businessId)) { inclusive = true }
+                        launchSingleTop = true
+                    }
+                },
                 onSignOut = ::signOut,
                 onUnauthorized = ::onUnauthorized,
             )

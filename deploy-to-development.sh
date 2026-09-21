@@ -10,6 +10,7 @@ BRANCH="develop"
 
 CUSTOMER_SITE_ID="6c7337a3-6a81-4d75-9de2-1dbb3c7ef40a"
 CUSTOMER_URL="https://queueless.thewolfgang.tech"
+CUSTOMER_APP_URL="https://queueless.thewolfgang.tech/customer/"
 ADMIN_SITE_ID="a63fe2df-41f1-4665-88c2-970c6911cfdb"
 ADMIN_URL="https://admin.queueless.thewolfgang.tech"
 VENDOR_SITE_ID="aaf89a4e-ef96-4d45-bbbc-d6493bcc4ea5"
@@ -142,7 +143,8 @@ vendor_deploy="$(trigger_netlify "$VENDOR_SITE_ID")"
 if [[ "$WAIT" -eq 0 ]]; then
   step "Deploys triggered (--no-wait)"
   echo "  backend:  $BACKEND_URL"
-  echo "  customer: $CUSTOMER_URL"
+  echo "  landing:  $CUSTOMER_URL"
+  echo "  customer: $CUSTOMER_APP_URL"
   echo "  admin:    $ADMIN_URL"
   echo "  vendor:   $VENDOR_URL"
   exit 0
@@ -205,7 +207,8 @@ else
   echo "  Deployment finished with errors."
 fi
 echo "  backend:  $BACKEND_URL"
-echo "  customer: $CUSTOMER_URL"
+echo "  landing:  $CUSTOMER_URL"
+echo "  customer: $CUSTOMER_APP_URL"
 echo "  admin:    $ADMIN_URL"
 echo "  vendor:   $VENDOR_URL"
 exit "$status"

@@ -95,6 +95,24 @@ Cleartext HTTP is allowed for the **local** flavor only (`src/local/AndroidManif
 3. **Queue desk** → polls `GET .../queue` every 8s while the app is foregrounded; walk-ins `PUT`; Serve / No-show
 4. **Menu → Profile** → edit business name, active status, and operating hours (`GET/PUT /vendor/businesses/:id`)
 
+## Push notifications (FCM)
+
+Vendor activation, trial updates, and queue join/leave alerts are delivered as **Android push** (OTP stays on SMS).
+
+1. Create a Firebase project and add Android apps for:
+   - `tech.thewolfgang.queueless.vendor`
+   - `tech.thewolfgang.queueless.vendor.local`
+   - `tech.thewolfgang.queueless.vendor.dev`
+2. Download `google-services.json` into `android-vendor/app/` (see `google-services.json.example`).
+3. On the API, set either:
+   - `FIREBASE_SERVICE_ACCOUNT_JSON` — full service-account JSON string, or
+   - `FIREBASE_SERVICE_ACCOUNT_PATH` — path to the JSON file
+4. Rebuild the app. After PIN setup (pending) or login, the device registers via `POST /vendor/push-tokens` (or `/pending`).
+
+Without `google-services.json`, the app still builds; push registration is skipped (`BuildConfig.PUSH_ENABLED=false`).
+
+Optional: `VENDOR_PUSH_SMS_FALLBACK=1` also sends queue alerts over WhatsApp/SMS to assigned vendor phones (default off — push only for vendors).
+
 ## Out of scope (first slice)
 
-Push/FCM, WhatsApp from the app, Play Store signing, removing the web `vendor/` site.
+WhatsApp from the app, Play Store signing, removing the web `vendor/` site.

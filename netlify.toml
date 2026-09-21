@@ -2,6 +2,10 @@
 # Production: queueless-kenya  → branch main    → https://queueless.co.ke
 # Dev:        queueless-kenya-dev → branch develop → https://queueless.thewolfgang.tech
 #
+# Site root = Queueless landing page.
+# Customer product app = /customer/
+# Vendor product app   = separate Netlify site (vendor.queueless.thewolfgang.tech)
+#
 # Required env vars (both sites):
 #   GMAIL_USER          — Gmail address used to send
 #   GMAIL_APP_PASSWORD  — Gmail App Password (not your normal password)
@@ -12,16 +16,45 @@
   command = "npm install"
   functions = "netlify/functions"
 
-# The dev site previews the customer app at its root instead of the
-# coming-soon page. Scoped to develop so main keeps serving the landing page.
-[context."develop"]
-  publish = "customer"
+[[redirects]]
+  from = "/app"
+  to = "/customer/"
+  status = 302
 
-# Customer SPA assets on the develop preview site.
+[[redirects]]
+  from = "/app/*"
+  to = "/customer/:splat"
+  status = 302
+
 [[headers]]
   for = "/index.html"
   [headers.values]
     Cache-Control = "no-cache"
+
+[[headers]]
+  for = "/landing.css"
+  [headers.values]
+    Cache-Control = "public, max-age=300"
+
+[[headers]]
+  for = "/landing-config.js"
+  [headers.values]
+    Cache-Control = "public, max-age=300"
+
+[[headers]]
+  for = "/customer/index.html"
+  [headers.values]
+    Cache-Control = "no-cache"
+
+[[headers]]
+  for = "/customer/*.js"
+  [headers.values]
+    Cache-Control = "public, max-age=300"
+
+[[headers]]
+  for = "/customer/*.css"
+  [headers.values]
+    Cache-Control = "public, max-age=300"
 
 [[headers]]
   for = "/*.js"
@@ -35,6 +68,11 @@
 
 [[headers]]
   for = "/*.svg"
+  [headers.values]
+    Cache-Control = "public, max-age=86400"
+
+[[headers]]
+  for = "/assets/*"
   [headers.values]
     Cache-Control = "public, max-age=86400"
 

@@ -24,8 +24,10 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.ScrollableTabRow
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
+import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TimePicker
@@ -33,11 +35,13 @@ import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
@@ -51,6 +55,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import tech.thewolfgang.queueless.vendor.data.AccessibilityOptions
 import tech.thewolfgang.queueless.vendor.data.DayHours
 import tech.thewolfgang.queueless.vendor.data.OperatingHours
+import tech.thewolfgang.queueless.vendor.ui.components.BranchSwitcherCard
 import tech.thewolfgang.queueless.vendor.ui.components.TopBar
 import tech.thewolfgang.queueless.vendor.ui.components.VendorBottomBar
 import tech.thewolfgang.queueless.vendor.ui.components.VendorTab
@@ -64,17 +69,25 @@ import tech.thewolfgang.queueless.vendor.ui.theme.TextPrimary
 
 private data class TimePickerTarget(val day: String, val field: String)
 
+private object ProfileTabRetainer {
+    var index: Int = 0
+}
+
+private val profileTabs = listOf("Details", "Hours", "Accessibility")
+
 @Composable
 fun ProfileScreen(
     viewModel: ProfileViewModel,
     onOpenQueue: () -> Unit,
     onOpenBranches: () -> Unit,
     onOpenServices: () -> Unit,
+    onSwitchBranch: (Int) -> Unit,
     onSignOut: () -> Unit,
     onUnauthorized: () -> Unit,
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     var timePickerTarget by remember { mutableStateOf<TimePickerTarget?>(null) }
+    var selectedTab by remember { mutableIntStateOf(ProfileTabRetainer.index) }
 
     LaunchedEffect(state.unauthorized) {
         if (state.unauthorized) onUnauthorized()
@@ -90,7 +103,7 @@ fun ProfileScreen(
                 .weight(1f)
                 .padding(horizontal = 16.dp, vertical = 8.dp),
         ) {
-            TopBar(title = "Profile", showBrand = true)
+            TopBar(title = "Settings", showBrand = true)
             Spacer(Modifier.height(12.dp))
 
             when {
@@ -101,7 +114,7 @@ fun ProfileScreen(
                         horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
                         CircularProgressIndicator(color = Lime)
-                        Text("Loading profile…", color = TextMuted, modifier = Modifier.padding(top = 12.dp))
+                        Text("Loading settings…", color = TextMuted, modifier = Modifier.padding(top = 12.dp))
                     }
                 }
 
@@ -113,148 +126,81 @@ fun ProfileScreen(
                         verticalArrangement = Arrangement.spacedBy(14.dp),
                     ) {
                         Text(
-                            text = "Branch profile",
+                            text = state.branchName.ifBlank { "Branch settings" },
                             color = TextPrimary,
                             fontSize = 28.sp,
                             fontWeight = FontWeight.Bold,
                         )
-                        if (!state.groupName.isNullOrBlank()) {
-                            Text(text = state.groupName ?: "", color = TextMuted)
-                        }
-
-                        OutlinedTextField(
-                            value = state.name,
-                            onValueChange = viewModel::onNameChange,
-                            modifier = Modifier.fillMaxWidth(),
-                            label = { Text("Branch name") },
-                            singleLine = true,
-                            colors = fieldColors(),
+                        Text(
+                            text = state.businessName?.takeIf { it.isNotBlank() }?.let {
+                                "$it — branch settings"
+                            } ?: "Details, hours, and accessibility for this location.",
+                            color = TextMuted,
                         )
 
-                        Column(
+                        BranchSwitcherCard(
+                            branchName = state.branchName.ifBlank { "Untitled branch" },
+                            meta = state.branchMeta,
+                            branches = state.siblingBranches,
+                            selectedId = state.branchId,
+                            onSelect = { id ->
+                                ProfileTabRetainer.index = selectedTab
+                                onSwitchBranch(id)
+                            },
+                        )
+
+                        ScrollableTabRow(
+                            selectedTabIndex = selectedTab,
+                            containerColor = SurfaceCard,
+                            contentColor = TextPrimary,
+                            edgePadding = 8.dp,
+                            divider = {},
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .background(SurfaceCard, RoundedCornerShape(14.dp))
-                                .padding(16.dp),
+                                .background(SurfaceCard, RoundedCornerShape(14.dp)),
                         ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
-                                    Text(
-                                        text = "Branch active",
-                                        color = TextPrimary,
-                                        fontWeight = FontWeight.SemiBold,
-                                    )
-                                    Text(
-                                        text = "Inactive branches stay hidden from customers.",
-                                        color = TextMuted,
-                                        fontSize = 13.sp,
-                                        modifier = Modifier.padding(top = 4.dp),
-                                    )
-                                }
-                                Switch(
-                                    checked = state.isActive,
-                                    onCheckedChange = viewModel::onActiveChange,
-                                    colors = SwitchDefaults.colors(
-                                        checkedThumbColor = Navy,
-                                        checkedTrackColor = Lime,
-                                        uncheckedThumbColor = TextMuted,
-                                        uncheckedTrackColor = SurfaceCard,
-                                    ),
+                            profileTabs.forEachIndexed { index, title ->
+                                Tab(
+                                    selected = selectedTab == index,
+                                    onClick = {
+                                        selectedTab = index
+                                        ProfileTabRetainer.index = index
+                                    },
+                                    selectedContentColor = Navy,
+                                    unselectedContentColor = TextMuted,
+                                    text = {
+                                        Text(
+                                            text = title,
+                                            fontWeight = if (selectedTab == index) {
+                                                FontWeight.Bold
+                                            } else {
+                                                FontWeight.SemiBold
+                                            },
+                                        )
+                                    },
+                                    modifier = Modifier
+                                        .padding(vertical = 4.dp)
+                                        .background(
+                                            if (selectedTab == index) Lime else Color.Transparent,
+                                            RoundedCornerShape(10.dp),
+                                        ),
                                 )
                             }
                         }
 
-                        Text(
-                            text = "Business hours",
-                            color = TextPrimary,
-                            fontSize = 20.sp,
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                        Text(
-                            text = "Toggle each day, then set start and end times.",
-                            color = TextMuted,
-                        )
-
-                        state.schedule.forEach { day ->
-                            DayHoursRow(
-                                day = day,
-                                onOpenChange = { open -> viewModel.onDayOpenChange(day.day, open) },
-                                onPickStart = {
-                                    timePickerTarget = TimePickerTarget(day.day, "start")
+                        when (selectedTab) {
+                            0 -> DetailsTab(state = state, viewModel = viewModel)
+                            1 -> HoursTab(
+                                state = state,
+                                onOpenChange = viewModel::onDayOpenChange,
+                                onPickStart = { day ->
+                                    timePickerTarget = TimePickerTarget(day, "start")
                                 },
-                                onPickEnd = {
-                                    timePickerTarget = TimePickerTarget(day.day, "end")
+                                onPickEnd = { day ->
+                                    timePickerTarget = TimePickerTarget(day, "end")
                                 },
                             )
-                        }
-
-                        Text(
-                            text = "Accessibility",
-                            color = TextPrimary,
-                            fontSize = 20.sp,
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                        Text(
-                            text = "Select the options this branch can offer customers.",
-                            color = TextMuted,
-                        )
-
-                        AccessibilityOptions.all.forEach { option ->
-                            val checked = option.id in state.accessibilityOptions
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .background(SurfaceCard, RoundedCornerShape(14.dp))
-                                    .clickable {
-                                        viewModel.onAccessibilityToggle(option.id, !checked)
-                                    }
-                                    .padding(horizontal = 12.dp, vertical = 10.dp)
-                                    .semantics(mergeDescendants = true) {
-                                        role = Role.Checkbox
-                                        selected = checked
-                                        contentDescription = "${option.label}. ${option.description}"
-                                        stateDescription = if (checked) "Selected" else "Not selected"
-                                    },
-                                verticalAlignment = Alignment.Top,
-                                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            ) {
-                                Checkbox(
-                                    checked = checked,
-                                    onCheckedChange = { enabled ->
-                                        viewModel.onAccessibilityToggle(option.id, enabled)
-                                    },
-                                    colors = CheckboxDefaults.colors(
-                                        checkedColor = Lime,
-                                        checkmarkColor = Navy,
-                                        uncheckedColor = TextMuted,
-                                    ),
-                                )
-                                Icon(
-                                    imageVector = option.icon,
-                                    contentDescription = null,
-                                    tint = TextPrimary,
-                                    modifier = Modifier
-                                        .padding(top = 8.dp)
-                                        .size(22.dp),
-                                )
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = option.label,
-                                        color = TextPrimary,
-                                        fontWeight = FontWeight.SemiBold,
-                                    )
-                                    Text(
-                                        text = option.description,
-                                        color = TextMuted,
-                                        fontSize = 13.sp,
-                                        modifier = Modifier.padding(top = 4.dp),
-                                    )
-                                }
-                            }
+                            else -> AccessibilityTab(state = state, viewModel = viewModel)
                         }
 
                         if (!state.error.isNullOrBlank()) {
@@ -332,6 +278,161 @@ fun ProfileScreen(
                 timePickerTarget = null
             },
         )
+    }
+}
+
+@Composable
+private fun DetailsTab(
+    state: ProfileUiState,
+    viewModel: ProfileViewModel,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        OutlinedTextField(
+            value = state.name,
+            onValueChange = viewModel::onNameChange,
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("Branch name") },
+            singleLine = true,
+            colors = fieldColors(),
+        )
+
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(SurfaceCard, RoundedCornerShape(14.dp))
+                .padding(16.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                    Text(
+                        text = "Branch active",
+                        color = TextPrimary,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(
+                        text = "Inactive branches stay hidden from customers.",
+                        color = TextMuted,
+                        fontSize = 13.sp,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
+                }
+                Switch(
+                    checked = state.isActive,
+                    onCheckedChange = viewModel::onActiveChange,
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = Navy,
+                        checkedTrackColor = Lime,
+                        uncheckedThumbColor = TextMuted,
+                        uncheckedTrackColor = SurfaceCard,
+                    ),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun HoursTab(
+    state: ProfileUiState,
+    onOpenChange: (String, Boolean) -> Unit,
+    onPickStart: (String) -> Unit,
+    onPickEnd: (String) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(
+            text = "Weekly hours",
+            color = TextPrimary,
+            fontSize = 18.sp,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Text(
+            text = "Set open days and times for ${state.branchName.ifBlank { "this branch" }}.",
+            color = TextMuted,
+        )
+        state.schedule.forEach { day ->
+            DayHoursRow(
+                day = day,
+                onOpenChange = { open -> onOpenChange(day.day, open) },
+                onPickStart = { onPickStart(day.day) },
+                onPickEnd = { onPickEnd(day.day) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun AccessibilityTab(
+    state: ProfileUiState,
+    viewModel: ProfileViewModel,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(
+            text = "Accessibility",
+            color = TextPrimary,
+            fontSize = 18.sp,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Text(
+            text = "Select the options ${state.branchName.ifBlank { "this branch" }} can offer customers.",
+            color = TextMuted,
+        )
+        AccessibilityOptions.all.forEach { option ->
+            val checked = option.id in state.accessibilityOptions
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(SurfaceCard, RoundedCornerShape(14.dp))
+                    .clickable {
+                        viewModel.onAccessibilityToggle(option.id, !checked)
+                    }
+                    .padding(horizontal = 12.dp, vertical = 10.dp)
+                    .semantics(mergeDescendants = true) {
+                        role = Role.Checkbox
+                        selected = checked
+                        contentDescription = "${option.label}. ${option.description}"
+                        stateDescription = if (checked) "Selected" else "Not selected"
+                    },
+                verticalAlignment = Alignment.Top,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Checkbox(
+                    checked = checked,
+                    onCheckedChange = { enabled ->
+                        viewModel.onAccessibilityToggle(option.id, enabled)
+                    },
+                    colors = CheckboxDefaults.colors(
+                        checkedColor = Lime,
+                        checkmarkColor = Navy,
+                        uncheckedColor = TextMuted,
+                    ),
+                )
+                Icon(
+                    imageVector = option.icon,
+                    contentDescription = null,
+                    tint = TextPrimary,
+                    modifier = Modifier
+                        .padding(top = 8.dp)
+                        .size(22.dp),
+                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = option.label,
+                        color = TextPrimary,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(
+                        text = option.description,
+                        color = TextMuted,
+                        fontSize = 13.sp,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
+                }
+            }
+        }
     }
 }
 

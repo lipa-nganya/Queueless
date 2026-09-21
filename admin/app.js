@@ -347,6 +347,13 @@ function bindPlaceAutocomplete(input, { listId }) {
       }
       syncClearButton();
     },
+    setPlace: (place) => {
+      if (!place) return;
+      input.value = place.label || "";
+      setCoords(place);
+      syncClearButton();
+      hide();
+    },
     reset: () => {
       clearAll();
     },
@@ -471,12 +478,24 @@ function formatTrialEndsAt(value) {
   }).format(date);
 }
 
+function appVersion() {
+  return String(window.QUEUELESS_ADMIN_APP_VERSION || "1.1.0").trim() || "1.1.0";
+}
+
+function appVersionHtml({ onDark = false } = {}) {
+  return `<p class="app-version${onDark ? " app-version-on-dark" : ""}">v${escapeHtml(appVersion())}</p>`;
+}
+
 function renderLogin() {
   app.innerHTML = `
     <div class="login-shell">
       <form class="login-card" id="login-form">
-        <h1>Queue<span>less</span> Admin</h1>
-        <p>Sign in to manage business groups and businesses.</p>
+        <div class="auth-brand">
+          <p class="brand">Queue<span>less</span></p>
+          <span class="auth-badge" aria-hidden="true">Admin</span>
+        </div>
+        <h1 class="auth-title">Sign in</h1>
+        <p class="auth-lead">Manage business groups, vendors, and live queues.</p>
         <div class="field">
           <label for="username">Username or email</label>
           <input id="username" name="username" autocomplete="username" value="admin" required />
@@ -485,8 +504,9 @@ function renderLogin() {
           <label for="password">Password</label>
           <input id="password" name="password" type="password" autocomplete="current-password" value="admin123" required />
         </div>
-        <button class="btn btn-primary btn-block" type="submit">Sign in</button>
+        <button class="btn btn-primary btn-block auth-submit" type="submit">Sign in</button>
         <p class="message" id="login-message" role="status"></p>
+        ${appVersionHtml()}
       </form>
     </div>
   `;
@@ -519,19 +539,50 @@ function renderLogin() {
   });
 }
 
+function navIcon(name) {
+  const icons = {
+    dashboard: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>`,
+    customers: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="9" cy="8" r="3.2"/><path d="M2.8 19c1.2-3 3.3-4.5 6.2-4.5S14 16 15.2 19"/><circle cx="17" cy="9" r="2.4"/><path d="M16.2 19c.5-1.6 1.6-2.7 3.5-3.2"/></svg>`,
+    groups: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 8h16M4 12h16M4 16h10"/></svg>`,
+    businesses: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M3 21h18"/><path d="M5 21V7l7-4 7 4v14"/><path d="M9 21v-6h6v6"/></svg>`,
+    vendors: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8 11h8M8 15h5"/><circle cx="12" cy="8" r="1.4"/></svg>`,
+    admins: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 3l8 4v5c0 5-3.4 8.4-8 9-4.6-.6-8-4-8-9V7l8-4Z"/><path d="M9.5 12.2l1.8 1.8 3.4-3.6"/></svg>`,
+    settings: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 3v2.2M12 18.8V21M4.9 6.5l1.6 1.6M17.5 15.9l1.6 1.6M3 12h2.2M18.8 12H21M4.9 17.5l1.6-1.6M17.5 8.1l1.6-1.6"/></svg>`,
+    queues: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 7h16M4 12h12M4 17h8"/></svg>`,
+    waiting: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 7v5l3 2"/></svg>`,
+  };
+  return icons[name] || icons.dashboard;
+}
+
 function shell(active, content) {
+  const item = (view, label, icon) => `
+    <button type="button" data-view="${view}" class="nav-item${active === view ? " active" : ""}"${
+      active === view ? ' aria-current="page"' : ""
+    }>
+      <span class="nav-icon">${navIcon(icon)}</span>
+      <span>${label}</span>
+    </button>
+  `;
+
   return `
     <div class="shell">
       <aside class="sidebar">
-        <div class="brand">Queue<span>less</span></div>
-        <nav class="nav">
-          <button type="button" data-view="dashboard" class="${active === "dashboard" ? "active" : ""}">Dashboard</button>
-          <button type="button" data-view="customers" class="${active === "customers" ? "active" : ""}">Customers</button>
-          <button type="button" data-view="groups" class="${active === "groups" ? "active" : ""}">Business groups</button>
-          <button type="button" data-view="businesses" class="${active === "businesses" ? "active" : ""}">Businesses</button>
-          <button type="button" data-view="vendors" class="${active === "vendors" ? "active" : ""}">Vendors</button>
-          <button type="button" data-view="admins" class="${active === "admins" ? "active" : ""}">Admins</button>
-          <button type="button" data-view="settings" class="${active === "settings" ? "active" : ""}">Settings</button>
+        <div class="sidebar-brand">
+          <div class="brand">Queue<span>less</span></div>
+          ${appVersionHtml()}
+        </div>
+        <p class="nav-section">Main menu</p>
+        <nav class="nav" aria-label="Admin">
+          ${item("dashboard", "Dashboard", "dashboard")}
+          ${item("customers", "Customers", "customers")}
+          ${item("groups", "Business groups", "groups")}
+          ${item("businesses", "Businesses", "businesses")}
+          ${item("vendors", "Vendors", "vendors")}
+          ${item("admins", "Admins", "admins")}
+        </nav>
+        <p class="nav-section">Tools</p>
+        <nav class="nav nav-tools" aria-label="Tools">
+          ${item("settings", "Settings", "settings")}
         </nav>
         <div class="sidebar-foot">
           <button class="btn btn-secondary btn-block" type="button" id="logout-btn">Sign out</button>
@@ -607,6 +658,49 @@ function topQueuesHtml(queues) {
   `;
 }
 
+function topQueuesListHtml(queues) {
+  if (!queues.length) {
+    return `<p class="empty">No live queues right now.</p>`;
+  }
+
+  return `
+    <ul class="activity-list">
+      ${queues
+        .map((queue) => {
+          const initial = String(queue.name || "?").trim().charAt(0).toUpperCase() || "?";
+          return `
+            <li class="activity-item">
+              <span class="activity-avatar" aria-hidden="true">${escapeHtml(initial)}</span>
+              <div class="activity-copy">
+                <strong>${escapeHtml(queue.name)}</strong>
+                <span>${escapeHtml(queue.business_group_name || "Business")} · ${queue.waiting_total} waiting</span>
+              </div>
+            </li>
+          `;
+        })
+        .join("")}
+    </ul>
+  `;
+}
+
+function metricCardHtml({ label, value, sub = "", icon, href }) {
+  return `
+    <article class="metric-card">
+      <div class="metric-card-top">
+        <span class="metric-icon" aria-hidden="true">${navIcon(icon)}</span>
+      </div>
+      <p class="metric-label">${escapeHtml(label)}</p>
+      <p class="metric-value">${escapeHtml(String(value))}</p>
+      ${sub ? `<p class="metric-sub">${escapeHtml(sub)}</p>` : ""}
+      ${
+        href
+          ? `<button type="button" class="metric-link" data-view="${escapeHtml(href)}">See details →</button>`
+          : ""
+      }
+    </article>
+  `;
+}
+
 async function renderDashboard() {
   app.innerHTML = shell(
     "dashboard",
@@ -614,19 +708,29 @@ async function renderDashboard() {
       <div class="main-header">
         <div>
           <h2>Dashboard</h2>
-          <p>Live counts across customers, groups, businesses, and queues.</p>
+          <p>Overview of customers, businesses, and live queues across Queueless.</p>
         </div>
       </div>
       <div class="stats" id="stats">
-        <div class="stat"><div class="label">Ongoing queues</div><div class="value">…</div></div>
-        <div class="stat"><div class="label">People waiting</div><div class="value">…</div></div>
-        <div class="stat"><div class="label">Customers</div><div class="value">…</div></div>
-        <div class="stat"><div class="label">Businesses</div><div class="value">…</div></div>
+        ${metricCardHtml({ label: "Ongoing queues", value: "…", icon: "queues" })}
+        ${metricCardHtml({ label: "People waiting", value: "…", icon: "waiting" })}
+        ${metricCardHtml({ label: "Customers", value: "…", icon: "customers" })}
+        ${metricCardHtml({ label: "Businesses", value: "…", icon: "businesses" })}
       </div>
-      <section class="panel">
-        <h3>Busiest queues</h3>
-        <div id="top-queues"><p class="empty">Loading…</p></div>
-      </section>
+      <div class="dashboard-grid">
+        <section class="panel panel-overview">
+          <div class="panel-head">
+            <h3>Busiest queues</h3>
+          </div>
+          <div id="top-queues"><p class="empty">Loading…</p></div>
+        </section>
+        <section class="panel panel-side">
+          <div class="panel-head">
+            <h3>Live queue list</h3>
+          </div>
+          <div id="top-queues-list"><p class="empty">Loading…</p></div>
+        </section>
+      </div>
       <p class="message" id="page-message"></p>
     `
   );
@@ -636,26 +740,42 @@ async function renderDashboard() {
 
   try {
     const data = await api("/dashboard");
-    document.getElementById("stats").innerHTML = `
-      <div class="stat stat-accent">
-        <div class="label">Ongoing queues</div>
-        <div class="value">${data.ongoing_queues_count}</div>
-      </div>
-      <div class="stat">
-        <div class="label">People waiting</div>
-        <div class="value">${data.people_waiting_count}</div>
-      </div>
-      <div class="stat">
-        <div class="label">Customers</div>
-        <div class="value">${data.customers_count}</div>
-      </div>
-      <div class="stat">
-        <div class="label">Businesses</div>
-        <div class="value">${data.businesses_count}</div>
-        <div class="stat-sub">${data.business_groups_count} groups</div>
-      </div>
-    `;
-    document.getElementById("top-queues").innerHTML = topQueuesHtml(data.top_queues || []);
+    document.getElementById("stats").innerHTML = [
+      metricCardHtml({
+        label: "Ongoing queues",
+        value: data.ongoing_queues_count,
+        icon: "queues",
+        href: "businesses",
+      }),
+      metricCardHtml({
+        label: "People waiting",
+        value: data.people_waiting_count,
+        icon: "waiting",
+        href: "businesses",
+      }),
+      metricCardHtml({
+        label: "Customers",
+        value: data.customers_count,
+        icon: "customers",
+        href: "customers",
+      }),
+      metricCardHtml({
+        label: "Businesses",
+        value: data.businesses_count,
+        sub: `${data.business_groups_count} groups`,
+        icon: "businesses",
+        href: "businesses",
+      }),
+    ].join("");
+    const queues = data.top_queues || [];
+    document.getElementById("top-queues").innerHTML = topQueuesHtml(queues);
+    document.getElementById("top-queues-list").innerHTML = topQueuesListHtml(queues);
+    document.querySelectorAll(".metric-link[data-view]").forEach((button) => {
+      button.addEventListener("click", () => {
+        location.hash = button.getAttribute("data-view");
+        render();
+      });
+    });
   } catch (error) {
     message.textContent = error.message;
   }
@@ -1013,7 +1133,13 @@ async function renderBusinesses() {
                         : `<span class="biz-thumb thumb-empty">${escapeHtml(business.name.slice(0, 1).toUpperCase())}</span>`}
                       <div class="cell-text">
                         <span class="cell-title">${escapeHtml(business.name)}</span>
-                        <span class="cell-sub">${escapeHtml(business.phone || "No phone")}</span>
+                        <span class="cell-sub">${escapeHtml(
+                          (business.branches || []).length
+                            ? `${(business.branches || []).length} branch${
+                                (business.branches || []).length === 1 ? "" : "es"
+                              }`
+                            : "No branches"
+                        )}</span>
                       </div>
                     </div>
                   </td>
@@ -1192,6 +1318,10 @@ async function renderEditBusiness(businessId) {
               <input id="branch-location" name="location" placeholder="Start typing a Kenya place…" autocomplete="off" />
             </div>
             <div class="field field-wide">
+              <label for="branch-landmark">Landmark <span class="muted">(optional)</span></label>
+              <input id="branch-landmark" name="landmark" placeholder="e.g. Opposite Naivas, next to the blue gate" />
+            </div>
+            <div class="field field-wide">
               <label>Business hours</label>
               <p class="muted" style="margin:0 0 0.55rem">Toggle each day on or off, then pick start and end times.</p>
               <div id="branch-hours" class="hours-editor"></div>
@@ -1223,7 +1353,11 @@ async function renderEditBusiness(businessId) {
 
       <section class="panel">
         <h3>Services</h3>
-        <p class="muted" style="margin-top:-0.35rem">Services offered across all branches, each with a service period.</p>
+        <p class="muted" style="margin-top:-0.35rem">Services are per branch. Set a service time (minutes) for each one — used for customer wait estimates.</p>
+        <div class="field" style="margin-top:0.85rem;max-width:20rem">
+          <label for="service-branch">Branch</label>
+          <select id="service-branch" name="branch_id"></select>
+        </div>
         <div id="services-list" class="services-list" style="margin-top:1rem"></div>
       </section>
 
@@ -1237,7 +1371,7 @@ async function renderEditBusiness(businessId) {
               <input id="service-name" name="name" placeholder="e.g. Account opening" required />
             </div>
             <div class="field">
-              <label for="service-period">Service period (minutes)</label>
+              <label for="service-period">Service time (minutes)</label>
               <input id="service-period" name="duration_minutes" type="number" min="1" max="1440" value="15" required />
             </div>
             <div class="field field-wide">
@@ -1291,6 +1425,7 @@ async function renderEditBusiness(businessId) {
   const serviceForm = document.getElementById("service-form");
   const serviceMessage = document.getElementById("service-message");
   const servicesList = document.getElementById("services-list");
+  const serviceBranch = document.getElementById("service-branch");
   const serviceCancel = document.getElementById("service-cancel");
   const serviceSubmit = document.getElementById("service-submit");
   const serviceFormTitle = document.getElementById("service-form-title");
@@ -1298,6 +1433,7 @@ async function renderEditBusiness(businessId) {
   let business = null;
   let currentBranches = [];
   let currentServices = [];
+  let allServices = [];
   let allGroups = [];
 
   document.getElementById("back-to-businesses").addEventListener("click", () => {
@@ -1318,11 +1454,38 @@ async function renderEditBusiness(businessId) {
     branchMessage.classList.remove("success");
   }
 
+  function selectedServiceBranchId() {
+    const value = Number(serviceBranch?.value);
+    return Number.isInteger(value) && value > 0 ? value : null;
+  }
+
+  function syncServiceBranchOptions(branches = [], preferredId = null) {
+    if (!serviceBranch) return;
+    const previous = preferredId || selectedServiceBranchId();
+    serviceBranch.innerHTML = (branches || [])
+      .map(
+        (branch) =>
+          `<option value="${branch.id}">${escapeHtml(branch.name || "Branch")}</option>`
+      )
+      .join("");
+    if (!branches.length) {
+      serviceBranch.innerHTML = `<option value="">Add a branch first</option>`;
+      serviceBranch.disabled = true;
+      return;
+    }
+    serviceBranch.disabled = false;
+    const match = branches.find((branch) => Number(branch.id) === Number(previous));
+    serviceBranch.value = String(match?.id || branches[0].id);
+  }
+
   function resetServiceForm() {
     serviceForm.reset();
     document.getElementById("service-edit-id").value = "";
     document.getElementById("service-period").value = "15";
     document.getElementById("service-active").checked = true;
+    if (selectedServiceBranchId()) {
+      serviceBranch.value = String(selectedServiceBranchId());
+    }
     serviceFormTitle.textContent = "Add service";
     serviceSubmit.textContent = "Add service";
     serviceCancel.hidden = true;
@@ -1371,15 +1534,26 @@ async function renderEditBusiness(businessId) {
             <tr>
               <th>Branch</th>
               <th>Location</th>
-              <th>Hours</th>
+              <th>Services</th>
               <th>Status</th>
               <th></th>
             </tr>
           </thead>
           <tbody>
             ${branches
-              .map(
-                (branch) => `
+              .map((branch) => {
+                const branchServices = (allServices || []).filter(
+                  (service) => Number(service.branch_id) === Number(branch.id)
+                );
+                const servicesSummary = branchServices.length
+                  ? branchServices
+                      .map(
+                        (service) =>
+                          `${escapeHtml(service.name)} (${Number(service.duration_minutes) || 0} min)`
+                      )
+                      .join("<br />")
+                  : `<span class="muted">No services yet</span>`;
+                return `
                   <tr>
                     <td>
                       <div class="cell-text">
@@ -1390,16 +1564,22 @@ async function renderEditBusiness(businessId) {
                     <td>
                       ${
                         branch.location
-                          ? `<span class="cell-location">${PIN_ICON}${escapeHtml(branch.location)}</span>`
+                          ? `<span class="cell-location">${PIN_ICON}${escapeHtml(branch.location)}${
+                              branch.landmark
+                                ? `<span class="cell-sub" style="display:block;margin-top:0.2rem">${escapeHtml(branch.landmark)}</span>`
+                                : ""
+                            }</span>`
                           : `<span class="muted">—</span>`
                       }
                     </td>
                     <td>
-                      ${
-                        formatHoursDisplay(branch)
-                          ? `<span class="cell-sub">${escapeHtml(formatHoursDisplay(branch)).replaceAll("\n", "<br />")}</span>`
-                          : `<span class="muted">—</span>`
-                      }
+                      <div class="cell-sub">${servicesSummary}</div>
+                      <button
+                        class="btn btn-secondary btn-sm branch-services-btn"
+                        data-id="${branch.id}"
+                        type="button"
+                        style="margin-top:0.45rem"
+                      >Add / edit services</button>
                     </td>
                     <td>
                       <span class="status-pill ${branch.is_active ? "status-active" : "status-inactive"}">
@@ -1411,13 +1591,27 @@ async function renderEditBusiness(businessId) {
                       <button class="btn btn-secondary btn-sm branch-delete-btn" data-id="${branch.id}" type="button">Delete</button>
                     </td>
                   </tr>
-                `
-              )
+                `;
+              })
               .join("")}
           </tbody>
         </table>
       </div>
     `;
+
+    branchesList.querySelectorAll(".branch-services-btn").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        syncServiceBranchOptions(currentBranches, Number(btn.dataset.id));
+        try {
+          await reloadBusiness();
+        } catch (error) {
+          serviceMessage.textContent = error.message;
+        }
+        resetServiceForm();
+        serviceForm.scrollIntoView({ behavior: "smooth", block: "start" });
+        document.getElementById("service-name")?.focus();
+      });
+    });
 
     branchesList.querySelectorAll(".branch-edit-btn").forEach((btn) => {
       btn.addEventListener("click", () => {
@@ -1426,6 +1620,7 @@ async function renderEditBusiness(businessId) {
         document.getElementById("branch-edit-id").value = String(branch.id);
         document.getElementById("branch-name").value = branch.name || "";
         document.getElementById("branch-phone").value = branch.phone || "";
+        document.getElementById("branch-landmark").value = branch.landmark || "";
         mountHoursEditor(
           branchHours,
           branch.operating_schedule || branch.operating_hours || defaultHoursSchedule()
@@ -1459,19 +1654,27 @@ async function renderEditBusiness(businessId) {
   }
 
   async function reloadBusiness() {
-    const [business, branches, services] = await Promise.all([
+    const preferredBranchId = selectedServiceBranchId();
+    const [businessData, branches, services] = await Promise.all([
       api(`/businesses/${businessId}`),
       api(`/businesses/${businessId}/branches`),
       api(`/businesses/${businessId}/services`),
     ]);
     const found = {
-      ...business,
+      ...businessData,
       branches,
       services,
     };
     fillBusinessForm(found);
+    currentBranches = found.branches || [];
+    allServices = Array.isArray(services) ? services : [];
+    syncServiceBranchOptions(currentBranches, preferredBranchId);
+    const branchId = selectedServiceBranchId();
+    currentServices = branchId
+      ? allServices.filter((service) => Number(service.branch_id) === branchId)
+      : allServices;
     renderBranchesList(found.branches || []);
-    renderServicesList(found.services || []);
+    renderServicesList(currentServices);
     return found;
   }
 
@@ -1535,6 +1738,9 @@ async function renderEditBusiness(businessId) {
         document.getElementById("service-period").value = String(service.duration_minutes || 15);
         document.getElementById("service-description").value = service.description || "";
         document.getElementById("service-active").checked = Boolean(service.is_active);
+        if (service.branch_id) {
+          syncServiceBranchOptions(currentBranches, service.branch_id);
+        }
         serviceFormTitle.textContent = "Edit service";
         serviceSubmit.textContent = "Save service";
         serviceCancel.hidden = false;
@@ -1600,6 +1806,7 @@ async function renderEditBusiness(businessId) {
         name: data.name,
         phone: data.phone,
         location: data.location,
+        landmark: data.landmark,
         operating_schedule: readHoursSchedule(branchHours),
         accessibility_options: readAccessibilityOptions(branchAccessibility),
         latitude: coords.latitude,
@@ -1631,12 +1838,26 @@ async function renderEditBusiness(businessId) {
 
   serviceCancel.addEventListener("click", resetServiceForm);
 
+  serviceBranch?.addEventListener("change", async () => {
+    resetServiceForm();
+    try {
+      await reloadBusiness();
+    } catch (error) {
+      serviceMessage.textContent = error.message;
+    }
+  });
+
   serviceForm.addEventListener("submit", async (e) => {
     e.preventDefault();
     const data = Object.fromEntries(new FormData(serviceForm).entries());
     const serviceId = document.getElementById("service-edit-id").value;
+    const branchId = selectedServiceBranchId();
     serviceMessage.textContent = "";
     serviceMessage.classList.remove("success");
+    if (!branchId) {
+      serviceMessage.textContent = "Add a branch before creating services.";
+      return;
+    }
     serviceSubmit.disabled = true;
     try {
       const payload = {
@@ -1644,6 +1865,7 @@ async function renderEditBusiness(businessId) {
         duration_minutes: Number(data.duration_minutes),
         description: data.description,
         is_active: document.getElementById("service-active").checked,
+        branch_id: branchId,
       };
       if (serviceId) {
         await api(`/businesses/${businessId}/services/${serviceId}`, {
@@ -1742,43 +1964,53 @@ async function renderVendors() {
       <div class="main-header">
         <div>
           <h2>Vendors</h2>
-          <p>Invite vendors by phone. They set a 4-digit PIN after an SMS code.</p>
+          <p>Pre-register a phone, assign businesses, then activate when they are ready to manage queues.</p>
         </div>
       </div>
       <section class="panel">
-        <h3>Invite vendor</h3>
+        <div class="panel-head">
+          <h3>Pre-register vendor</h3>
+        </div>
         <form id="vendor-form">
-          <div class="form-row two">
-            <div class="field" style="margin-top:0">
-              <label for="vendor-username">Username (optional)</label>
-              <input id="vendor-username" name="username" placeholder="Defaults from phone" minlength="3" />
-            </div>
-            <div class="field" style="margin-top:0">
-              <label for="vendor-email">Email (optional)</label>
-              <input id="vendor-email" name="email" type="email" placeholder="owner@business.com" />
-            </div>
+          <div class="field-grid vendor-form-grid">
             <div class="field" style="margin-top:0">
               <label for="vendor-phone">WhatsApp phone</label>
               <input id="vendor-phone" name="phone" placeholder="07XXXXXXXX" inputmode="tel" required />
             </div>
             <div class="field" style="margin-top:0">
-              <label for="vendor-trial-ends">Trial ends (EAT)</label>
+              <label for="vendor-username">Username <span class="label-optional">optional</span></label>
+              <input id="vendor-username" name="username" placeholder="Defaults from phone" minlength="3" />
+            </div>
+            <div class="field" style="margin-top:0">
+              <label for="vendor-email">Email <span class="label-optional">optional</span></label>
+              <input id="vendor-email" name="email" type="email" placeholder="owner@business.com" />
+            </div>
+            <div class="field" style="margin-top:0">
+              <label for="vendor-trial-ends">Trial ends (EAT) <span class="label-optional">optional</span></label>
               <input id="vendor-trial-ends" name="trial_ends_at" type="datetime-local" />
             </div>
           </div>
           <div class="field">
-            <label>Businesses</label>
-            <div class="check-grid" id="vendor-businesses"></div>
+            <label id="vendor-businesses-label">Assign businesses</label>
+            <div class="biz-picker" id="vendor-businesses" aria-labelledby="vendor-businesses-label"></div>
+            <p class="field-help">Optional. Search and add businesses this vendor should manage.</p>
           </div>
-          <p class="muted" style="margin:0.35rem 0 0.85rem">
-            Creates the account without a PIN. The vendor verifies by SMS and sets a 4-digit PIN in the app.
-            Also sends an Advanta SMS from Wolfgang (includes trial end if set) and opens WhatsApp with the invite template.
-          </p>
-          <button class="btn btn-primary" type="submit">Create &amp; invite vendor</button>
+          <div class="form-actions">
+            <button class="btn btn-primary" type="submit">Pre-register vendor</button>
+            <p class="message" id="page-message" role="status"></p>
+          </div>
         </form>
-        <p class="message" id="page-message" role="status"></p>
       </section>
-      <div class="table-wrap" id="vendors-table"></div>
+      <section class="panel panel-stack">
+        <div class="panel-head panel-head-split">
+          <h3>All vendors</h3>
+          <label class="table-filter" for="vendor-search">
+            <span class="sr-only">Search vendors</span>
+            <input id="vendor-search" type="search" placeholder="Search vendors…" />
+          </label>
+        </div>
+        <div class="table-wrap table-wrap-flush" id="vendors-table"></div>
+      </section>
 
       <div id="vendor-edit-overlay" class="edit-overlay hidden" role="dialog" aria-modal="true" aria-label="Edit vendor">
         <div class="edit-drawer">
@@ -1802,11 +2034,12 @@ async function renderVendors() {
             <div class="field">
               <label for="vendor-edit-trial-ends">Trial ends (EAT)</label>
               <input id="vendor-edit-trial-ends" name="trial_ends_at" type="datetime-local" />
-              <p class="muted" style="margin:0.35rem 0 0">Changing the trial end date sends an SMS to the vendor.</p>
+              <p class="field-help">Changing the trial end date notifies the vendor.</p>
             </div>
             <div class="field">
-              <label>Businesses</label>
-              <div class="check-grid" id="vendor-edit-businesses"></div>
+              <label id="vendor-edit-businesses-label">Assign businesses</label>
+              <div class="biz-picker" id="vendor-edit-businesses" aria-labelledby="vendor-edit-businesses-label"></div>
+              <p class="field-help">Search and add businesses this vendor can manage.</p>
             </div>
             <div class="edit-actions">
               <p class="message" id="vendor-edit-message" role="status"></p>
@@ -1832,7 +2065,6 @@ async function renderVendors() {
   let inviteContact = { phone: "+254712674333", email: "" };
   let vendorWebUrl = "https://vendor.queueless.thewolfgang.tech";
   let vendorAppUrl = "";
-
   function normalizeInvitePhone(value) {
     const digits = String(value || "").replace(/\D/g, "");
     if (!digits) return null;
@@ -1851,12 +2083,13 @@ async function renderVendors() {
     const businesses = vendorBusinessNames(vendor);
     const businessLabel = businesses.length ? businesses.join(", ") : "your business";
     const lines = [
-      "Queueless Vendor invite",
+      "Queueless Vendor",
       "",
-      `You've been invited to manage ${businessLabel} on Queueless.`,
+      `You're set up to manage ${businessLabel} on Queueless.`,
       "",
-      "Sign in with your phone number.",
+      "Create your account (or sign in) with your phone number in the Queueless Vendor app.",
       "We'll text a code so you can create a 4-digit PIN.",
+      "An admin will activate your account before you can manage queues.",
       "",
     ];
     if (vendor?.trial_ends_at) {
@@ -1876,6 +2109,13 @@ async function renderVendors() {
     return lines.join("\n").trim();
   }
 
+  function vendorStatusLabel(status) {
+    if (status === "active") return "Active";
+    if (status === "pending_activation") return "Pending activation";
+    if (status === "awaiting_pin") return "Awaiting PIN";
+    return status || "Unknown";
+  }
+
   function openVendorWhatsAppInvite({ vendor, password = "" }) {
     const phone = normalizeInvitePhone(vendor?.phone);
     if (!phone) {
@@ -1887,25 +2127,171 @@ async function renderVendors() {
     return text;
   }
 
-  function businessChecksHtml(containerId, selectedIds = []) {
-    const selected = new Set(selectedIds.map(Number));
-    if (!allBusinesses.length) {
-      return `<p class="muted">Create a business first.</p>`;
-    }
-    return allBusinesses
-      .map(
-        (business) => `
-          <label class="check-chip">
-            <input type="checkbox" name="${containerId}" value="${business.id}" ${selected.has(Number(business.id)) ? "checked" : ""} />
-            <span>${escapeHtml(business.name)}</span>
-          </label>
-        `
-      )
-      .join("");
+  function selectedBusinessIds(root) {
+    return Array.isArray(root?._selectedIds) ? root._selectedIds.map(Number) : [];
   }
 
-  function selectedBusinessIds(root) {
-    return [...root.querySelectorAll("input[type=checkbox]:checked")].map((el) => Number(el.value));
+  function mountBusinessPicker(root, selectedIds = []) {
+    if (!root) return;
+    const selected = new Set(selectedIds.map(Number).filter(Number.isFinite));
+    let query = "";
+    let menuOpen = false;
+
+    const sync = () => {
+      root._selectedIds = [...selected];
+    };
+
+    const closeMenu = () => {
+      menuOpen = false;
+      const menu = root.querySelector(".biz-picker-menu");
+      if (menu) menu.classList.add("hidden");
+    };
+
+    const openMenu = () => {
+      if (!allBusinesses.length) return;
+      menuOpen = true;
+      paintMenu();
+    };
+
+    const paintMenu = () => {
+      const menu = root.querySelector(".biz-picker-menu");
+      const search = root.querySelector(".biz-picker-search");
+      if (!menu || !search) return;
+      const q = query.trim().toLowerCase();
+      const options = allBusinesses.filter((business) => {
+        if (selected.has(Number(business.id))) return false;
+        if (!q) return true;
+        const haystack = `${business.name || ""} ${business.business_group_name || ""}`.toLowerCase();
+        return haystack.includes(q);
+      });
+
+      if (!menuOpen) {
+        menu.classList.add("hidden");
+        menu.innerHTML = "";
+        return;
+      }
+
+      if (!options.length) {
+        menu.classList.remove("hidden");
+        menu.innerHTML = `<div class="biz-picker-empty-row">${
+          allBusinesses.length
+            ? selected.size === allBusinesses.length
+              ? "All businesses already assigned"
+              : "No matching businesses"
+            : "Create a business first"
+        }</div>`;
+        return;
+      }
+
+      menu.classList.remove("hidden");
+      menu.innerHTML = options
+        .slice(0, 40)
+        .map(
+          (business) => `
+            <button type="button" class="biz-picker-option" data-id="${business.id}" role="option">
+              <span class="biz-picker-option-title">${escapeHtml(business.name)}</span>
+              <span class="biz-picker-option-sub">${escapeHtml(business.business_group_name || "Business")}</span>
+            </button>
+          `
+        )
+        .join("");
+    };
+
+    const paint = () => {
+      sync();
+      const selectedBusinesses = allBusinesses.filter((business) => selected.has(Number(business.id)));
+      const canAdd = allBusinesses.some((business) => !selected.has(Number(business.id)));
+
+      root.innerHTML = `
+        <div class="biz-picker-shell">
+          <div class="biz-picker-selected" role="list" aria-label="Assigned businesses">
+            ${
+              selectedBusinesses.length
+                ? selectedBusinesses
+                    .map(
+                      (business) => `
+                        <span class="biz-tag" role="listitem">
+                          <span class="biz-tag-copy">
+                            <span class="biz-tag-title">${escapeHtml(business.name)}</span>
+                            ${
+                              business.business_group_name
+                                ? `<span class="biz-tag-sub">${escapeHtml(business.business_group_name)}</span>`
+                                : ""
+                            }
+                          </span>
+                          <button type="button" class="biz-tag-remove" data-id="${business.id}" aria-label="Remove ${escapeHtml(business.name)}">×</button>
+                        </span>
+                      `
+                    )
+                    .join("")
+                : `<span class="biz-picker-placeholder">No businesses assigned yet</span>`
+            }
+          </div>
+          <div class="biz-picker-add">
+            <input
+              type="search"
+              class="biz-picker-search"
+              placeholder="${allBusinesses.length ? "Search businesses to add…" : "No businesses available"}"
+              ${allBusinesses.length && canAdd ? "" : "disabled"}
+              aria-autocomplete="list"
+              aria-expanded="false"
+              autocomplete="off"
+            />
+            <div class="biz-picker-menu hidden" role="listbox"></div>
+          </div>
+        </div>
+      `;
+
+      const search = root.querySelector(".biz-picker-search");
+      search.value = query;
+
+      search.addEventListener("focus", () => {
+        menuOpen = true;
+        search.setAttribute("aria-expanded", "true");
+        paintMenu();
+      });
+
+      search.addEventListener("input", () => {
+        query = search.value;
+        menuOpen = true;
+        search.setAttribute("aria-expanded", "true");
+        paintMenu();
+      });
+
+      search.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") {
+          closeMenu();
+          search.blur();
+        }
+      });
+
+      root.querySelectorAll(".biz-tag-remove").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          selected.delete(Number(btn.dataset.id));
+          paint();
+        });
+      });
+
+      root.querySelector(".biz-picker-menu")?.addEventListener("click", (event) => {
+        const option = event.target.closest(".biz-picker-option");
+        if (!option) return;
+        selected.add(Number(option.dataset.id));
+        query = "";
+        paint();
+        root.querySelector(".biz-picker-search")?.focus();
+      });
+
+      if (menuOpen) paintMenu();
+    };
+
+    if (!root._pickerOutsideBound) {
+      root._pickerOutsideBound = true;
+      document.addEventListener("click", (event) => {
+        if (!root.contains(event.target)) closeMenu();
+      });
+    }
+
+    paint();
   }
 
   function openEdit(vendor) {
@@ -1918,8 +2304,8 @@ async function renderVendors() {
     document.getElementById("vendor-edit-trial-ends").value = toDatetimeLocalValue(
       vendor.trial_ends_at
     );
-    editChecks.innerHTML = businessChecksHtml(
-      "edit-biz",
+    mountBusinessPicker(
+      editChecks,
       (vendor.businesses || []).map((b) => b.id)
     );
     editOverlay.classList.remove("hidden");
@@ -1937,30 +2323,60 @@ async function renderVendors() {
     if (e.target === editOverlay) closeEdit();
   });
 
+  let cachedVendors = [];
+
   async function loadVendors() {
     const vendors = await api("/admins/vendors");
     vendorsById = new Map(vendors.map((v) => [Number(v.id), v]));
-    if (!vendors.length) {
+    cachedVendors = vendors;
+    renderVendorRows(document.getElementById("vendor-search")?.value || "");
+  }
+
+  function vendorMatchesQuery(vendor, query) {
+    const q = String(query || "").trim().toLowerCase();
+    if (!q) return true;
+    const businesses = (vendor.businesses || []).map((b) => b.name).join(" ");
+    const haystack = [
+      vendor.username,
+      vendor.phone,
+      vendor.email,
+      vendor.status,
+      businesses,
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+    return haystack.includes(q);
+  }
+
+  function renderVendorRows(query = "") {
+    const vendors = cachedVendors.filter((vendor) => vendorMatchesQuery(vendor, query));
+    if (!cachedVendors.length) {
       table.innerHTML = `<p class="empty">No vendors yet.</p>`;
+      return;
+    }
+    if (!vendors.length) {
+      table.innerHTML = `<p class="empty">No vendors match “${escapeHtml(String(query).trim())}”.</p>`;
       return;
     }
 
     table.innerHTML = `
       <table>
         <thead>
-            <tr>
-              <th>Vendor</th>
-              <th>Businesses</th>
-              <th>PIN / OTP</th>
-              <th>Trial ends</th>
-              <th>Created</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            ${vendors
-              .map(
-                (vendor) => `
+          <tr>
+            <th>Vendor</th>
+            <th>Businesses</th>
+            <th>Status</th>
+            <th>PIN / OTP</th>
+            <th>Trial ends</th>
+            <th>Created</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          ${vendors
+            .map(
+              (vendor) => `
                 <tr>
                   <td>
                     <div class="cell-text">
@@ -1969,13 +2385,20 @@ async function renderVendors() {
                     </div>
                   </td>
                   <td>
-                    ${
-                      vendor.businesses?.length
-                        ? vendor.businesses
-                            .map((b) => `<span class="group-chip">${escapeHtml(b.name)}</span>`)
-                            .join(" ")
-                        : `<span class="muted">None assigned</span>`
-                    }
+                    <div class="biz-chip-row">
+                      ${
+                        vendor.businesses?.length
+                          ? vendor.businesses
+                              .map((b) => `<span class="group-chip">${escapeHtml(b.name)}</span>`)
+                              .join("")
+                          : `<span class="muted">None assigned</span>`
+                      }
+                    </div>
+                  </td>
+                  <td>
+                    <span class="status-pill status-${escapeHtml(vendor.status || "awaiting_pin")}">${escapeHtml(
+                      vendorStatusLabel(vendor.status)
+                    )}</span>
                   </td>
                   <td>
                     ${
@@ -1995,8 +2418,18 @@ async function renderVendors() {
                   </td>
                   <td class="muted cell-date">${formatDate(vendor.created_at)}</td>
                   <td class="row-actions">
-                    <button class="btn btn-secondary btn-sm vendor-invite-btn" data-id="${vendor.id}" ${vendor.phone ? "" : "disabled"} title="${vendor.phone ? "Resend invite SMS" : "Add a phone number first"}">Invite SMS</button>
-                    <button class="btn btn-secondary btn-sm vendor-whatsapp-btn" data-id="${vendor.id}" ${vendor.phone ? "" : "disabled"} title="${vendor.phone ? "Open WhatsApp with invite template" : "Add a phone number first"}">WhatsApp</button>
+                    ${
+                      vendor.status !== "active"
+                        ? `<button class="btn btn-primary btn-sm vendor-activate-btn" data-id="${vendor.id}" ${
+                            vendor.phone ? "" : "disabled"
+                          } title="${
+                            vendor.phone
+                              ? "Activate account and notify"
+                              : "Add a phone number first"
+                          }">Activate</button>`
+                        : ""
+                    }
+                    <button class="btn btn-secondary btn-sm vendor-whatsapp-btn" data-id="${vendor.id}" ${vendor.phone ? "" : "disabled"} title="${vendor.phone ? "Open WhatsApp" : "Add a phone number first"}">WhatsApp</button>
                     <button class="btn btn-secondary btn-sm vendor-edit-btn" data-id="${vendor.id}">Edit</button>
                   </td>
                 </tr>
@@ -2014,29 +2447,34 @@ async function renderVendors() {
       });
     });
 
-    table.querySelectorAll(".vendor-invite-btn").forEach((btn) => {
+    table.querySelectorAll(".vendor-activate-btn").forEach((btn) => {
       btn.addEventListener("click", async () => {
         const vendor = vendorsById.get(Number(btn.dataset.id));
         if (!vendor?.phone) {
-          message.textContent = "Add a WhatsApp phone number before sending an invite.";
+          message.textContent = "Add a WhatsApp phone number before activating.";
           return;
         }
-        if (!confirm(`Send invite SMS from Wolfgang to ${vendor.phone}?`)) return;
+        if (
+          !confirm(
+            `Activate ${vendor.username || vendor.phone} and notify ${vendor.phone}?`
+          )
+        ) {
+          return;
+        }
         btn.disabled = true;
         message.textContent = "";
         message.classList.remove("success");
         try {
-          const result = await api(`/admins/vendors/${vendor.id}/invite`, { method: "POST" });
+          const result = await api(`/admins/vendors/${vendor.id}/activate`, { method: "POST" });
           if (result.contact_phone || result.contact_email) {
             inviteContact = {
               phone: result.contact_phone || inviteContact.phone,
               email: result.contact_email || inviteContact.email,
             };
           }
-          if (result.vendor_web_url) vendorWebUrl = result.vendor_web_url;
-          if (typeof result.vendor_app_url === "string") vendorAppUrl = result.vendor_app_url;
-          message.textContent = result.message || "Invite SMS sent from Wolfgang.";
+          message.textContent = result.message || "Vendor activated.";
           message.classList.add("success");
+          await loadVendors();
         } catch (error) {
           message.textContent = error.message;
         } finally {
@@ -2054,7 +2492,7 @@ async function renderVendors() {
         }
         try {
           openVendorWhatsAppInvite({ vendor });
-          message.textContent = "WhatsApp opened with the invite template. Review and send.";
+          message.textContent = "WhatsApp opened. Review and send.";
           message.classList.add("success");
         } catch (error) {
           message.textContent = error.message;
@@ -2093,17 +2531,10 @@ async function renderVendors() {
       if (typeof result.vendor_app_url === "string") vendorAppUrl = result.vendor_app_url;
 
       form.reset();
-      createChecks.innerHTML = businessChecksHtml("create-biz");
-      message.textContent = result.message || "Vendor created and invite SMS sent.";
+      mountBusinessPicker(createChecks);
+      message.textContent = result.message || "Vendor pre-registered.";
       message.classList.add("success");
       await loadVendors();
-
-      try {
-        openVendorWhatsAppInvite({ vendor: result });
-        message.textContent = `${result.message || "Vendor created."} WhatsApp opened with the invite template.`;
-      } catch (waError) {
-        message.textContent = `${result.message || "Vendor created."} ${waError.message}`;
-      }
     } catch (error) {
       message.textContent = error.message;
     } finally {
@@ -2154,8 +2585,11 @@ async function renderVendors() {
       vendorWebUrl = settings.vendor_web_url || vendorWebUrl;
     }
     vendorAppUrl = settings.vendor_app_url || "";
-    createChecks.innerHTML = businessChecksHtml("create-biz");
+    mountBusinessPicker(createChecks);
     await loadVendors();
+    document.getElementById("vendor-search")?.addEventListener("input", (event) => {
+      renderVendorRows(event.target.value);
+    });
   } catch (error) {
     message.textContent = error.message;
   }
@@ -2333,8 +2767,12 @@ async function renderAcceptInvite(view) {
   app.innerHTML = `
     <div class="login-shell">
       <form class="login-card" id="accept-form">
-        <h1>Queue<span>less</span> Admin</h1>
-        <p id="accept-lead">Checking invite…</p>
+        <div class="auth-brand">
+          <p class="brand">Queue<span>less</span></p>
+          <span class="auth-badge" aria-hidden="true">Admin</span>
+        </div>
+        <h1 class="auth-title">Accept invite</h1>
+        <p class="auth-lead" id="accept-lead">Checking invite…</p>
         <div id="accept-fields" class="hidden">
           <div class="field">
             <label for="accept-email">Email</label>
@@ -2352,10 +2790,11 @@ async function renderAcceptInvite(view) {
             <label for="accept-confirm">Confirm password</label>
             <input id="accept-confirm" name="confirm_password" type="password" autocomplete="new-password" minlength="8" required />
           </div>
-          <button class="btn btn-primary btn-block" type="submit">Set password &amp; sign in</button>
+          <button class="btn btn-primary btn-block auth-submit" type="submit">Set password &amp; sign in</button>
         </div>
         <p class="message" id="accept-message" role="status"></p>
-        <button class="btn btn-secondary btn-block hidden" type="button" id="to-login">Go to sign in</button>
+        <button class="btn btn-secondary btn-block auth-secondary hidden" type="button" id="to-login">Go to sign in</button>
+        ${appVersionHtml()}
       </form>
     </div>
   `;
@@ -2487,8 +2926,9 @@ async function renderSettings() {
       <div class="setting-copy">
         <div class="setting-title">Queue alerts</div>
         <p class="setting-desc">
-          When on, vendors and admin contact phones get a message whenever a
-          customer joins or leaves a queue. Choose WhatsApp (Meta) or SMS (Advanta).
+          Assigned vendors get queue join/leave alerts as Android push
+          notifications. This switch still controls WhatsApp/SMS for HQ and
+          branch contact phones.
         </p>
       </div>
       <label class="switch" title="Enable queue alerts">

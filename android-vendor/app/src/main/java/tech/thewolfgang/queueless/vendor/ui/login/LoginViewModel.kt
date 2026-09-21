@@ -16,6 +16,7 @@ enum class LoginStep {
     Pin,
     Otp,
     SetPin,
+    PendingActivation,
 }
 
 data class LoginUiState(
@@ -78,6 +79,17 @@ class LoginViewModel(
             _uiState.update { it.copy(loading = true, error = null, info = null) }
             try {
                 val status = repository.phoneStatus(phone)
+                if (status.pendingActivation && status.hasPin) {
+                    _uiState.update {
+                        it.copy(
+                            loading = false,
+                            phone = status.phone,
+                            step = LoginStep.PendingActivation,
+                            info = "Your account is waiting for admin activation. We'll notify you on this device when it's ready.",
+                        )
+                    }
+                    return@launch
+                }
                 if (status.hasPin) {
                     _uiState.update {
                         it.copy(
@@ -121,7 +133,17 @@ class LoginViewModel(
                 repository.login(state.phone, state.pin)
                 _uiState.update { it.copy(loading = false, loggedIn = true) }
             } catch (e: ApiException) {
-                if (e.payload?.needsOtp == true || e.payload?.needsPinSetup == true) {
+                if (e.payload?.pendingActivation == true) {
+                    _uiState.update {
+                        it.copy(
+                            loading = false,
+                            step = LoginStep.PendingActivation,
+                            error = null,
+                            info = e.message
+                                ?: "Your account is waiting for admin activation. We'll notify you on this device when it's ready.",
+                        )
+                    }
+                } else if (e.payload?.needsOtp == true || e.payload?.needsPinSetup == true) {
                     try {
                         val otpResult = repository.requestOtp(state.phone, "setup")
                         _uiState.update {
@@ -232,13 +254,24 @@ class LoginViewModel(
         viewModelScope.launch {
             _uiState.update { it.copy(loading = true, error = null, info = null) }
             try {
-                repository.setPin(
+                val session = repository.setPin(
                     phone = state.phone,
                     pin = state.pin,
                     confirmPin = state.confirmPin,
                     otp = state.verifiedOtp,
                 )
-                _uiState.update { it.copy(loading = false, loggedIn = true) }
+                if (session.pendingActivation || session.token.isNullOrBlank()) {
+                    _uiState.update {
+                        it.copy(
+                            loading = false,
+                            step = LoginStep.PendingActivation,
+                            info = session.message
+                                ?: "PIN saved. Your account is waiting for admin activation. We'll notify you on this device when it's ready.",
+                        )
+                    }
+                } else {
+                    _uiState.update { it.copy(loading = false, loggedIn = true) }
+                }
             } catch (e: Exception) {
                 _uiState.update {
                     it.copy(loading = false, error = e.message ?: "Could not save PIN.")
@@ -248,11 +281,12 @@ class LoginViewModel(
     }
 
     companion object {
-        fun factory(repository: VendorRepository) = object : ViewModelProvider.Factory {
-            @Suppress("UNCHECKED_CAST")
-            override fun <T : ViewModel> create(modelClass: Class<T>): T {
-                return LoginViewModel(repository) as T
+        fun factory(repository: VendorRepository) =
+            object : ViewModelProvider.Factory {
+                @Suppress("UNCHECKED_CAST")
+                override fun <T : ViewModel> create(modelClass: Class<T>): T {
+                    return LoginViewModel(repository) as T
+                }
             }
-        }
     }
 }

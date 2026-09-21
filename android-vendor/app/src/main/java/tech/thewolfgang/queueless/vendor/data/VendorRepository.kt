@@ -21,15 +21,24 @@ class VendorRepository(
 
     suspend fun setPin(phone: String, pin: String, confirmPin: String, otp: String?): LoginResponse {
         val session = api.setPin(normalizePhone(phone), pin, confirmPin, otp)
-        tokenStore.setToken(session.token)
+        if (!session.token.isNullOrBlank()) {
+            tokenStore.setToken(session.token)
+        }
         return session
     }
 
     suspend fun login(phone: String, pin: String): LoginResponse {
         val session = api.login(normalizePhone(phone), pin)
-        tokenStore.setToken(session.token)
+        if (!session.token.isNullOrBlank()) {
+            tokenStore.setToken(session.token)
+        }
         return session
     }
+
+    suspend fun registerPushToken(token: String) = api.registerPushToken(token)
+
+    suspend fun registerPendingPushToken(phone: String, token: String) =
+        api.registerPendingPushToken(normalizePhone(phone), token)
 
     suspend fun businesses() = api.getBusinesses()
 
@@ -47,6 +56,9 @@ class VendorRepository(
 
     suspend fun setWalkIns(businessId: Int, queueSize: Int) =
         api.setWalkIns(businessId, queueSize.coerceIn(0, 500))
+
+    suspend fun setQueuePaused(businessId: Int, paused: Boolean) =
+        api.setQueuePaused(businessId, paused)
 
     suspend fun serve(entryId: Int) = api.serve(entryId)
 
@@ -76,21 +88,32 @@ class VendorRepository(
 
     suspend fun branches(branchId: Int) = api.getBranches(branchId)
 
+    suspend fun searchPlaces(query: String) = api.searchPlaces(query)
+
+    suspend fun reverseGeocode(latitude: Double, longitude: Double) =
+        api.reverseGeocode(latitude, longitude)
+
     suspend fun createBranch(
         branchId: Int,
         name: String,
         location: String?,
+        landmark: String?,
         phone: String?,
         isActive: Boolean,
-    ) = api.createBranch(branchId, name, location, phone, isActive)
+        latitude: Double? = null,
+        longitude: Double? = null,
+    ) = api.createBranch(branchId, name, location, landmark, phone, isActive, latitude, longitude)
 
     suspend fun updateBranchDetails(
         branchId: Int,
         name: String,
         location: String?,
+        landmark: String?,
         phone: String?,
         isActive: Boolean,
-    ) = api.updateBranchDetails(branchId, name, location, phone, isActive)
+        latitude: Double? = null,
+        longitude: Double? = null,
+    ) = api.updateBranchDetails(branchId, name, location, landmark, phone, isActive, latitude, longitude)
 
     companion object {
         fun normalizePhone(raw: String): String {

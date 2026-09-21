@@ -71,6 +71,7 @@ class QueueViewModel(
             }
             try {
                 val data = repository.queue(businessId)
+                if (!initial && _uiState.value.data == data) return@launch
                 _uiState.update {
                     it.copy(loading = false, data = data, error = null)
                 }
@@ -103,6 +104,21 @@ class QueueViewModel(
                 refresh(initial = false)
             } catch (e: Exception) {
                 _uiState.update { it.copy(error = e.message ?: "Could not update walk-ins.") }
+            } finally {
+                _uiState.update { it.copy(actionBusy = false) }
+            }
+        }
+    }
+
+    fun toggleQueuePause() {
+        val paused = _uiState.value.data?.business?.queuePaused ?: return
+        viewModelScope.launch {
+            _uiState.update { it.copy(actionBusy = true, error = null) }
+            try {
+                repository.setQueuePaused(businessId, !paused)
+                refresh(initial = false)
+            } catch (e: Exception) {
+                _uiState.update { it.copy(error = e.message ?: "Could not update queue pause.") }
             } finally {
                 _uiState.update { it.copy(actionBusy = false) }
             }
@@ -143,9 +159,9 @@ class QueueViewModel(
     }
 
     companion object {
-        private const val POLL_MS = 8_000L
-        private const val POLL_MS_EMPTY = 20_000L
-        private const val POLL_MS_BUSY = 12_000L
+        private const val POLL_MS = 12_000L
+        private const val POLL_MS_EMPTY = 45_000L
+        private const val POLL_MS_BUSY = 15_000L
 
         fun factory(businessId: Int, repository: VendorRepository) =
             object : ViewModelProvider.Factory {

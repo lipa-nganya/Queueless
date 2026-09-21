@@ -13,3 +13,6 @@
 *.aab
 *.dex
 *.class
+
+# Firebase — keep the example; never commit real client configs.
+/app/google-services.json

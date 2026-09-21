@@ -79,7 +79,7 @@ fun ServicesPickerScreen(
                 fontWeight = FontWeight.Bold,
             )
             Text(
-                text = "Manage services for the business behind that branch.",
+                text = "Manage services for that branch only.",
                 color = TextMuted,
                 modifier = Modifier.padding(top = 4.dp, bottom = 16.dp),
             )
