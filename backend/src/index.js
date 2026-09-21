@@ -23,6 +23,10 @@ const defaultOrigins = [
   "http://127.0.0.1:3000",
   "http://127.0.0.1:4000",
   "http://127.0.0.1:3500",
+  "https://queueless.thewolfgang.tech",
+  "https://customer.thewolfgang.tech",
+  "https://admin.queueless.thewolfgang.tech",
+  "https://vendor.queueless.thewolfgang.tech",
 ];
 const allowedOrigins = new Set(
   (process.env.CORS_ORIGINS || "")

@@ -4,8 +4,10 @@
   const isLocal = host === "localhost" || host === "127.0.0.1";
 
   window.QUEUELESS_LANDING = {
-    // Local: customer app on :3000. Deployed: same-origin /customer/.
-    customerUrl: isLocal ? "http://localhost:3000/" : "/customer/",
+    // Local: customer app on :3000. Develop: dedicated customer subdomain.
+    customerUrl: isLocal
+      ? "http://localhost:3000/"
+      : "https://customer.thewolfgang.tech/",
     vendorWebUrl: isLocal
       ? "http://localhost:3500/"
       : "https://vendor.queueless.thewolfgang.tech",

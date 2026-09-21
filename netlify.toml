@@ -3,7 +3,7 @@
 # Dev:        queueless-kenya-dev → branch develop → https://queueless.thewolfgang.tech
 #
 # Site root = Queueless landing page.
-# Customer product app = /customer/
+# Customer product app = separate Netlify site (customer.thewolfgang.tech)
 # Vendor product app   = separate Netlify site (vendor.queueless.thewolfgang.tech)
 #
 # Required env vars (both sites):
@@ -16,14 +16,26 @@
   command = "npm install"
   functions = "netlify/functions"
 
+# Keep /app and /customer working on the landing host by sending people to the
+# dedicated customer develop subdomain.
 [[redirects]]
   from = "/app"
-  to = "/customer/"
+  to = "https://customer.thewolfgang.tech/"
   status = 302
 
 [[redirects]]
   from = "/app/*"
-  to = "/customer/:splat"
+  to = "https://customer.thewolfgang.tech/:splat"
+  status = 302
+
+[[redirects]]
+  from = "/customer"
+  to = "https://customer.thewolfgang.tech/"
+  status = 302
+
+[[redirects]]
+  from = "/customer/*"
+  to = "https://customer.thewolfgang.tech/:splat"
   status = 302
 
 [[headers]]
@@ -38,21 +50,6 @@
 
 [[headers]]
   for = "/landing-config.js"
-  [headers.values]
-    Cache-Control = "public, max-age=300"
-
-[[headers]]
-  for = "/customer/index.html"
-  [headers.values]
-    Cache-Control = "no-cache"
-
-[[headers]]
-  for = "/customer/*.js"
-  [headers.values]
-    Cache-Control = "public, max-age=300"
-
-[[headers]]
-  for = "/customer/*.css"
   [headers.values]
     Cache-Control = "public, max-age=300"
 

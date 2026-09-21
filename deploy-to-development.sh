@@ -10,7 +10,8 @@ BRANCH="develop"
 
 CUSTOMER_SITE_ID="6c7337a3-6a81-4d75-9de2-1dbb3c7ef40a"
 CUSTOMER_URL="https://queueless.thewolfgang.tech"
-CUSTOMER_APP_URL="https://queueless.thewolfgang.tech/customer/"
+CUSTOMER_APP_SITE_ID="78f0bec0-0f42-4192-adf6-3c2167733713"
+CUSTOMER_APP_URL="https://customer.thewolfgang.tech/"
 ADMIN_SITE_ID="a63fe2df-41f1-4665-88c2-970c6911cfdb"
 ADMIN_URL="https://admin.queueless.thewolfgang.tech"
 VENDOR_SITE_ID="aaf89a4e-ef96-4d45-bbbc-d6493bcc4ea5"
@@ -29,10 +30,11 @@ usage() {
 Usage: ./deploy-to-development.sh [options]
 
 Deploys the develop tier:
-  backend   Railway  (queueless-dev / staging / Queueless)
-  customer  Netlify  (queueless-kenya-dev)
-  admin     Netlify  (queueless-kenya-admin)
-  vendor    Netlify  (queueless-kenya-vendor)
+  backend      Railway  (queueless-dev / staging / Queueless)
+  landing      Netlify  (queueless-kenya-dev)
+  customer app Netlify  (queueless-kenya-customer)
+  admin        Netlify  (queueless-kenya-admin)
+  vendor       Netlify  (queueless-kenya-vendor)
 
 Options:
   --skip-push   Redeploy the current remote commit without pushing
@@ -133,8 +135,10 @@ else
 fi
 
 step "Triggering Netlify sites"
-customer_deploy="$(trigger_netlify "$CUSTOMER_SITE_ID")"
-[[ -n "$customer_deploy" ]] && ok "customer build queued" || warn "customer build not confirmed"
+landing_deploy="$(trigger_netlify "$CUSTOMER_SITE_ID")"
+[[ -n "$landing_deploy" ]] && ok "landing build queued" || warn "landing build not confirmed"
+customer_deploy="$(trigger_netlify "$CUSTOMER_APP_SITE_ID")"
+[[ -n "$customer_deploy" ]] && ok "customer app build queued" || warn "customer app build not confirmed"
 admin_deploy="$(trigger_netlify "$ADMIN_SITE_ID")"
 [[ -n "$admin_deploy" ]] && ok "admin build queued" || warn "admin build not confirmed"
 vendor_deploy="$(trigger_netlify "$VENDOR_SITE_ID")"
@@ -196,7 +200,8 @@ wait_for_netlify() {
 }
 
 step "Waiting for the frontends"
-wait_for_netlify "customer" "$CUSTOMER_SITE_ID" "$customer_deploy" "$CUSTOMER_URL" || status=1
+wait_for_netlify "landing" "$CUSTOMER_SITE_ID" "$landing_deploy" "$CUSTOMER_URL" || status=1
+wait_for_netlify "customer" "$CUSTOMER_APP_SITE_ID" "$customer_deploy" "$CUSTOMER_APP_URL" || status=1
 wait_for_netlify "admin" "$ADMIN_SITE_ID" "$admin_deploy" "$ADMIN_URL" || status=1
 wait_for_netlify "vendor" "$VENDOR_SITE_ID" "$vendor_deploy" "$VENDOR_URL" || status=1
 

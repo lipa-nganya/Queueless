@@ -1,0 +1,32 @@
+# Config for the customer site (queueless-kenya-customer), which builds with
+# base = "customer" so Netlify reads this file instead of the one at the repo root.
+# Dev URL: https://customer.thewolfgang.tech
+[build]
+  publish = "."
+  command = "echo Static site - no build"
+
+# The customer UI is a single-page app routed by hash, so every path serves index.html.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+[[headers]]
+  for = "/index.html"
+  [headers.values]
+    Cache-Control = "no-cache"
+
+[[headers]]
+  for = "/*.js"
+  [headers.values]
+    Cache-Control = "public, max-age=300"
+
+[[headers]]
+  for = "/*.css"
+  [headers.values]
+    Cache-Control = "public, max-age=300"
+
+[[headers]]
+  for = "/*.svg"
+  [headers.values]
+    Cache-Control = "public, max-age=86400"
