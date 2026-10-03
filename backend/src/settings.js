@@ -11,6 +11,7 @@ import { query } from "./db.js";
 export const SMS_ENABLED = "sms_enabled";
 export const WHATSAPP_ENABLED = "whatsapp_enabled";
 export const QUEUE_ALERT_CHANNEL = "queue_alert_channel";
+export const VENDOR_QUEUE_TEXTS_ENABLED = "vendor_queue_texts_enabled";
 export const CONTACT_PHONE = "contact_phone";
 export const CONTACT_EMAIL = "contact_email";
 
@@ -96,6 +97,10 @@ export async function seedSettings() {
   await query(
     `INSERT INTO settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING`,
     [QUEUE_ALERT_CHANNEL, "whatsapp"]
+  );
+  await query(
+    `INSERT INTO settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING`,
+    [VENDOR_QUEUE_TEXTS_ENABLED, "true"]
   );
   await loadSettings();
 }

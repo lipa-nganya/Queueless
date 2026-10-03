@@ -14,8 +14,8 @@
     // Set when the Play Store listing (or hosted APK) is public.
     vendorAppUrl: "",
     // Keep in sync with customer/config.js, vendor/config.js, android-vendor versionName.
-    customerAppVersion: "1.2.0",
-    vendorWebVersion: "1.2.0",
-    vendorAppVersion: "1.2.0",
+    customerAppVersion: "1.2.1",
+    vendorWebVersion: "1.2.1",
+    vendorAppVersion: "1.2.1",
   };
 })();

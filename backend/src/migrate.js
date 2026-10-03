@@ -274,6 +274,14 @@ export async function migrate() {
       ON queue_entries (branch_id, joined_at)
       WHERE status = 'waiting';
 
+    -- Customer accessibility needs: saved preference + snapshot shared with staff per visit.
+    ALTER TABLE customers
+      ADD COLUMN IF NOT EXISTS accessibility_needs TEXT NOT NULL DEFAULT '[]';
+    ALTER TABLE customers ADD COLUMN IF NOT EXISTS accessibility_note TEXT;
+    ALTER TABLE queue_entries
+      ADD COLUMN IF NOT EXISTS accessibility_needs TEXT NOT NULL DEFAULT '[]';
+    ALTER TABLE queue_entries ADD COLUMN IF NOT EXISTS accessibility_note TEXT;
+
     -- Catalog of services offered at a branch (wait estimates use duration_minutes).
     CREATE TABLE IF NOT EXISTS business_services (
       id SERIAL PRIMARY KEY,

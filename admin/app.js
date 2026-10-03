@@ -479,7 +479,7 @@ function formatTrialEndsAt(value) {
 }
 
 function appVersion() {
-  return String(window.QUEUELESS_ADMIN_APP_VERSION || "1.2.0").trim() || "1.2.0";
+  return String(window.QUEUELESS_ADMIN_APP_VERSION || "1.2.1").trim() || "1.2.1";
 }
 
 function appVersionHtml({ onDark = false } = {}) {
@@ -2926,13 +2926,32 @@ async function renderSettings() {
       <div class="setting-copy">
         <div class="setting-title">Queue alerts</div>
         <p class="setting-desc">
-          Assigned vendors get queue join/leave alerts as Android push
-          notifications. This switch still controls WhatsApp/SMS for HQ and
-          branch contact phones.
+          Master switch for queue join/leave text messages (WhatsApp/SMS) to
+          HQ and vendor phones. Vendor app push notifications are separate and
+          stay on.
         </p>
       </div>
       <label class="switch" title="Enable queue alerts">
         <input type="checkbox" id="wa-toggle" ${alertsOn ? "checked" : ""} />
+        <span class="switch-track"><span class="switch-thumb"></span></span>
+      </label>
+    </div>
+
+    <div class="setting-row">
+      <div class="setting-copy">
+        <div class="setting-title">Text vendors when customers join or leave</div>
+        <p class="setting-desc">
+          Sends a WhatsApp/SMS to each branch's contact number when a customer
+          joins or leaves its queue. Turn off to stop these messages; vendors
+          still get push notifications in the vendor app and HQ numbers are
+          unaffected.
+        </p>
+        <p class="setting-desc ${alertsOn ? "hidden" : ""}" id="vendor-texts-note">
+          No texts are sent while Queue alerts is off.
+        </p>
+      </div>
+      <label class="switch" title="Text vendors about queue joins and leaves">
+        <input type="checkbox" id="vendor-texts-toggle" ${settings.vendor_queue_texts_enabled ? "checked" : ""} />
         <span class="switch-track"><span class="switch-thumb"></span></span>
       </label>
     </div>
@@ -3098,6 +3117,7 @@ async function renderSettings() {
       waToggle.checked = saved.whatsapp_enabled;
       markChannelActive(saved.queue_alert_channel === "sms" ? "sms" : "whatsapp");
       syncAlertTests(currentChannel, saved.whatsapp_enabled);
+      document.getElementById("vendor-texts-note")?.classList.toggle("hidden", saved.whatsapp_enabled);
       setMessage(
         saved.whatsapp_enabled
           ? `Queue alerts are on via ${currentChannel === "sms" ? "SMS (Advanta)" : "WhatsApp"}.`
@@ -3109,6 +3129,31 @@ async function renderSettings() {
       setMessage(error.message);
     } finally {
       waToggle.disabled = false;
+    }
+  });
+
+  const vendorTextsToggle = document.getElementById("vendor-texts-toggle");
+  vendorTextsToggle?.addEventListener("change", async () => {
+    const wanted = vendorTextsToggle.checked;
+    vendorTextsToggle.disabled = true;
+    setMessage("");
+    try {
+      const saved = await api("/settings", {
+        method: "PUT",
+        body: JSON.stringify({ vendor_queue_texts_enabled: wanted }),
+      });
+      vendorTextsToggle.checked = saved.vendor_queue_texts_enabled;
+      setMessage(
+        saved.vendor_queue_texts_enabled
+          ? "Vendors will be texted when customers join or leave."
+          : "Vendor join/leave texts are off. Vendors still get app push notifications.",
+        "success"
+      );
+    } catch (error) {
+      vendorTextsToggle.checked = !wanted;
+      setMessage(error.message);
+    } finally {
+      vendorTextsToggle.disabled = false;
     }
   });
 

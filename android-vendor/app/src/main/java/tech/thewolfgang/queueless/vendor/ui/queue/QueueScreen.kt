@@ -23,6 +23,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
@@ -352,6 +353,8 @@ private fun WalkInStepper(
     }
 }
 
+private val A11yTeal = Color(0xFF00D1C1)
+
 @Composable
 private fun QueueCard(
     entry: QueueEntry,
@@ -362,6 +365,9 @@ private fun QueueCard(
 ) {
     val name = entry.customerFirstName ?: "Customer"
     val partyLabel = if (entry.partySize > 1) ", party of ${entry.partySize}" else ""
+    val accessibilityNote = entry.accessibilityNote?.trim()
+    val hasAccessibility =
+        entry.accessibilityNeedLabels.isNotEmpty() || !accessibilityNote.isNullOrEmpty()
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -375,6 +381,11 @@ private fun QueueCard(
                     append(partyLabel)
                     append(if (isNow) ", now serving" else ", position ${entry.position}")
                     append(", estimated wait ${formatWaitMinutes(entry.estimatedWaitMinutes)}")
+                    if (entry.accessibilityNeedLabels.isNotEmpty()) {
+                        append(", accessibility needs: ")
+                        append(entry.accessibilityNeedLabels.joinToString(", "))
+                    }
+                    if (!accessibilityNote.isNullOrEmpty()) append(", note: $accessibilityNote")
                 }
             }
             .padding(16.dp),
@@ -426,6 +437,39 @@ private fun QueueCard(
                     fontWeight = FontWeight.Bold,
                 )
                 Text(text = "est. wait", color = TextMuted, fontSize = 12.sp)
+            }
+        }
+        if (hasAccessibility) {
+            Column(
+                modifier = Modifier
+                    .padding(top = 12.dp)
+                    .fillMaxWidth()
+                    .background(A11yTeal.copy(alpha = 0.14f), RoundedCornerShape(10.dp))
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+            ) {
+                Text(
+                    text = "ACCESSIBILITY NEEDS",
+                    color = A11yTeal,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                )
+                if (entry.accessibilityNeedLabels.isNotEmpty()) {
+                    Text(
+                        text = entry.accessibilityNeedLabels.joinToString(" · "),
+                        color = TextPrimary,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
+                }
+                if (!accessibilityNote.isNullOrEmpty()) {
+                    Text(
+                        text = "\u201C$accessibilityNote\u201D",
+                        color = TextMuted,
+                        fontSize = 13.sp,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
+                }
             }
         }
         if (isNow) {

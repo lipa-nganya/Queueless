@@ -16,17 +16,19 @@ const staticOpts = {
   },
 };
 
+const noCache = { headers: { "Cache-Control": "no-cache" } };
+
 app.get("/", (_req, res) => {
-  res.sendFile(path.join(__dirname, "index.html"));
+  res.sendFile(path.join(__dirname, "index.html"), noCache);
 });
 app.get("/index.html", (_req, res) => {
-  res.sendFile(path.join(__dirname, "index.html"));
+  res.sendFile(path.join(__dirname, "index.html"), noCache);
 });
 app.get("/landing.css", (_req, res) => {
-  res.sendFile(path.join(__dirname, "landing.css"));
+  res.sendFile(path.join(__dirname, "landing.css"), noCache);
 });
 app.get("/landing-config.js", (_req, res) => {
-  res.sendFile(path.join(__dirname, "landing-config.js"));
+  res.sendFile(path.join(__dirname, "landing-config.js"), noCache);
 });
 app.use("/assets", express.static(path.join(__dirname, "assets"), staticOpts));
 

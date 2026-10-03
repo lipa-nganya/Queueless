@@ -292,9 +292,10 @@ img {
   font-weight: 800;
 }
 
-.path-version {
+.path .path-version {
   margin: -0.35rem 0 0;
-  color: var(--lime-flow);
+  line-height: 1.2;
+  color: var(--lime);
   font-size: 0.78rem;
   font-weight: 700;
   letter-spacing: 0.04em;

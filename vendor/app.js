@@ -409,6 +409,33 @@ function readHoursSchedule(root) {
   });
 }
 
+function queueAccessibilityHtml(entry) {
+  const ids = Array.isArray(entry.accessibility_needs) ? entry.accessibility_needs : [];
+  const labels = Array.isArray(entry.accessibility_need_labels) ? entry.accessibility_need_labels : [];
+  const note = String(entry.accessibility_note || "").trim();
+  if (!labels.length && !note) return "";
+  return `
+    <div class="queue-a11y" role="group" aria-label="Accessibility needs">
+      <span class="queue-a11y-title">Accessibility needs</span>
+      ${
+        labels.length
+          ? `<div class="queue-a11y-chips">
+              ${labels
+                .map(
+                  (label, index) => `
+                <span class="queue-a11y-chip">
+                  ${ids[index] ? `<span class="a11y-icon" aria-hidden="true">${accessibilityIconSvg(ids[index])}</span>` : ""}
+                  ${escapeHtml(label)}
+                </span>`
+                )
+                .join("")}
+            </div>`
+          : ""
+      }
+      ${note ? `<p class="queue-a11y-note">“${escapeHtml(note)}”</p>` : ""}
+    </div>`;
+}
+
 function formatWaitMinutes(minutes) {
   const total = Math.max(0, Math.round(Number(minutes) || 0));
   if (total < 60) return `${total} min`;
@@ -528,7 +555,7 @@ function pinFieldHtml({ id, label }) {
 }
 
 function appVersion() {
-  return String(window.QUEUELESS_VENDOR_APP_VERSION || "1.2.0").trim() || "1.2.0";
+  return String(window.QUEUELESS_VENDOR_APP_VERSION || "1.2.1").trim() || "1.2.1";
 }
 
 function appVersionHtml({ onDark = false } = {}) {
@@ -1157,7 +1184,10 @@ async function refreshQueue(businessId, { initial = false } = {}) {
                   const isNow = index === 0;
                   const name = entry.customer_first_name || "Customer";
                   const partyLabel =
-                    entry.party_size > 1 ? `, party of ${entry.party_size}` : "";
+                    (entry.party_size > 1 ? `, party of ${entry.party_size}` : "") +
+                    (entry.accessibility_need_labels?.length
+                      ? `, accessibility needs: ${entry.accessibility_need_labels.join(", ")}`
+                      : "");
                   return `
                     <article class="queue-card${isNow ? " now" : ""}" role="listitem" aria-label="${escapeHtml(
                       name
@@ -1186,6 +1216,7 @@ async function refreshQueue(businessId, { initial = false } = {}) {
                                 ? `<div class="party-meta">${escapeHtml(entry.party_names.join(", "))}</div>`
                                 : ""
                           }
+                          ${queueAccessibilityHtml(entry)}
                         </div>
                         <div class="queue-wait">
                           <strong>${escapeHtml(formatWaitMinutes(entry.estimated_wait_minutes))}</strong>
@@ -1518,17 +1549,18 @@ async function renderServices(businessId) {
           method: "PUT",
           body: JSON.stringify(payload),
         });
-        message.textContent = "Service updated.";
       } else {
         await api(`/vendor/businesses/${currentBranchId}/services`, {
           method: "POST",
           body: JSON.stringify(payload),
         });
-        message.textContent = "Service added.";
       }
-      message.classList.add("success");
       await loadServices();
       resetForm();
+      message.textContent = serviceId
+        ? `Service updated for ${currentBranchName}.`
+        : `Service added to ${currentBranchName}.`;
+      message.classList.add("success");
     } catch (error) {
       message.textContent = error.message;
     } finally {

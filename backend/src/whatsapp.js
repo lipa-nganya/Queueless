@@ -129,6 +129,23 @@ function customerLabel(details) {
   return details.customerName || details.customerPhone || "A customer";
 }
 
+function placeLabel(details) {
+  const branch = String(details.branchName || "").trim();
+  return branch && branch !== "Main"
+    ? `${details.businessName} (${branch})`
+    : details.businessName;
+}
+
+function accessibilityLabel(details) {
+  const needs = Array.isArray(details.accessibilityNeeds) ? details.accessibilityNeeds : [];
+  const note = String(details.accessibilityNote || "").trim();
+  if (!needs.length && !note) return "";
+  const parts = [];
+  if (needs.length) parts.push(`Accessibility: ${needs.join(", ")}.`);
+  if (note) parts.push(`Note: "${note}"`);
+  return ` ${parts.join(" ")}`;
+}
+
 export function buildQueueJoinMessage(details) {
   const who = customerLabel(details);
   const wait =
@@ -139,12 +156,12 @@ export function buildQueueJoinMessage(details) {
     details.position == null ? "" : ` Position #${details.position}.`;
   const partySize = Number(details.partySize) || 1;
   const party = partySize > 1 ? ` Party of ${partySize}.` : "";
-  return `Queueless: ${who} joined the queue at ${details.businessName}.${party}${position}${wait}`;
+  return `Queueless: ${who} joined the queue at ${placeLabel(details)}.${party}${position}${wait}${accessibilityLabel(details)}`;
 }
 
 export function buildQueueLeaveMessage(details) {
   const who = customerLabel(details);
-  return `Queueless: ${who} left the queue at ${details.businessName}.`;
+  return `Queueless: ${who} left the queue at ${placeLabel(details)}.`;
 }
 
 /**

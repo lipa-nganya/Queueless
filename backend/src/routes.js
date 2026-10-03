@@ -30,6 +30,7 @@ import {
   WHATSAPP_ENABLED,
   QUEUE_ALERT_CHANNEL,
   QUEUE_ALERT_CHANNELS,
+  VENDOR_QUEUE_TEXTS_ENABLED,
   CONTACT_PHONE,
   CONTACT_EMAIL,
   getBoolSetting,
@@ -63,9 +64,13 @@ import {
 import {
   ACCESSIBILITY_OPTIONS,
   describeAccessibility,
+  describeAccessibilityNeeds,
   enrichAccessibilityFields,
   mergeAccessibilityOptionLists,
+  parseAccessibilityNote,
+  parseAccessibilityOptions,
   resolveAccessibilityOptionsFromBody,
+  serializeAccessibilityOptions,
 } from "./accessibilityOptions.js";
 import {
   getCachedPlacesReverse,
@@ -393,6 +398,7 @@ async function settingsPayload() {
     whatsapp_template: process.env.WHATSAPP_TEMPLATE_NAME || "",
     queue_alert_channel: queueAlertChannel,
     queue_alert_channels: QUEUE_ALERT_CHANNELS,
+    vendor_queue_texts_enabled: await getBoolSetting(VENDOR_QUEUE_TEXTS_ENABLED, true),
     contact_phone: (await getSetting(CONTACT_PHONE, "")) || "",
     contact_email: (await getSetting(CONTACT_EMAIL, "")) || "",
     vendor_web_url:
@@ -464,6 +470,12 @@ router.put("/settings", requireAdmin, async (req, res) => {
         });
       }
       await setSetting(WHATSAPP_ENABLED, enabled, req.admin?.sub ?? null);
+    }
+
+    if (typeof req.body?.vendor_queue_texts_enabled !== "undefined") {
+      const enabled =
+        req.body.vendor_queue_texts_enabled === true || req.body.vendor_queue_texts_enabled === "true";
+      await setSetting(VENDOR_QUEUE_TEXTS_ENABLED, enabled, req.admin?.sub ?? null);
     }
 
     if (typeof req.body?.contact_phone !== "undefined") {
@@ -1548,7 +1560,7 @@ async function attachBranchServices(rows) {
     });
     const allServices = branches.flatMap((branch) => branch.services || []);
     const rolled = summarizeServices(allServices);
-    // Join/default catalog: first (primary) branch — customer join uses default branch.
+    // Business-level catalog comes from the first branch; customers pick a branch when joining.
     const primary = branches[0];
     const primarySummary = summarizeServices(primary?.services || []);
     return {
@@ -2289,26 +2301,59 @@ router.post("/customer/login", async (req, res) => {
   }
 });
 
+const CUSTOMER_ME_SELECT = `
+  SELECT id, first_name, phone, phone_verified_at, created_at,
+    accessibility_needs, accessibility_note
+  FROM customers
+`;
+
+function decorateCustomerMe(row) {
+  if (!row) return row;
+  return {
+    ...row,
+    accessibility_needs: parseAccessibilityOptions(row.accessibility_needs),
+    accessibility_note: row.accessibility_note || null,
+  };
+}
+
 router.get("/customer/me", requireCustomer, async (req, res) => {
   try {
-    const result = await query(
-      `
-        SELECT id, first_name, phone, phone_verified_at, created_at
-        FROM customers
-        WHERE id = $1
-        LIMIT 1
-      `,
-      [req.customer.sub]
-    );
+    const result = await query(`${CUSTOMER_ME_SELECT} WHERE id = $1 LIMIT 1`, [
+      req.customer.sub,
+    ]);
 
     if (!result.rows[0]) {
       return res.status(404).json({ error: "Customer not found." });
     }
 
-    return res.json(result.rows[0]);
+    return res.json(decorateCustomerMe(result.rows[0]));
   } catch (error) {
     console.error("Customer me failed:", error);
     return res.status(500).json({ error: "Could not load profile." });
+  }
+});
+
+router.put("/customer/me/accessibility", requireCustomer, async (req, res) => {
+  try {
+    const result = await query(
+      `
+        UPDATE customers
+        SET accessibility_needs = $1, accessibility_note = $2
+        WHERE id = $3
+        RETURNING id, first_name, phone, phone_verified_at, created_at,
+          accessibility_needs, accessibility_note
+      `,
+      [
+        serializeAccessibilityOptions(req.body?.accessibility_needs),
+        parseAccessibilityNote(req.body?.accessibility_note),
+        req.customer.sub,
+      ]
+    );
+    if (!result.rows[0]) return res.status(404).json({ error: "Customer not found." });
+    return res.json(decorateCustomerMe(result.rows[0]));
+  } catch (error) {
+    console.error("Customer accessibility save failed:", error);
+    return res.status(500).json({ error: "Could not save accessibility needs." });
   }
 });
 
@@ -2444,15 +2489,7 @@ router.get("/customer/home", requireCustomer, async (req, res) => {
   try {
     const customerId = req.customer.sub;
     const [meResult, groups, businesses, myQueue] = await Promise.all([
-      query(
-        `
-          SELECT id, first_name, phone, phone_verified_at, created_at
-          FROM customers
-          WHERE id = $1
-          LIMIT 1
-        `,
-        [customerId]
-      ),
+      query(`${CUSTOMER_ME_SELECT} WHERE id = $1 LIMIT 1`, [customerId]),
       listCustomerBusinessGroups(),
       listCustomerBusinesses(null),
       listCustomerQueue(customerId),
@@ -2461,7 +2498,7 @@ router.get("/customer/home", requireCustomer, async (req, res) => {
       return res.status(404).json({ error: "Customer not found." });
     }
     return res.json({
-      me: meResult.rows[0],
+      me: decorateCustomerMe(meResult.rows[0]),
       groups,
       businesses,
       my_queue: myQueue,
@@ -2580,7 +2617,8 @@ async function attachActiveBranches(rows) {
         phone,
         queue_size,
         avg_wait_minutes,
-        queue_paused
+        queue_paused,
+        accessibility_options
       FROM business_branches
       WHERE business_id = ANY($1::int[])
         AND is_active = true
@@ -2603,6 +2641,7 @@ async function attachActiveBranches(rows) {
       queue_size: row.queue_size,
       avg_wait_minutes: row.avg_wait_minutes,
       queue_paused: Boolean(row.queue_paused),
+      accessibility_options: parseAccessibilityOptions(row.accessibility_options),
     });
     byBusiness.set(row.business_id, list);
   }
@@ -2752,6 +2791,8 @@ const QUEUE_ENTRY_SELECT = `
     qe.booking_id,
     COALESCE(qe.party_size, 1) AS party_size,
     COALESCE(qe.party_names, '[]'::jsonb) AS party_names,
+    qe.accessibility_needs,
+    qe.accessibility_note,
     b.name AS business_name,
     COALESCE(br.name, 'Main') AS branch_name,
     b.image_url,
@@ -2854,10 +2895,14 @@ function decorateQueueEntry(row) {
   const estimatedWait = Number.isFinite(appWaitAhead)
     ? walkInWait + appWaitAhead
     : ahead * minutesPerPerson;
+  const needs = describeAccessibilityNeeds(row.accessibility_needs);
   return {
     ...row,
     party_size: partySize,
     party_names: partyNames,
+    accessibility_needs: needs.map((need) => need.id),
+    accessibility_need_labels: needs.map((need) => need.label),
+    accessibility_note: row.accessibility_note || null,
     people_ahead: ahead,
     position: ahead + 1,
     queue_length: row.walk_in_baseline + row.app_queue_length,
@@ -2868,7 +2913,9 @@ function decorateQueueEntry(row) {
 
 /**
  * Queue alert targets: assigned vendors get FCM push; HQ / branch contact
- * phones still use the Admin Settings WhatsApp/SMS channel.
+ * phones still use the Admin Settings WhatsApp/SMS channel. When Admin turns
+ * off vendor texts, branch phones and any number belonging to an assigned
+ * vendor are skipped, even if it is also listed as an HQ number.
  */
 async function queueAlertTargets(businessId, branchPhone = null) {
   const otherPhones = new Set();
@@ -2883,7 +2930,8 @@ async function queueAlertTargets(businessId, branchPhone = null) {
     if (contactPhone) otherPhones.add(contactPhone);
   }
 
-  if (branchPhone) otherPhones.add(branchPhone);
+  const textVendors = await getBoolSetting(VENDOR_QUEUE_TEXTS_ENABLED, true);
+  if (branchPhone && textVendors) otherPhones.add(branchPhone);
 
   const vendors = await query(
     `
@@ -2905,10 +2953,16 @@ async function queueAlertTargets(businessId, branchPhone = null) {
     Math.min(10, Number(process.env.QUEUE_ALERT_MAX_RECIPIENTS || 5) || 5)
   );
 
+  let legacyPhones = [...otherPhones];
+  if (!textVendors) {
+    const vendorNumbers = new Set(vendorPhones.map(normalizeWhatsAppPhone).filter(Boolean));
+    legacyPhones = legacyPhones.filter((phone) => !vendorNumbers.has(normalizeWhatsAppPhone(phone)));
+  }
+
   return {
     vendorIds,
-    vendorPhones,
-    otherPhones: [...otherPhones].slice(0, maxRecipients),
+    vendorPhones: textVendors ? vendorPhones : [],
+    otherPhones: legacyPhones.slice(0, maxRecipients),
   };
 }
 
@@ -2923,8 +2977,17 @@ function fireQueueAlerts(action, businessId, branchPhone, details) {
         action === "leave"
           ? buildQueueLeaveMessage(details)
           : buildQueueJoinMessage(details);
+      const hasAccessibility =
+        action !== "leave" &&
+        (details.accessibilityNeeds?.length > 0 || Boolean(details.accessibilityNote));
       const title =
-        action === "leave" ? "Customer left the queue" : "Customer joined the queue";
+        action === "leave"
+          ? "Customer left the queue"
+          : hasAccessibility
+            ? "Customer joined · accessibility needs"
+            : "Customer joined the queue";
+      // Vendor apps address queues by branch id, so links and business_id use it.
+      const queueId = details.branchId || businessId;
 
       if (vendorIds.length) {
         await notifyVendorsPushByIds({
@@ -2933,11 +2996,13 @@ function fireQueueAlerts(action, businessId, branchPhone, details) {
           body: message,
           data: {
             type: action === "leave" ? "queue_leave" : "queue_join",
-            business_id: String(businessId),
+            business_id: String(queueId),
+            brand_business_id: String(businessId),
             business_name: details.businessName || "",
+            accessibility: hasAccessibility ? (details.accessibilityNeeds || []).join(", ") : "",
             title,
             body: message,
-            link: `/#queue-${businessId}`,
+            link: `/#queue-${queueId}`,
           },
         });
       }
@@ -2975,7 +3040,15 @@ router.post("/customer/businesses/:id/queue", requireCustomer, async (req, res) 
     );
     if (!business.rows[0]) return res.status(404).json({ error: "Business not found." });
 
-    const requestedBranchId = Number(req.body?.branch_id);
+    const bookingId = req.body?.booking_id ? Number(req.body.booking_id) : null;
+    let requestedBranchId = Number(req.body?.branch_id);
+    if ((!Number.isInteger(requestedBranchId) || requestedBranchId < 1) && bookingId) {
+      const booking = await query(
+        `SELECT branch_id FROM bookings WHERE id = $1 AND customer_id = $2 AND business_id = $3`,
+        [bookingId, req.customer.sub, businessId]
+      );
+      requestedBranchId = Number(booking.rows[0]?.branch_id);
+    }
     let branch = null;
     if (Number.isInteger(requestedBranchId) && requestedBranchId > 0) {
       const branchResult = await query(
@@ -2994,8 +3067,9 @@ router.post("/customer/businesses/:id/queue", requireCustomer, async (req, res) 
 
     if (branch.queue_paused) {
       return res.status(409).json({
-        error: "This location is on a short break. Please try again shortly.",
+        error: `${branch.name || "This location"} is on a short break. Pick another location or try again shortly.`,
         queue_paused: true,
+        branch_id: branch.id,
       });
     }
 
@@ -3014,7 +3088,6 @@ router.post("/customer/businesses/:id/queue", requireCustomer, async (req, res) 
       });
     }
 
-    const bookingId = req.body?.booking_id ? Number(req.body.booking_id) : null;
     const { partySize, partyNames } = parsePartyPayload(req.body);
     let serviceId = null;
     try {
@@ -3037,12 +3110,34 @@ router.post("/customer/businesses/:id/queue", requireCustomer, async (req, res) 
           ? [req.customer.first_name]
           : [];
 
+    // Explicit selection wins; otherwise share the customer's saved preference.
+    let accessibilityNeeds;
+    let accessibilityNote;
+    if (Array.isArray(req.body?.accessibility_needs)) {
+      accessibilityNeeds = serializeAccessibilityOptions(req.body.accessibility_needs);
+      accessibilityNote = parseAccessibilityNote(req.body?.accessibility_note);
+      if (req.body?.save_accessibility === true) {
+        await query(
+          `UPDATE customers SET accessibility_needs = $1, accessibility_note = $2 WHERE id = $3`,
+          [accessibilityNeeds, accessibilityNote, req.customer.sub]
+        );
+      }
+    } else {
+      const saved = await query(
+        `SELECT accessibility_needs, accessibility_note FROM customers WHERE id = $1`,
+        [req.customer.sub]
+      );
+      accessibilityNeeds = serializeAccessibilityOptions(saved.rows[0]?.accessibility_needs);
+      accessibilityNote = parseAccessibilityNote(saved.rows[0]?.accessibility_note);
+    }
+
     const created = await query(
       `
         INSERT INTO queue_entries (
-          business_id, branch_id, customer_id, booking_id, party_size, party_names, service_id
+          business_id, branch_id, customer_id, booking_id, party_size, party_names, service_id,
+          accessibility_needs, accessibility_note
         )
-        VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)
+        VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9)
         RETURNING id
       `,
       [
@@ -3053,6 +3148,8 @@ router.post("/customer/businesses/:id/queue", requireCustomer, async (req, res) 
         partySize,
         JSON.stringify(namesForStore),
         serviceId,
+        accessibilityNeeds,
+        accessibilityNote,
       ]
     );
 
@@ -3070,9 +3167,13 @@ router.post("/customer/businesses/:id/queue", requireCustomer, async (req, res) 
       customerName: req.customer.first_name || null,
       customerPhone: req.customer.phone || null,
       businessName: decorated.business_name || business.rows[0].name,
+      branchId: branch.id,
+      branchName: decorated.branch_name || branch.name || null,
       position: decorated.position,
       estimatedWaitMinutes: decorated.estimated_wait_minutes,
       partySize: decorated.party_size,
+      accessibilityNeeds: decorated.accessibility_need_labels,
+      accessibilityNote: decorated.accessibility_note,
     });
 
     return res.status(201).json(decorated);
@@ -3100,7 +3201,9 @@ router.post("/customer/queue/:id/leave", requireCustomer, async (req, res) => {
         SELECT
           qe.id,
           qe.business_id,
+          qe.branch_id,
           b.name AS business_name,
+          br.name AS branch_name,
           br.phone AS branch_phone
         FROM queue_entries qe
         INNER JOIN businesses b ON b.id = qe.business_id
@@ -3127,6 +3230,8 @@ router.post("/customer/queue/:id/leave", requireCustomer, async (req, res) => {
       customerName: req.customer.first_name || null,
       customerPhone: req.customer.phone || null,
       businessName: row.business_name,
+      branchId: row.branch_id,
+      branchName: row.branch_name,
     });
 
     return res.json({ ok: true, id: result.rows[0].id });
@@ -3164,6 +3269,24 @@ router.post("/customer/businesses/:id/bookings", requireCustomer, async (req, re
     );
     if (!business.rows[0]) return res.status(404).json({ error: "Business not found." });
 
+    // Paused branches still accept bookings — only live joins are blocked.
+    const requestedBranchId = Number(req.body?.branch_id);
+    let branch = null;
+    if (Number.isInteger(requestedBranchId) && requestedBranchId > 0) {
+      const branchResult = await query(
+        `
+          SELECT id, name FROM business_branches
+          WHERE id = $1 AND business_id = $2 AND is_active = true
+        `,
+        [requestedBranchId, businessId]
+      );
+      branch = branchResult.rows[0] || null;
+      if (!branch) return res.status(404).json({ error: "Branch not found." });
+    } else {
+      branch = await getDefaultBranchForBusiness(businessId, { activeOnly: true });
+      if (!branch) return res.status(404).json({ error: "No active branch available." });
+    }
+
     const clash = await query(
       `
         SELECT id FROM bookings
@@ -3178,14 +3301,14 @@ router.post("/customer/businesses/:id/bookings", requireCustomer, async (req, re
 
     const created = await query(
       `
-        INSERT INTO bookings (business_id, customer_id, scheduled_for)
-        VALUES ($1, $2, $3)
-        RETURNING id, business_id, scheduled_for, status, created_at
+        INSERT INTO bookings (business_id, branch_id, customer_id, scheduled_for)
+        VALUES ($1, $2, $3, $4)
+        RETURNING id, business_id, branch_id, scheduled_for, status, created_at
       `,
-      [businessId, req.customer.sub, scheduledFor.toISOString()]
+      [businessId, branch.id, req.customer.sub, scheduledFor.toISOString()]
     );
 
-    return res.status(201).json(created.rows[0]);
+    return res.status(201).json({ ...created.rows[0], branch_name: branch.name });
   } catch (error) {
     console.error("Create booking failed:", error);
     return res.status(500).json({ error: "Could not create the booking." });
@@ -3199,17 +3322,25 @@ router.get("/customer/bookings", requireCustomer, async (req, res) => {
         SELECT
           bk.id,
           bk.business_id,
+          bk.branch_id,
           bk.scheduled_for,
           bk.status,
           bk.created_at,
           b.name AS business_name,
+          br.name AS branch_name,
+          COALESCE(br.queue_paused, false) AS branch_queue_paused,
+          (
+            SELECT COUNT(*)::int FROM business_branches ab
+            WHERE ab.business_id = b.id AND ab.is_active = true
+          ) AS branch_count,
           b.image_url,
-          b.location,
+          COALESCE(br.location, b.location) AS location,
           b.avg_wait_minutes,
           bg.name AS business_group_name
         FROM bookings bk
         INNER JOIN businesses b ON b.id = bk.business_id
         INNER JOIN business_groups bg ON bg.id = b.business_group_id
+        LEFT JOIN business_branches br ON br.id = bk.branch_id
         WHERE bk.customer_id = $1 AND bk.status = 'booked'
         ORDER BY bk.scheduled_for ASC
       `,

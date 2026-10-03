@@ -40,18 +40,116 @@ const CATEGORY_ICONS = {
   more: "more",
 };
 
+// Keep ids and `need` wording in sync with backend/src/accessibilityOptions.js.
 const ACCESSIBILITY_OPTIONS = [
-  { id: "wheelchair", label: "Wheelchair Accessible" },
-  { id: "blind_low_vision", label: "Blind & Low-Vision Friendly" },
-  { id: "deaf_hard_of_hearing", label: "Deaf & Hard-of-Hearing Friendly" },
-  { id: "sign_language", label: "Sign Language Available" },
-  { id: "autism_friendly", label: "Autism-Friendly" },
-  { id: "quiet_low_sensory", label: "Quiet / Low-Sensory Space Available" },
-  { id: "accessible_seating", label: "Accessible Seating Available" },
-  { id: "accessible_restroom", label: "Accessible Restroom Available" },
-  { id: "assistance_animals", label: "Assistance Animals Welcome" },
-  { id: "support_person", label: "Support Person Welcome" },
+  { id: "wheelchair", label: "Wheelchair Accessible", need: "Wheelchair user / step-free access" },
+  { id: "blind_low_vision", label: "Blind & Low-Vision Friendly", need: "Blind or low vision" },
+  { id: "deaf_hard_of_hearing", label: "Deaf & Hard-of-Hearing Friendly", need: "Deaf or hard of hearing" },
+  { id: "sign_language", label: "Sign Language Available", need: "Sign language" },
+  { id: "autism_friendly", label: "Autism-Friendly", need: "Autistic / flexible service" },
+  { id: "quiet_low_sensory", label: "Quiet / Low-Sensory Space Available", need: "Quiet, low-sensory space" },
+  { id: "accessible_seating", label: "Accessible Seating Available", need: "Needs a seat while waiting" },
+  { id: "accessible_restroom", label: "Accessible Restroom Available", need: "Accessible restroom" },
+  { id: "assistance_animals", label: "Assistance Animals Welcome", need: "With an assistance animal" },
+  { id: "support_person", label: "Support Person Welcome", need: "With a support person" },
 ];
+const ACCESSIBILITY_NOTE_MAX = 160;
+
+function accessibilityNeedLabels(ids) {
+  const list = Array.isArray(ids) ? ids : [];
+  return ACCESSIBILITY_OPTIONS.filter((option) => list.includes(option.id)).map((option) => option.need);
+}
+
+/**
+ * Customer picks the needs that apply to them; staff see them on the queue.
+ * `offered` marks options the selected branch says it supports.
+ */
+function accessibilityNeedsPickerHtml({
+  idPrefix,
+  selected = [],
+  note = "",
+  offered = null,
+  open = false,
+  showRemember = false,
+  lead = "Pick anything that applies so staff can be ready for you. Only shared with this business.",
+}) {
+  const chosen = new Set(Array.isArray(selected) ? selected : []);
+  const offeredSet = Array.isArray(offered) ? new Set(offered) : null;
+  return `
+    <details class="a11y-needs" id="${idPrefix}-needs" ${open || chosen.size || note ? "open" : ""}>
+      <summary>
+        <span>Accessibility needs <span class="optional-label">(optional)</span></span>
+        <span class="a11y-needs-count" data-needs-count>${chosen.size ? `${chosen.size} selected` : ""}</span>
+      </summary>
+      <p class="a11y-needs-lead">${escapeHtml(lead)}</p>
+      <div class="a11y-needs-grid" role="group" aria-label="Accessibility needs">
+        ${ACCESSIBILITY_OPTIONS.map(
+          (option) => `
+          <label class="a11y-need">
+            <input type="checkbox" name="${idPrefix}_need" value="${option.id}" ${chosen.has(option.id) ? "checked" : ""} />
+            <span class="a11y-need-icon" aria-hidden="true">${accessibilityIconSvg(option.id)}</span>
+            <span class="a11y-need-text">
+              <span>${escapeHtml(option.need)}</span>
+              <small class="a11y-need-offered" data-offered-for="${option.id}" ${
+                offeredSet?.has(option.id) ? "" : "hidden"
+              }>Offered here</small>
+            </span>
+          </label>`
+        ).join("")}
+      </div>
+      <div class="field a11y-needs-note">
+        <label for="${idPrefix}-need-note">Anything else staff should know?</label>
+        <input id="${idPrefix}-need-note" maxlength="${ACCESSIBILITY_NOTE_MAX}" placeholder="Optional, e.g. I'll arrive with my guide dog" value="${escapeHtml(note || "")}" />
+      </div>
+      ${
+        showRemember
+          ? `<label class="a11y-needs-remember">
+              <input type="checkbox" id="${idPrefix}-need-remember" checked />
+              <span>Remember for next time</span>
+            </label>`
+          : ""
+      }
+    </details>`;
+}
+
+function readAccessibilityNeeds(idPrefix) {
+  const ids = [...document.querySelectorAll(`input[name="${idPrefix}_need"]:checked`)].map((input) => input.value);
+  const note = String(document.getElementById(`${idPrefix}-need-note`)?.value || "").trim();
+  const remember = Boolean(document.getElementById(`${idPrefix}-need-remember`)?.checked);
+  return { ids, note, remember };
+}
+
+function bindAccessibilityNeedsPicker(idPrefix) {
+  const root = document.getElementById(`${idPrefix}-needs`);
+  if (!root) return;
+  const count = root.querySelector("[data-needs-count]");
+  root.querySelectorAll(`input[name="${idPrefix}_need"]`).forEach((input) => {
+    input.addEventListener("change", () => {
+      const total = root.querySelectorAll(`input[name="${idPrefix}_need"]:checked`).length;
+      if (count) count.textContent = total ? `${total} selected` : "";
+    });
+  });
+}
+
+function setAccessibilityNeedsSelection(idPrefix, { ids = [], note = "" } = {}) {
+  const root = document.getElementById(`${idPrefix}-needs`);
+  if (!root) return;
+  root.querySelectorAll(`input[name="${idPrefix}_need"]`).forEach((input) => {
+    input.checked = ids.includes(input.value);
+  });
+  const noteInput = document.getElementById(`${idPrefix}-need-note`);
+  if (noteInput) noteInput.value = note || "";
+  const count = root.querySelector("[data-needs-count]");
+  if (count) count.textContent = ids.length ? `${ids.length} selected` : "";
+  if (ids.length || note) root.open = true;
+}
+
+function markOfferedAccessibility(idPrefix, offered) {
+  const offeredSet = new Set(Array.isArray(offered) ? offered : []);
+  document.querySelectorAll(`#${idPrefix}-needs [data-offered-for]`).forEach((tag) => {
+    tag.hidden = !offeredSet.has(tag.dataset.offeredFor);
+  });
+}
 
 function normalizeAccessibility(business) {
   if (Array.isArray(business?.accessibility) && business.accessibility.length) {
@@ -164,6 +262,16 @@ function invalidateHomeCache() {
     businesses: null,
     myQueue: null,
   };
+}
+
+function syncCachedBusiness(fresh) {
+  if (!fresh?.id) return;
+  const replace = (list) =>
+    Array.isArray(list)
+      ? list.map((business) => (Number(business.id) === Number(fresh.id) ? { ...business, ...fresh } : business))
+      : list;
+  discoverState.businesses = replace(discoverState.businesses);
+  homeBundleCache.businesses = replace(homeBundleCache.businesses);
 }
 
 async function loadHomeBundle({ force = false } = {}) {
@@ -689,7 +797,7 @@ function tabbar(active) {
 
 function appVersion() {
   return (
-    String(window.QUEUELESS_CUSTOMER_APP_VERSION || "1.2.0").trim() || "1.2.0"
+    String(window.QUEUELESS_CUSTOMER_APP_VERSION || "1.2.1").trim() || "1.2.1"
   );
 }
 
@@ -1476,6 +1584,24 @@ function renderDiscoverFrame() {
   });
 }
 
+/** Cached home renders instantly; re-check so pause/queue changes show without a reload. */
+async function refreshHomeInBackground() {
+  const before = JSON.stringify([homeBundleCache.businesses, homeBundleCache.myQueue]);
+  try {
+    const bundle = await loadHomeBundle({ force: true });
+    if (JSON.stringify([bundle.businesses, bundle.myQueue]) === before) return;
+    discoverState.businesses = bundle.businesses;
+    discoverState.myQueue = bundle.myQueue;
+    const listWrap = document.getElementById("biz-list-wrap");
+    if (listWrap) {
+      listWrap.innerHTML = renderBusinessCards(orderedHomeBusinesses());
+      bindBizCards();
+    }
+  } catch {
+    // Keep showing the cached list; the next visit retries.
+  }
+}
+
 async function renderHome() {
   app.innerHTML = `
     <div class="home-shell">
@@ -1490,7 +1616,9 @@ async function renderHome() {
   focusPage();
 
   try {
+    const servedFromCache = homeBundleCache.at > 0 && Array.isArray(homeBundleCache.businesses);
     const bundle = await loadHomeBundle();
+    if (servedFromCache) void refreshHomeInBackground();
     discoverState.me = bundle.me;
     discoverState.groups = bundle.groups;
     discoverState.businesses = bundle.businesses;
@@ -1571,6 +1699,20 @@ async function renderProfile() {
         </div>
 
         <section class="profile-section">
+          <h2>Accessibility needs</h2>
+          <p class="profile-section-desc">Saved needs are pre-selected when you join a queue, and shared only with the business you join.</p>
+          ${accessibilityNeedsPickerHtml({
+            idPrefix: "profile",
+            selected: me.accessibility_needs || [],
+            note: me.accessibility_note || "",
+            open: true,
+            lead: "Pick anything that applies to you.",
+          })}
+          <button class="btn" type="button" id="profile-needs-save">Save accessibility needs</button>
+          <p class="message" id="profile-needs-message" role="status" aria-live="polite"></p>
+        </section>
+
+        <section class="profile-section">
           <h2>Contact us</h2>
           <p class="profile-section-desc">Reach the Queueless team for help with your account or queues.</p>
           <div class="profile-contact-row">
@@ -1637,10 +1779,48 @@ async function renderProfile() {
     app.querySelectorAll("[data-go]").forEach((btn) => {
       btn.addEventListener("click", () => go(btn.dataset.go));
     });
+    bindAccessibilityNeedsPicker("profile");
+    document.getElementById("profile-needs-save").onclick = async (event) => {
+      const btn = event.currentTarget;
+      const message = document.getElementById("profile-needs-message");
+      const needs = readAccessibilityNeeds("profile");
+      btn.disabled = true;
+      message.textContent = "";
+      message.classList.remove("success");
+      try {
+        const saved = await api("/customer/me/accessibility", {
+          method: "PUT",
+          body: JSON.stringify({ accessibility_needs: needs.ids, accessibility_note: needs.note }),
+        });
+        discoverState.me = { ...(discoverState.me || {}), ...saved };
+        if (homeBundleCache.me) homeBundleCache.me = { ...homeBundleCache.me, ...saved };
+        message.textContent = needs.ids.length || needs.note ? "Accessibility needs saved." : "Accessibility needs cleared.";
+        message.classList.add("success");
+      } catch (error) {
+        message.textContent = error.message;
+      } finally {
+        btn.disabled = false;
+      }
+    };
     focusPage();
   } catch (error) {
-    clearToken();
-    go("login");
+    if (error.status === 401 || error.status === 403) {
+      clearToken();
+      go("login");
+      return;
+    }
+    app.innerHTML = `
+      <div class="profile-page">
+        <main id="main-content" tabindex="-1">
+          <h1>Profile</h1>
+          <p class="empty-state" role="alert">Couldn't load your profile. Check your connection and try again.</p>
+          <button class="btn" type="button" id="profile-retry">Try again</button>
+        </main>
+        ${tabbar("profile")}
+      </div>
+    `;
+    bindTabs();
+    document.getElementById("profile-retry").onclick = () => renderProfile();
   }
 }
 
@@ -1782,9 +1962,15 @@ async function renderBusinessDetail(id) {
 
   let biz;
   try {
-    // Try to find in cached state first for instant render, then fetch for freshness
+    // Always fetch: branch pause state changes often and drives the join picker.
     const cached = discoverState.businesses.find((b) => b.id === id);
-    biz = cached || await api(`/customer/businesses/${id}`);
+    try {
+      biz = await api(`/customer/businesses/${id}`);
+      syncCachedBusiness(biz);
+    } catch (error) {
+      if (!cached) throw error;
+      biz = cached;
+    }
   } catch {
     app.innerHTML = `
       <div class="detail-shell">
@@ -1842,8 +2028,10 @@ async function renderBusinessDetail(id) {
                 .map((branch) => {
                   const summary = branch.awaySummary;
                   return `
-                    <div class="detail-branch-card">
-                      <div class="detail-branch-name">${escapeHtml(branch.name || "Branch")}</div>
+                    <div class="detail-branch-card${branch.queue_paused ? " is-paused" : ""}">
+                      <div class="detail-branch-name">${escapeHtml(branch.name || "Branch")}${
+                        branch.queue_paused ? `<span class="branch-away-closed">Closed</span>` : ""
+                      }</div>
                       ${
                         branch.location
                           ? `<div class="detail-row">${icon("pin")}<span>${escapeHtml(branch.location)}</span></div>`
@@ -2001,8 +2189,13 @@ async function renderBusinessDetail(id) {
     message.classList.add("success");
   } else if (queuePaused) {
     message.textContent =
-      "This location is on a break and not accepting walk-ins. Book a future date and time instead.";
+      item.branches?.length > 1
+        ? "All locations are on a break and not accepting walk-ins. Book a future date and time instead."
+        : "This location is on a break and not accepting walk-ins. Book a future date and time instead.";
   } else {
+    if (item.branches?.some((branch) => branch.queue_paused)) {
+      message.textContent = "Some locations are on a break. Pick an open location when you join.";
+    }
     bindJoinSheet(item, message);
     joinBtn.onclick = () => openJoinSheet();
   }
@@ -2080,6 +2273,26 @@ function slotLabel(date) {
   return `${day} · ${time}`;
 }
 
+function bookingBranchFieldHtml(item) {
+  const branches = itemBranches(item);
+  if (branches.length < 2) return "";
+  const selected = defaultJoinBranch(item) || branches[0];
+  return `
+    <div class="field">
+      <label for="booking-branch">Location</label>
+      <select id="booking-branch" required>
+        ${branches
+          .map((branch) => {
+            const meta = branch.queue_paused ? "on a break today" : branchOptionMeta(branch);
+            return `<option value="${branch.id}" ${Number(branch.id) === Number(selected.id) ? "selected" : ""}>${escapeHtml(
+              `${branch.name || "Branch"}${meta ? ` · ${meta}` : ""}`
+            )}</option>`;
+          })
+          .join("")}
+      </select>
+    </div>`;
+}
+
 function bookingSheetHtml(item, { queuePaused = false } = {}) {
   const bounds = bookingDateBounds();
   const initialTimes = bookingTimesForDate(bounds.min);
@@ -2093,6 +2306,7 @@ function bookingSheetHtml(item, { queuePaused = false } = {}) {
         <div class="sheet-handle" aria-hidden="true"></div>
         <h3 id="booking-sheet-title">${queuePaused ? "Book a visit" : "Book a slot"}</h3>
         <p class="sheet-lead">${lead}</p>
+        ${bookingBranchFieldHtml(item)}
         <div class="booking-fields">
           <div class="field">
             <label for="booking-date">Date</label>
@@ -2131,11 +2345,61 @@ function bookingSheetHtml(item, { queuePaused = false } = {}) {
 
 const MAX_PARTY_SIZE = 10;
 
-function joinSheetHtml(item) {
-  const services = Array.isArray(item.services) ? item.services : [];
-  const servicePicker =
-    services.length > 1
-      ? `
+function itemBranches(item) {
+  return Array.isArray(item?.branches) ? item.branches : [];
+}
+
+/** Branches arrive sorted nearest-first, so the first open one is the best default. */
+function defaultJoinBranch(item) {
+  const branches = itemBranches(item);
+  return branches.find((branch) => !branch.queue_paused) || null;
+}
+
+function branchById(item, branchId) {
+  return itemBranches(item).find((branch) => Number(branch.id) === Number(branchId)) || null;
+}
+
+function servicesForBranch(item, branch) {
+  if (branch && Array.isArray(branch.services)) return branch.services;
+  return Array.isArray(item.services) ? item.services : [];
+}
+
+function branchOptionMeta(branch) {
+  return [branch.awaySummary, branch.location].filter(Boolean)[0] || "";
+}
+
+function joinBranchPickerHtml(item, selected) {
+  const branches = itemBranches(item);
+  if (branches.length < 2) return "";
+  return `
+    <fieldset class="service-picker branch-picker">
+      <legend>Which location?</legend>
+      ${branches
+        .map((branch) => {
+          const paused = Boolean(branch.queue_paused);
+          const meta = paused ? "On a break — not taking walk-ins" : branchOptionMeta(branch);
+          return `
+        <label class="service-option${paused ? " is-paused" : ""}">
+          <input
+            type="radio"
+            name="join_branch"
+            value="${branch.id}"
+            ${paused ? "disabled" : ""}
+            ${selected && Number(selected.id) === Number(branch.id) ? "checked" : ""}
+          />
+          <span>
+            <strong>${escapeHtml(branch.name || "Branch")}</strong>
+            ${meta ? `<small>${escapeHtml(meta)}</small>` : ""}
+          </span>
+        </label>`;
+        })
+        .join("")}
+    </fieldset>`;
+}
+
+function joinServicePickerHtml(services) {
+  if (services.length > 1) {
+    return `
         <fieldset class="service-picker">
           <legend>Which service?</legend>
           ${services
@@ -2155,10 +2419,17 @@ function joinSheetHtml(item) {
             </label>`
             )
             .join("")}
-        </fieldset>`
-      : services.length === 1
-        ? `<p class="sheet-service-note">${escapeHtml(services[0].name)} · ${Number(services[0].duration_minutes) || 0} min</p>`
-        : "";
+        </fieldset>`;
+  }
+  if (services.length === 1) {
+    return `<p class="sheet-service-note">${escapeHtml(services[0].name)} · ${Number(services[0].duration_minutes) || 0} min</p>`;
+  }
+  return "";
+}
+
+function joinSheetHtml(item) {
+  const branch = defaultJoinBranch(item);
+  const services = servicesForBranch(item, branch);
 
   return `
     <div class="sheet-overlay hidden" id="join-sheet" role="dialog" aria-modal="true" aria-labelledby="join-sheet-title">
@@ -2168,7 +2439,8 @@ function joinSheetHtml(item) {
         <p class="sheet-lead">
           Add everyone you're bringing to ${escapeHtml(item.name)}. You'll keep one place in line for the whole party.
         </p>
-        ${servicePicker}
+        ${joinBranchPickerHtml(item, branch)}
+        <div id="join-service-picker">${joinServicePickerHtml(services)}</div>
         <div class="field">
           <label id="party-size-label" for="party-count">How many people?</label>
           <div class="party-stepper" role="group" aria-labelledby="party-size-label">
@@ -2178,6 +2450,13 @@ function joinSheetHtml(item) {
           </div>
         </div>
         <div id="party-names" class="party-names"></div>
+        ${accessibilityNeedsPickerHtml({
+          idPrefix: "join",
+          selected: discoverState.me?.accessibility_needs || [],
+          note: discoverState.me?.accessibility_note || "",
+          offered: branch?.accessibility_options || item.accessibility_options || [],
+          showRemember: true,
+        })}
         <button class="btn" type="button" id="join-confirm">Join queue</button>
         <button class="btn-link" type="button" id="join-cancel">Not now</button>
         <p class="message" id="join-message" role="status" aria-live="polite"></p>
@@ -2254,6 +2533,20 @@ function bindJoinSheet(item, detailMessage, { bookingId = null } = {}) {
     if (event.target === sheet) close();
   });
 
+  let selectedBranch = defaultJoinBranch(item);
+  const servicePickerRoot = document.getElementById("join-service-picker");
+  sheet.querySelectorAll('input[name="join_branch"]').forEach((input) => {
+    input.addEventListener("change", () => {
+      selectedBranch = branchById(item, input.value) || selectedBranch;
+      if (servicePickerRoot) {
+        servicePickerRoot.innerHTML = joinServicePickerHtml(servicesForBranch(item, selectedBranch));
+      }
+      markOfferedAccessibility("join", selectedBranch?.accessibility_options || item.accessibility_options);
+      sheetMessage.textContent = "";
+    });
+  });
+  bindAccessibilityNeedsPicker("join");
+
   document.getElementById("join-confirm").onclick = async (event) => {
     const btn = event.currentTarget;
     const party_names = Array.from({ length: partySize }, (_, index) => {
@@ -2269,7 +2562,18 @@ function bindJoinSheet(item, detailMessage, { bookingId = null } = {}) {
     try {
       const body = { party_size: partySize, party_names };
       if (bookingId) body.booking_id = Number(bookingId);
-      const services = Array.isArray(item.services) ? item.services : [];
+      const needs = readAccessibilityNeeds("join");
+      body.accessibility_needs = needs.ids;
+      body.accessibility_note = needs.note;
+      body.save_accessibility = needs.remember;
+      if (selectedBranch) {
+        body.branch_id = Number(selectedBranch.id);
+      } else if (itemBranches(item).length) {
+        sheetMessage.textContent = "Every location is on a break right now. Book a visit instead.";
+        btn.disabled = false;
+        return;
+      }
+      const services = servicesForBranch(item, selectedBranch);
       if (services.length === 1) {
         body.service_id = Number(services[0].id);
       } else if (services.length > 1) {
@@ -2285,9 +2589,21 @@ function bindJoinSheet(item, detailMessage, { bookingId = null } = {}) {
         method: "POST",
         body: JSON.stringify(body),
       });
+      if (needs.remember && discoverState.me) {
+        discoverState.me = {
+          ...discoverState.me,
+          accessibility_needs: needs.ids,
+          accessibility_note: needs.note || null,
+        };
+        if (homeBundleCache.me) homeBundleCache.me = discoverState.me;
+      }
       close();
       goToQueue(item.id);
     } catch (error) {
+      if (error.status === 409 && error.payload?.queue_paused) {
+        sheetMessage.textContent = error.message;
+        return;
+      }
       if (error.status === 409) {
         close();
         goToQueue(item.id);
@@ -2305,6 +2621,15 @@ function bindJoinSheet(item, detailMessage, { bookingId = null } = {}) {
       defaultFirstName = me.first_name || "";
       const first = document.getElementById("party-name-0");
       if (first && !first.value) first.value = defaultFirstName;
+      discoverState.me = { ...(discoverState.me || {}), ...me };
+      const touched = sheet.querySelector('input[name="join_need"]:checked') ||
+        document.getElementById("join-need-note")?.value;
+      if (!touched) {
+        setAccessibilityNeedsSelection("join", {
+          ids: me.accessibility_needs || [],
+          note: me.accessibility_note || "",
+        });
+      }
     })
     .catch(() => {});
 }
@@ -2365,9 +2690,13 @@ function bindBookingSheet(item, detailMessage) {
     btn.disabled = true;
     sheetMessage.textContent = "";
     try {
+      const body = { scheduled_for: scheduledFor };
+      const branchSelect = document.getElementById("booking-branch");
+      const branchId = Number(branchSelect?.value || defaultJoinBranch(item)?.id || itemBranches(item)[0]?.id);
+      if (branchId > 0) body.branch_id = branchId;
       await api(`/customer/businesses/${item.id}/bookings`, {
         method: "POST",
-        body: JSON.stringify({ scheduled_for: scheduledFor }),
+        body: JSON.stringify(body),
       });
       close();
       go("bookings");
@@ -2441,6 +2770,13 @@ async function renderBookings() {
               </div>
               <div class="booking-meta">
                 <h2>${escapeHtml(booking.business_name)}</h2>
+                ${
+                  booking.branch_count > 1 && booking.branch_name
+                    ? `<div class="booking-branch">${escapeHtml(booking.branch_name)}${
+                        booking.branch_queue_paused ? " · on a break" : ""
+                      }</div>`
+                    : ""
+                }
                 <div class="place">${icon("pin")} ${escapeHtml(booking.location || "—")}</div>
                 <div class="booking-countdown">${escapeHtml(countdown)}</div>
               </div>
@@ -2496,6 +2832,11 @@ async function renderBookings() {
         });
         go("queue");
       } catch (error) {
+        if (error.status === 409 && error.payload?.queue_paused) {
+          message.textContent = error.message;
+          btn.disabled = false;
+          return;
+        }
         if (error.status === 409) return go("queue");
         if (error.status === 400 && error.payload?.needs_service) {
           return go(`business-${Number(btn.dataset.join)}`);
@@ -2593,6 +2934,18 @@ function queueCardHtml(entry) {
           ${
             Array.isArray(entry.party_names) && entry.party_names.length
               ? `<p class="queue-party-names">${escapeHtml(entry.party_names.join(" · "))}</p>`
+              : ""
+          }
+          ${
+            entry.accessibility_need_labels?.length || entry.accessibility_note
+              ? `<p class="queue-a11y-shared">Shared with staff: ${escapeHtml(
+                  [
+                    ...(entry.accessibility_need_labels || accessibilityNeedLabels(entry.accessibility_needs)),
+                    entry.accessibility_note ? `“${entry.accessibility_note}”` : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")
+                )}</p>`
               : ""
           }
         </div>
