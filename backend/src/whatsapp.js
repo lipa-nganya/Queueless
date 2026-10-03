@@ -12,6 +12,7 @@ import {
   smsProviderConfigured,
 } from "./settings.js";
 import { normalizeKenyaPhone, sendSms } from "./otp.js";
+import { shortAccessibilityNeedLabels } from "./accessibilityOptions.js";
 
 const API_VERSION = process.env.WHATSAPP_API_VERSION || "v22.0";
 
@@ -164,6 +165,72 @@ export function buildQueueLeaveMessage(details) {
   return `Queueless: ${who} left the queue at ${placeLabel(details)}.`;
 }
 
+const SMS_SEGMENT_CHARS = 160;
+
+/**
+ * SMS is billed per segment: 160 GSM-7 characters, but only 70 once any
+ * character outside GSM-7 (curly quote, emoji, most accents) appears. Map
+ * customer/business text onto plain GSM-7 so one alert stays one segment.
+ */
+export function toGsm7(text) {
+  return String(text || "")
+    .replace(/[\u2018\u2019\u201A\u201B\u2032`\u00B4]/g, "'")
+    .replace(/[\u201C\u201D\u201E\u201F\u2033]/g, '"')
+    .replace(/[\u2010-\u2015]/g, "-")
+    .replace(/\u2026/g, "...")
+    .replace(/[\u00B7\u2022]/g, "-")
+    .replace(/[[{]/g, "(")
+    .replace(/[\]}]/g, ")")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^A-Za-z0-9 @$_!"#%&'()*+,\-./:;<=>?]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function clipSms(text, limit = SMS_SEGMENT_CHARS) {
+  return text.length <= limit ? text : `${text.slice(0, limit - 3).trimEnd()}...`;
+}
+
+/**
+ * Single-segment SMS variant of the join/leave alert; push and WhatsApp keep
+ * the full text. When space runs out, the wait estimate goes first, then the
+ * note is shortened, so accessibility needs survive.
+ */
+export function buildQueueSms(action, details) {
+  const who = clipSms(toGsm7(customerLabel(details)) || "A customer", 24);
+  const place = clipSms(toGsm7(placeLabel(details)), 40);
+  const placeEnd = place.endsWith("...") ? "" : ".";
+  if (action === "leave") return clipSms(`Queueless: ${who} left the queue at ${place}${placeEnd}`);
+
+  const partySize = Number(details.partySize) || 1;
+  const facts = [];
+  if (details.position != null) facts.push(`#${details.position} in line`);
+  if (partySize > 1) facts.push(`party of ${partySize}`);
+  const wait =
+    details.estimatedWaitMinutes != null ? `${details.estimatedWaitMinutes} min wait` : null;
+
+  const needs = Array.isArray(details.accessibilityNeedIds)
+    ? shortAccessibilityNeedLabels(details.accessibilityNeedIds)
+    : (details.accessibilityNeeds || []).map(toGsm7).filter(Boolean);
+  const needsText = needs.length ? ` Needs: ${needs.join(", ")}.` : "";
+  const note = toGsm7(details.accessibilityNote);
+
+  const head = (withWait) => {
+    const list = withWait && wait ? [...facts, wait] : facts;
+    return `Queueless: ${who} joined ${place}${placeEnd}${list.length ? ` ${list.join(", ")}.` : ""}${needsText}`;
+  };
+  const withNote = (text) => (note ? `${text} Note: "${note}"` : text);
+
+  for (const withWait of [true, false]) {
+    const full = withNote(head(withWait));
+    if (full.length <= SMS_SEGMENT_CHARS) return full;
+  }
+  const base = head(false);
+  const room = SMS_SEGMENT_CHARS - base.length - ' Note: ""'.length;
+  return clipSms(note && room >= 12 ? `${base} Note: "${clipSms(note, room)}"` : base);
+}
+
 /**
  * Notify staff phones about a queue join/leave. Never throws — the queue
  * action must succeed even if WhatsApp/SMS fails.
@@ -179,10 +246,14 @@ export async function notifyQueueEvent(action, recipients, details) {
     ),
   ];
 
-  const message =
-    action === "leave" ? buildQueueLeaveMessage(details) : buildQueueJoinMessage(details);
   const enabled = await getBoolSetting(WHATSAPP_ENABLED, false);
   const channel = await getQueueAlertChannel();
+  const message =
+    channel === "sms"
+      ? buildQueueSms(action, details)
+      : action === "leave"
+        ? buildQueueLeaveMessage(details)
+        : buildQueueJoinMessage(details);
   const configured =
     channel === "sms" ? smsProviderConfigured() : whatsappConfigured();
 

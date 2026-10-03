@@ -2616,22 +2616,27 @@ function bindJoinSheet(item, detailMessage, { bookingId = null } = {}) {
   };
 
   renderNames();
-  void api("/customer/me")
-    .then((me) => {
-      defaultFirstName = me.first_name || "";
-      const first = document.getElementById("party-name-0");
-      if (first && !first.value) first.value = defaultFirstName;
-      discoverState.me = { ...(discoverState.me || {}), ...me };
-      const touched = sheet.querySelector('input[name="join_need"]:checked') ||
-        document.getElementById("join-need-note")?.value;
-      if (!touched) {
-        setAccessibilityNeedsSelection("join", {
-          ids: me.accessibility_needs || [],
-          note: me.accessibility_note || "",
-        });
-      }
-    })
-    .catch(() => {});
+  const applyMe = (me) => {
+    defaultFirstName = me.first_name || "";
+    const first = document.getElementById("party-name-0");
+    if (first && !first.value) first.value = defaultFirstName;
+    discoverState.me = { ...(discoverState.me || {}), ...me };
+    const touched = sheet.querySelector('input[name="join_need"]:checked') ||
+      document.getElementById("join-need-note")?.value;
+    if (!touched) {
+      setAccessibilityNeedsSelection("join", {
+        ids: me.accessibility_needs || [],
+        note: me.accessibility_note || "",
+      });
+    }
+  };
+  // Home already loaded the profile (needs included); only deep links fetch it.
+  const knownMe = discoverState.me || homeBundleCache.me;
+  if (knownMe?.first_name && Array.isArray(knownMe.accessibility_needs)) {
+    applyMe(knownMe);
+  } else {
+    void api("/customer/me").then(applyMe).catch(() => {});
+  }
 }
 
 function bindBookingSheet(item, detailMessage) {

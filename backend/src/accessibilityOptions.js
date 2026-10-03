@@ -10,30 +10,35 @@ export const ACCESSIBILITY_OPTIONS = [
     id: "wheelchair",
     label: "Wheelchair Accessible",
     need: "Wheelchair user / step-free access",
+    short: "Wheelchair",
     description: "Step-free entrance and spaces/routes usable by wheelchair users",
   },
   {
     id: "blind_low_vision",
     label: "Blind & Low-Vision Friendly",
     need: "Blind or low vision",
+    short: "Low vision",
     description: "Staff/environment can reasonably assist blind or low-vision customers",
   },
   {
     id: "deaf_hard_of_hearing",
     label: "Deaf & Hard-of-Hearing Friendly",
     need: "Deaf or hard of hearing",
+    short: "Deaf/HoH",
     description: "Communication accommodations are available beyond spoken communication",
   },
   {
     id: "sign_language",
     label: "Sign Language Available",
     need: "Sign language",
+    short: "Sign language",
     description: "At least one staff member or service option can communicate in sign language",
   },
   {
     id: "autism_friendly",
     label: "Autism-Friendly",
     need: "Autistic / flexible service",
+    short: "Autistic",
     description:
       "Accommodations are available for autistic customers, such as reduced sensory stimulation or flexible service",
   },
@@ -41,30 +46,35 @@ export const ACCESSIBILITY_OPTIONS = [
     id: "quiet_low_sensory",
     label: "Quiet / Low-Sensory Space Available",
     need: "Quiet, low-sensory space",
+    short: "Quiet space",
     description: "A quieter waiting or service area is available",
   },
   {
     id: "accessible_seating",
     label: "Accessible Seating Available",
     need: "Needs a seat while waiting",
+    short: "Needs seat",
     description: "Seating accommodates customers with mobility needs",
   },
   {
     id: "accessible_restroom",
     label: "Accessible Restroom Available",
     need: "Accessible restroom",
+    short: "Accessible WC",
     description: "An accessible toilet/restroom is available on the premises",
   },
   {
     id: "assistance_animals",
     label: "Assistance Animals Welcome",
     need: "With an assistance animal",
+    short: "Assist. animal",
     description: "Customers using trained assistance/service animals are accommodated",
   },
   {
     id: "support_person",
     label: "Support Person Welcome",
     need: "With a support person",
+    short: "Support person",
     description:
       "A customer may be accompanied by a caregiver, interpreter, aide, or other support person",
   },
@@ -132,6 +142,13 @@ export function describeAccessibilityNeeds(ids) {
     .map((id) => OPTION_BY_ID[id])
     .filter(Boolean)
     .map((item) => ({ id: item.id, label: item.need }));
+}
+
+/** Compact need labels for SMS, where every character past 160 costs a segment. */
+export function shortAccessibilityNeedLabels(ids) {
+  return parseAccessibilityOptions(ids)
+    .map((id) => OPTION_BY_ID[id]?.short || OPTION_BY_ID[id]?.need)
+    .filter(Boolean);
 }
 
 export function parseAccessibilityNote(value) {

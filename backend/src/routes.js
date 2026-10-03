@@ -2389,10 +2389,12 @@ async function listCustomerBusinessGroups() {
 }
 
 const customerBusinessesCache = new Map();
+const customerBusinessDetailCache = new Map();
 const CUSTOMER_BUSINESSES_TTL_MS = 20000;
 
 function clearCustomerBusinessesCache() {
   customerBusinessesCache.clear();
+  customerBusinessDetailCache.clear();
 }
 
 async function listCustomerBusinesses(groupId = null) {
@@ -2512,6 +2514,10 @@ router.get("/customer/home", requireCustomer, async (req, res) => {
 router.get("/customer/businesses/:id", requireCustomer, async (req, res) => {
   try {
     const id = Number(req.params.id);
+    const cached = customerBusinessDetailCache.get(id);
+    if (cached && Date.now() - cached.at < CUSTOMER_BUSINESSES_TTL_MS) {
+      return sendJsonEtag(req, res, cached.payload);
+    }
     const result = await query(
       `
         SELECT
@@ -2543,7 +2549,11 @@ router.get("/customer/businesses/:id", requireCustomer, async (req, res) => {
     const [withBranches] = await attachActiveBranches([row]);
     const [withServices] = await attachBranchServices([withBranches]);
     const [enriched] = await attachBusinessAccessibility([withServices]);
-    return res.json(enriched);
+    customerBusinessDetailCache.set(id, { at: Date.now(), payload: enriched });
+    if (customerBusinessDetailCache.size > 200) {
+      customerBusinessDetailCache.delete(customerBusinessDetailCache.keys().next().value);
+    }
+    return sendJsonEtag(req, res, enriched);
   } catch (error) {
     console.error("Customer business detail failed:", error);
     return res.status(500).json({ error: "Could not load business." });
@@ -3173,6 +3183,7 @@ router.post("/customer/businesses/:id/queue", requireCustomer, async (req, res) 
       estimatedWaitMinutes: decorated.estimated_wait_minutes,
       partySize: decorated.party_size,
       accessibilityNeeds: decorated.accessibility_need_labels,
+      accessibilityNeedIds: decorated.accessibility_needs,
       accessibilityNote: decorated.accessibility_note,
     });
 
@@ -4549,12 +4560,14 @@ router.put("/vendor/businesses/:id/walk-ins", requireVendor, async (req, res) =>
         UPDATE business_branches
         SET queue_size = $1
         WHERE id = $2
-        RETURNING id, name, queue_size, avg_wait_minutes
+        RETURNING id, business_id, name, queue_size, avg_wait_minutes
       `,
       [Math.round(queueSize), branchId]
     );
     if (!result.rows[0]) return res.status(404).json({ error: "Branch not found." });
-    return res.json(result.rows[0]);
+    const { business_id: businessId, ...branch } = result.rows[0];
+    customerBusinessDetailCache.delete(Number(businessId));
+    return res.json(branch);
   } catch (error) {
     console.error("Vendor walk-ins update failed:", error);
     return res.status(500).json({ error: "Could not update walk-ins." });
