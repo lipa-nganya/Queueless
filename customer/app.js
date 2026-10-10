@@ -282,6 +282,21 @@ async function loadHomeBundle({ force = false } = {}) {
     Array.isArray(homeBundleCache.businesses);
   if (fresh) return homeBundleCache;
 
+  if (!getToken()) {
+    const [groups, businesses] = await Promise.all([
+      api("/customer/business-groups"),
+      api("/customer/businesses"),
+    ]);
+    homeBundleCache = {
+      at: Date.now(),
+      me: null,
+      groups: groups || [],
+      businesses: businesses || [],
+      myQueue: [],
+    };
+    return homeBundleCache;
+  }
+
   try {
     const bundle = await api("/customer/home");
     homeBundleCache = {
@@ -657,7 +672,25 @@ async function api(path, options = {}) {
 }
 
 function viewFromHash() {
-  return (location.hash || "#login").replace("#", "") || "login";
+  return (location.hash || "#home").replace("#", "") || "home";
+}
+
+const RETURN_VIEW_KEY = "queueless-return-view";
+const GUEST_VIEWS = new Set(["home", "terms", "privacy"]);
+
+/** Sends a guest to log in, then back to where they were. */
+function requireLogin(returnView, reason = "") {
+  sessionStorage.setItem(RETURN_VIEW_KEY, returnView || "home");
+  if (reason) sessionStorage.setItem(`${RETURN_VIEW_KEY}-reason`, reason);
+  go("login");
+}
+
+function goAfterLogin() {
+  const next = sessionStorage.getItem(RETURN_VIEW_KEY) || "home";
+  sessionStorage.removeItem(RETURN_VIEW_KEY);
+  sessionStorage.removeItem(`${RETURN_VIEW_KEY}-reason`);
+  homeBundleCache.at = 0;
+  go(next);
 }
 
 function go(view) {
@@ -775,7 +808,9 @@ function tabbar(active) {
     { id: "home", label: "Home", icon: "home" },
     { id: "bookings", label: "Bookings", icon: "bookings" },
     { id: "queue", label: "Queue", icon: "queue" },
-    { id: "profile", label: "Profile", icon: "profile" },
+    getToken()
+      ? { id: "profile", label: "Profile", icon: "profile" }
+      : { id: "login", label: "Log in", icon: "profile" },
   ];
   return `
     <nav class="tabbar" aria-label="Main">
@@ -797,7 +832,7 @@ function tabbar(active) {
 
 function appVersion() {
   return (
-    String(window.QUEUELESS_CUSTOMER_APP_VERSION || "1.2.1").trim() || "1.2.1"
+    String(window.QUEUELESS_CUSTOMER_APP_VERSION || "1.3.0").trim() || "1.3.0"
   );
 }
 
@@ -1019,7 +1054,7 @@ function renderVerify() {
       stopCountdown();
       setToken(result.token);
       localStorage.removeItem(PENDING_PHONE_KEY);
-      go("home");
+      goAfterLogin();
     } catch (error) {
       message.textContent = error.message;
       // An expired code comes back with the throttle attached, so the resend
@@ -1053,7 +1088,10 @@ function renderLogin() {
           <p class="lead">
             ${onPin
               ? `Enter the 4-digit PIN for <strong>+${escapeHtml(knownPhone)}</strong>.`
-              : "Enter your phone number to continue."}
+              : escapeHtml(
+                  sessionStorage.getItem(`${RETURN_VIEW_KEY}-reason`) ||
+                    "Enter your phone number to continue."
+                )}
           </p>
           ${onPin
             ? pinFieldHtml({ id: "pin", label: "PIN" })
@@ -1063,11 +1101,18 @@ function renderLogin() {
             ${onPin ? "Use a different number" : "Create an account"}
           </button>
           <p class="message" id="message" role="status" aria-live="polite"></p>
+          <button class="btn-link" type="button" id="browse-action">Browse businesses without logging in</button>
         </form>
         ${appVersionHtml({ onDark: true })}
         </main>
       </div>
     `;
+
+    document.getElementById("browse-action").onclick = () => {
+      sessionStorage.removeItem(RETURN_VIEW_KEY);
+      sessionStorage.removeItem(`${RETURN_VIEW_KEY}-reason`);
+      go("home");
+    };
 
     if (onPin) {
       bindPinFields();
@@ -1134,7 +1179,7 @@ function renderLogin() {
         body: JSON.stringify({ phone: knownPhone, pin: new FormData(form).get("pin") }),
       });
       setToken(result.token);
-      go("home");
+      goAfterLogin();
     } catch (error) {
       if (error.payload?.needs_otp) {
         localStorage.setItem(PENDING_PHONE_KEY, error.payload.phone);
@@ -1495,6 +1540,7 @@ function renderDiscoverFrame() {
   app.innerHTML = `
     <div class="home-shell">
       <main id="main-content" tabindex="-1">
+      <header class="home-hero">
       <div class="home-top">
         <div>
           <h1>Discover Services</h1>
@@ -1508,6 +1554,9 @@ function renderDiscoverFrame() {
         <input id="search-input" type="search" placeholder="Search for a service or business" aria-label="Search for a service or business" value="${escapeHtml(discoverState.search)}" />
         <button class="filter" type="button" aria-label="Filters" disabled>${icon("filter")}</button>
       </div>
+      </header>
+
+      <div class="home-sheet">
 
       ${
         categories.length
@@ -1541,6 +1590,7 @@ function renderDiscoverFrame() {
         <h2>${sectionTitle}</h2>
       </div>
       <div id="biz-list-wrap">${renderBusinessCards(ordered)}</div>
+      </div>
       </main>
       ${tabbar("home")}
     </div>
@@ -1989,16 +2039,18 @@ async function renderBusinessDetail(id) {
   const item = enrichBusiness(biz, index >= 0 ? index : 0);
 
   let myEntry = null;
-  try {
-    const myQueue = await api("/customer/queue");
-    myEntry = myQueue.find((entry) => Number(entry.business_id) === Number(item.id)) || null;
-  } catch {
-    // If the check fails, leave the button enabled and let join handle conflicts.
+  if (getToken()) {
+    try {
+      const myQueue = await api("/customer/queue");
+      myEntry = myQueue.find((entry) => Number(entry.business_id) === Number(item.id)) || null;
+    } catch {
+      // If the check fails, leave the button enabled and let join handle conflicts.
+    }
   }
   const alreadyInQueue = Boolean(myEntry);
   const queuePaused = Boolean(item.queue_paused);
 
-  const queueBadgeColor = item.queueSize <= 3 ? "var(--emerald)" : item.queueSize <= 8 ? "var(--lime-deep)" : "var(--danger)";
+  const queueBadgeColor = item.queueSize <= 3 ? "#007a57" : item.queueSize <= 8 ? "var(--lime-ink)" : "var(--danger)";
   const queueLabel = item.queueSize === 0 ? "No queue" : item.queueSize === 1 ? "1 person" : `${item.queueSize} people`;
   const joinLabel = alreadyInQueue
     ? `View my place · #${myEntry.position}`
@@ -2109,7 +2161,7 @@ async function renderBusinessDetail(id) {
           </div>
           <div class="queue-divider"></div>
           <div class="queue-stat">
-            <div class="queue-stat-value" style="color:var(--ocean-teal)">${escapeHtml(formatWaitMinutes(item.myEstimate))}</div>
+            <div class="queue-stat-value" style="color:var(--teal-ink)">${escapeHtml(formatWaitMinutes(item.myEstimate))}</div>
             <div class="queue-stat-label">your est. wait</div>
           </div>
         </div>
@@ -2196,11 +2248,20 @@ async function renderBusinessDetail(id) {
     if (item.branches?.some((branch) => branch.queue_paused)) {
       message.textContent = "Some locations are on a break. Pick an open location when you join.";
     }
-    bindJoinSheet(item, message);
-    joinBtn.onclick = () => openJoinSheet();
+    if (getToken()) {
+      bindJoinSheet(item, message);
+      joinBtn.onclick = () => openJoinSheet();
+    } else {
+      joinBtn.onclick = () => requireLogin(`business-${item.id}`, "Log in to join the queue.");
+    }
   }
 
-  bindBookingSheet(item, message);
+  if (getToken()) {
+    bindBookingSheet(item, message);
+  } else {
+    const bookBtn = document.querySelector(".detail-book-btn");
+    if (bookBtn) bookBtn.onclick = () => requireLogin(`business-${item.id}`, "Log in to book a visit.");
+  }
   focusPage();
 }
 
@@ -2307,6 +2368,10 @@ function bookingSheetHtml(item, { queuePaused = false } = {}) {
         <h3 id="booking-sheet-title">${queuePaused ? "Book a visit" : "Book a slot"}</h3>
         <p class="sheet-lead">${lead}</p>
         ${bookingBranchFieldHtml(item)}
+        <div id="booking-service-picker">${joinServicePickerHtml(
+          servicesForBranch(item, defaultJoinBranch(item) || itemBranches(item)[0]),
+          "booking_service"
+        )}</div>
         <div class="booking-fields">
           <div class="field">
             <label for="booking-date">Date</label>
@@ -2397,20 +2462,19 @@ function joinBranchPickerHtml(item, selected) {
     </fieldset>`;
 }
 
-function joinServicePickerHtml(services) {
+function joinServicePickerHtml(services, name = "join_service") {
   if (services.length > 1) {
     return `
         <fieldset class="service-picker">
           <legend>Which service?</legend>
           ${services
             .map(
-              (service, index) => `
+              (service) => `
             <label class="service-option">
               <input
                 type="radio"
-                name="join_service"
+                name="${name}"
                 value="${service.id}"
-                ${index === 0 ? "checked" : ""}
               />
               <span>
                 <strong>${escapeHtml(service.name)}</strong>
@@ -2671,6 +2735,14 @@ function bindBookingSheet(item, detailMessage) {
     requestAnimationFrame(() => dateInput?.focus());
   };
   dateInput?.addEventListener("change", refreshTimes);
+  const bookingBranchSelect = document.getElementById("booking-branch");
+  const bookingBranch = () =>
+    branchById(item, bookingBranchSelect?.value) || defaultJoinBranch(item) || itemBranches(item)[0];
+  bookingBranchSelect?.addEventListener("change", () => {
+    const root = document.getElementById("booking-service-picker");
+    if (root) root.innerHTML = joinServicePickerHtml(servicesForBranch(item, bookingBranch()), "booking_service");
+    sheetMessage.textContent = "";
+  });
   document.getElementById("booking-cancel").onclick = close;
   sheet.addEventListener("click", (event) => {
     if (event.target === sheet) close();
@@ -2696,9 +2768,20 @@ function bindBookingSheet(item, detailMessage) {
     sheetMessage.textContent = "";
     try {
       const body = { scheduled_for: scheduledFor };
-      const branchSelect = document.getElementById("booking-branch");
-      const branchId = Number(branchSelect?.value || defaultJoinBranch(item)?.id || itemBranches(item)[0]?.id);
+      const branchId = Number(bookingBranch()?.id);
       if (branchId > 0) body.branch_id = branchId;
+      const services = servicesForBranch(item, bookingBranch());
+      if (services.length === 1) {
+        body.service_id = Number(services[0].id);
+      } else if (services.length > 1) {
+        const selected = document.querySelector('input[name="booking_service"]:checked');
+        if (!selected) {
+          sheetMessage.textContent = "Choose a service first.";
+          btn.disabled = false;
+          return;
+        }
+        body.service_id = Number(selected.value);
+      }
       await api(`/customer/businesses/${item.id}/bookings`, {
         method: "POST",
         body: JSON.stringify(body),
@@ -3053,7 +3136,10 @@ async function renderQueue() {
       <div class="queue-shell">
         <main id="main-content" tabindex="-1">
           <div class="queue-header">
-            <h1>Your Queue</h1>
+            <div class="page-title-row">
+              <h1>Your Queue</h1>
+              <span class="live-pill" aria-hidden="true">Live</span>
+            </div>
             <p class="page-lead">Live position, updated automatically.</p>
             ${nav}
           </div>
@@ -3183,7 +3269,22 @@ async function render() {
     const view = viewFromHash();
     if (view === "signup") return renderSignup();
     if (view === "verify") return renderVerify();
-    return renderLogin();
+    if (view === "login") return renderLogin();
+    if (view.startsWith("business-")) {
+      const id = Number(view.replace("business-", ""));
+      if (id) return renderBusinessDetail(id);
+    }
+    if (view === "terms") return renderTerms();
+    if (view === "privacy") return renderPrivacy();
+    if (!GUEST_VIEWS.has(view)) {
+      const reasons = {
+        queue: "Log in to see your place in line.",
+        bookings: "Log in to see your bookings.",
+        profile: "Log in to see your profile.",
+      };
+      return requireLogin(view, reasons[view] || "");
+    }
+    return renderHome();
   }
 
   const view = viewFromHash();

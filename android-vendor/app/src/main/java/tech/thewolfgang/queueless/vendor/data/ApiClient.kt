@@ -152,11 +152,18 @@ class ApiClient(
     suspend fun getQueue(businessId: Int): QueueResponse =
         request(method = "GET", path = "/vendor/businesses/$businessId/queue")
 
-    suspend fun setWalkIns(businessId: Int, queueSize: Int): WalkInsResponse =
+    suspend fun addWalkIn(businessId: Int, body: AddWalkInRequest): QueueEntry =
         request(
-            method = "PUT",
+            method = "POST",
             path = "/vendor/businesses/$businessId/walk-ins",
-            bodyJson = json.encodeToString(WalkInsRequest(queueSize = queueSize)),
+            bodyJson = json.encodeToString(body),
+        )
+
+    suspend fun updateWalkIn(entryId: Int, body: UpdateWalkInRequest): QueueEntry =
+        request(
+            method = "PATCH",
+            path = "/vendor/queue/$entryId",
+            bodyJson = json.encodeToString(body),
         )
 
     suspend fun setQueuePaused(businessId: Int, paused: Boolean): QueuePauseResponse =
@@ -225,15 +232,28 @@ class ApiClient(
     suspend fun getBranches(branchId: Int): BranchesResponse =
         request(method = "GET", path = "/vendor/businesses/$branchId/branches")
 
-    suspend fun searchPlaces(query: String): List<PlaceSuggestion> {
+    /** [bearer] lets pending vendors search with their onboarding token instead of a session. */
+    suspend fun searchPlaces(query: String, bearer: String? = null): List<PlaceSuggestion> {
         val encoded = java.net.URLEncoder.encode(query.trim(), Charsets.UTF_8.name())
-        return request(method = "GET", path = "/places/search?q=$encoded")
+        return request(method = "GET", path = "/places/search?q=$encoded", bearer = bearer)
     }
 
-    suspend fun reverseGeocode(latitude: Double, longitude: Double): PlaceSuggestion =
+    suspend fun reverseGeocode(latitude: Double, longitude: Double, bearer: String? = null): PlaceSuggestion =
         request(
             method = "GET",
             path = "/places/reverse?lat=$latitude&lon=$longitude",
+            bearer = bearer,
+        )
+
+    suspend fun getOnboarding(onboardingToken: String): OnboardingInfoResponse =
+        request(method = "GET", path = "/vendor/onboarding", bearer = onboardingToken)
+
+    suspend fun submitOnboarding(onboardingToken: String, body: OnboardingRequest): OnboardingResponse =
+        request(
+            method = "POST",
+            path = "/vendor/onboarding",
+            bodyJson = json.encodeToString(body),
+            bearer = onboardingToken,
         )
 
     suspend fun createBranch(
@@ -293,8 +313,9 @@ class ApiClient(
         path: String,
         bodyJson: String? = null,
         authenticated: Boolean = true,
+        bearer: String? = null,
     ): T = withContext(Dispatchers.IO) {
-        val responseBody = execute(method, path, bodyJson, authenticated)
+        val responseBody = execute(method, path, bodyJson, authenticated, bearer)
         json.decodeFromString(responseBody)
     }
 
@@ -312,6 +333,7 @@ class ApiClient(
         path: String,
         bodyJson: String?,
         authenticated: Boolean,
+        bearer: String? = null,
     ): String {
         val builder = Request.Builder().url(baseUrl.trimEnd('/') + path)
         val requestBody = bodyJson?.toRequestBody(mediaType)
@@ -321,6 +343,7 @@ class ApiClient(
             "GET" -> builder.get()
             "POST" -> builder.post(requestBody ?: emptyBody)
             "PUT" -> builder.put(requestBody ?: emptyBody)
+            "PATCH" -> builder.patch(requestBody ?: emptyBody)
             "DELETE" -> {
                 if (requestBody != null) builder.delete(requestBody) else builder.delete()
             }
@@ -331,7 +354,9 @@ class ApiClient(
         if (requestBody != null) {
             builder.header("Content-Type", "application/json")
         }
-        if (authenticated) {
+        if (bearer != null) {
+            builder.header("Authorization", "Bearer $bearer")
+        } else if (authenticated) {
             val token = tokenStore.getToken()
             if (!token.isNullOrBlank()) {
                 builder.header("Authorization", "Bearer $token")
@@ -351,7 +376,7 @@ class ApiClient(
             val errorPayload = runCatching {
                 json.decodeFromString<ErrorResponse>(text)
             }.getOrNull()
-            if (response.code == 401 && authenticated) {
+            if (response.code == 401 && authenticated && bearer == null) {
                 tokenStore.clear()
                 etagCache.clear()
                 throw ApiException(

@@ -110,10 +110,34 @@ function navigateFromPushData(data = {}) {
   if (
     businessId &&
     (kind === "queue_join" || kind === "queue_leave") &&
-    !location.hash.startsWith(`#queue-${businessId}`)
+    location.hash !== `#queue-${businessId}`
   ) {
     location.hash = `queue-${businessId}`;
   }
+}
+
+function showPushToast({ title, body, data = {} }) {
+  const toast = showVendorToast({
+    title: title || data.title || "Queueless Vendor",
+    body: body || data.body || data.message || "You have a new update.",
+    type: data.type || "info",
+  });
+  toast.addEventListener("click", (event) => {
+    if (event.target.closest(".push-toast-close")) return;
+    navigateFromPushData(data);
+  });
+}
+
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.addEventListener("message", (event) => {
+    const message = event.data || {};
+    if (message.type === "queueless-push" && !message.shown) {
+      showPushToast(message);
+    } else if (message.type === "queueless-push-click") {
+      window.focus();
+      navigateFromPushData(message.data || {});
+    }
+  });
 }
 
 async function ensureMessaging() {
@@ -143,49 +167,11 @@ async function ensureMessaging() {
 
     const registration = await navigator.serviceWorker.register("./firebase-messaging-sw.js", {
       scope: "./",
+      updateViaCache: "none",
     });
     await navigator.serviceWorker.ready;
 
-    // Refresh SW config file content for next activation when using local server.
-    try {
-      await fetch("./firebase-web-config.js", { cache: "reload" });
-    } catch {
-      /* ignore */
-    }
-
     messagingInstance = window.firebase.messaging();
-    messagingInstance.onMessage((payload) => {
-      const data = payload.data || {};
-      const title =
-        payload.notification?.title || data.title || "Queueless Vendor";
-      const body =
-        payload.notification?.body || data.body || data.message || "You have a new update.";
-      const type = data.type || "info";
-      const toast = showVendorToast({ title, body, type });
-      toast.addEventListener("click", (event) => {
-        if (event.target.closest(".push-toast-close")) return;
-        navigateFromPushData(data);
-      });
-      if (document.visibilityState === "hidden" && Notification.permission === "granted") {
-        try {
-          new Notification(title, {
-            body,
-            icon: "./favicon.svg",
-            tag: type,
-            data,
-          });
-        } catch {
-          /* ignore */
-        }
-      }
-    });
-
-    navigator.serviceWorker.addEventListener("message", (event) => {
-      if (event.data?.type === "queueless-push-click") {
-        navigateFromPushData(event.data?.data || {});
-      }
-    });
-
     void registration;
     return messagingInstance;
   })();

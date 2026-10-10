@@ -11,14 +11,14 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
@@ -31,12 +31,17 @@ import tech.thewolfgang.queueless.vendor.ui.components.TopBar
 import tech.thewolfgang.queueless.vendor.ui.components.VendorBottomBar
 import tech.thewolfgang.queueless.vendor.ui.components.VendorTab
 import tech.thewolfgang.queueless.vendor.ui.theme.Danger
-import tech.thewolfgang.queueless.vendor.ui.theme.Lime
-import tech.thewolfgang.queueless.vendor.ui.theme.Navy
 import tech.thewolfgang.queueless.vendor.ui.theme.SurfaceCard
 import tech.thewolfgang.queueless.vendor.ui.theme.TextMuted
 import tech.thewolfgang.queueless.vendor.ui.theme.TextPrimary
 import androidx.compose.ui.semantics.Role as SemanticsRole
+import tech.thewolfgang.queueless.vendor.ui.theme.PageBackground
+import tech.thewolfgang.queueless.vendor.ui.theme.LimeDim
+import tech.thewolfgang.queueless.vendor.ui.theme.LimeInk
+import tech.thewolfgang.queueless.vendor.ui.theme.CardShape
+import tech.thewolfgang.queueless.vendor.ui.theme.LimeSoft
+import tech.thewolfgang.queueless.vendor.ui.theme.ChipShape
+import tech.thewolfgang.queueless.vendor.ui.theme.SurfaceMuted
 
 @Composable
 fun ProfilePickerScreen(
@@ -63,7 +68,7 @@ fun ProfilePickerScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(Navy),
+            .background(PageBackground),
     ) {
         Column(
             modifier = Modifier
@@ -91,7 +96,7 @@ fun ProfilePickerScreen(
                         verticalArrangement = Arrangement.Center,
                         horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
-                        CircularProgressIndicator(color = Lime)
+                        CircularProgressIndicator(color = LimeDim)
                     }
                 }
 
@@ -112,7 +117,8 @@ fun ProfilePickerScreen(
                             Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .background(SurfaceCard, RoundedCornerShape(14.dp))
+                                    .clip(CardShape)
+                                    .background(SurfaceCard)
                                     .clickable { onOpenProfile(business.id) }
                                     .semantics(mergeDescendants = true) {
                                         role = SemanticsRole.Button
@@ -137,8 +143,13 @@ fun ProfilePickerScreen(
                                 )
                                 Text(
                                     text = if (business.isActive) "Active" else "Inactive",
-                                    color = if (business.isActive) Lime else TextMuted,
-                                    modifier = Modifier.padding(top = 6.dp),
+                                    color = if (business.isActive) LimeInk else TextMuted,
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 12.sp,
+                                    modifier = Modifier
+                                        .padding(top = 8.dp)
+                                        .background(if (business.isActive) LimeSoft else SurfaceMuted, ChipShape)
+                                        .padding(horizontal = 10.dp, vertical = 3.dp),
                                 )
                             }
                         }

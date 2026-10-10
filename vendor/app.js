@@ -1,5 +1,6 @@
 import { accessibilityIconSvg } from "./accessibility-icons.js";
-import { promptVendorWebPush, registerVendorWebPush } from "./push.js";
+import { promptVendorWebPush, registerVendorWebPush } from "./push.js?v=20261010d";
+import { mountMapPicker } from "./map-picker.js?v=20261010f";
 
 const API_ORIGIN =
   window.QUEUELESS_API_ORIGIN ||
@@ -73,14 +74,21 @@ function escapeHtml(value) {
     .replaceAll("'", "&#39;");
 }
 
+function switchableBranches(branches, selectedId) {
+  return branches.filter(
+    (branch) => branch.is_active || Number(branch.id) === Number(selectedId)
+  );
+}
+
 const PIN_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 21s6-5.2 6-10a6 6 0 1 0-12 0c0 4.8 6 10 6 10Z"/><circle cx="12" cy="11" r="2.2"/></svg>`;
 
 /**
  * Kenya place autocomplete via /places/search (Photon). Returns coords for the
  * picked suggestion so branch saves keep accurate lat/lng.
  */
-function bindPlaceAutocomplete(input, { listId }) {
-  const state = { latitude: null, longitude: null, pickedLabel: "" };
+function bindPlaceAutocomplete(input, { listId, fetchJson = api, onPick } = {}) {
+  // `pinned` coords come from the map pin or device GPS and survive label edits.
+  const state = { latitude: null, longitude: null, pickedLabel: "", pinned: false };
   let timer = null;
   let requestId = 0;
 
@@ -112,7 +120,7 @@ function bindPlaceAutocomplete(input, { listId }) {
     list.id = listId;
     list.className = "place-suggestions hidden";
     list.setAttribute("role", "listbox");
-    wrap.appendChild(list);
+    inputWrap.appendChild(list);
   }
 
   function syncClearButton() {
@@ -128,12 +136,14 @@ function bindPlaceAutocomplete(input, { listId }) {
     state.latitude = null;
     state.longitude = null;
     state.pickedLabel = "";
+    state.pinned = false;
   }
 
   function setCoords(place) {
     state.latitude = place.latitude;
     state.longitude = place.longitude;
     state.pickedLabel = place.label;
+    state.pinned = Boolean(place.pinned);
   }
 
   function clearAll() {
@@ -147,7 +157,7 @@ function bindPlaceAutocomplete(input, { listId }) {
   async function search(query) {
     const id = ++requestId;
     try {
-      const places = await api(`/places/search?q=${encodeURIComponent(query)}`);
+      const places = await fetchJson(`/places/search?q=${encodeURIComponent(query)}`);
       if (id !== requestId) return;
       if (!places.length) {
         list.innerHTML = `<li class="place-empty">No Kenya places found</li>`;
@@ -176,6 +186,7 @@ function bindPlaceAutocomplete(input, { listId }) {
           setCoords(place);
           syncClearButton();
           hide();
+          onPick?.(place);
         });
       });
     } catch (error) {
@@ -192,7 +203,7 @@ function bindPlaceAutocomplete(input, { listId }) {
 
   input.addEventListener("input", () => {
     const query = input.value.trim();
-    if (query !== state.pickedLabel) clearCoords();
+    if (query !== state.pickedLabel && !state.pinned) clearCoords();
     syncClearButton();
     clearTimeout(timer);
     if (query.length < 2) {
@@ -233,14 +244,136 @@ function bindPlaceAutocomplete(input, { listId }) {
     },
     setPlace: (place) => {
       if (!place) return;
-      input.value = place.label || "";
-      setCoords(place);
+      input.value = place.label || input.value;
+      setCoords({ ...place, label: input.value });
       syncClearButton();
       hide();
     },
     reset: () => {
       clearAll();
     },
+  };
+}
+
+function branchLocationFieldHtml(prefix) {
+  return `
+    <div class="field place-field">
+      <label for="${prefix}-location">Location</label>
+      <input id="${prefix}-location" name="location" placeholder="Start typing a Kenya place…" autocomplete="off" />
+      <button class="btn btn-secondary" type="button" id="${prefix}-use-location">
+        ${materialIcon("my_location")} Use my current location
+      </button>
+      <div class="map-picker" id="${prefix}-map" role="application" aria-label="Map. Tap or drag the pin to set the exact branch location."></div>
+      <p class="field-hint" id="${prefix}-map-hint">Tap the map or drag the pin to the exact entrance.</p>
+    </div>
+  `;
+}
+
+/** Place search + "Use my current location" + draggable OSM pin, kept in sync. */
+function bindBranchLocation(prefix, { message, fetchJson = api }) {
+  const input = document.getElementById(`${prefix}-location`);
+  const mapEl = document.getElementById(`${prefix}-map`);
+  const hint = document.getElementById(`${prefix}-map-hint`);
+  const locateBtn = document.getElementById(`${prefix}-use-location`);
+  let map = null;
+  let mapPromise = null;
+
+  const place = bindPlaceAutocomplete(input, {
+    listId: `${prefix}-place-suggestions`,
+    fetchJson,
+    onPick: (picked) => map?.setPosition(picked.latitude, picked.longitude),
+  });
+
+  function setMessage(text, success = false) {
+    if (!message) return;
+    message.textContent = text;
+    message.classList.toggle("success", success);
+  }
+
+  function ensureMap() {
+    if (!mapPromise) {
+      mapPromise = mountMapPicker(mapEl, {
+        fetchJson,
+        initial: place.getCoords(),
+        onPick: (picked) => {
+          place.setPlace({ ...picked, pinned: true });
+          setMessage("Pin set. You can edit the place name without moving the pin.", true);
+        },
+      })
+        .then((picker) => {
+          map = picker;
+          return picker;
+        })
+        .catch(() => {
+          mapEl.hidden = true;
+          if (hint) hint.textContent = "The map couldn't load. Search for the place or use your current location.";
+          mapPromise = null;
+          return null;
+        });
+    }
+    return mapPromise;
+  }
+
+  async function showMap() {
+    const picker = await ensureMap();
+    if (!picker) return;
+    picker.refresh();
+    const coords = place.getCoords();
+    if (coords.latitude != null) picker.setPosition(coords.latitude, coords.longitude);
+  }
+
+  locateBtn.addEventListener("click", async () => {
+    setMessage("");
+    if (!navigator.geolocation) {
+      setMessage("This browser cannot share your location.");
+      return;
+    }
+    locateBtn.disabled = true;
+    try {
+      const position = await new Promise((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(resolve, reject, {
+          enableHighAccuracy: true,
+          timeout: 15000,
+          maximumAge: 60000,
+        });
+      });
+      const latitude = Number(position.coords.latitude.toFixed(6));
+      const longitude = Number(position.coords.longitude.toFixed(6));
+      let label = "";
+      try {
+        const reverse = await fetchJson(
+          `/places/reverse?lat=${encodeURIComponent(latitude)}&lon=${encodeURIComponent(longitude)}`
+        );
+        label = reverse?.label || "";
+      } catch {
+        // Keep the GPS pin even if the address lookup fails.
+      }
+      place.setPlace({ label, latitude, longitude, pinned: true });
+      map?.setPosition(latitude, longitude, { zoom: 17 });
+      setMessage("Current location set. Drag the pin if it's slightly off.", true);
+    } catch (error) {
+      const geoCode = error?.code;
+      if (geoCode === 1) {
+        setMessage("Allow location access to use your current position.");
+      } else if (geoCode === 2 || geoCode === 3) {
+        setMessage("Could not read your current location. Try again outdoors or search instead.");
+      } else {
+        setMessage(error.message || "Could not use current location.");
+      }
+    } finally {
+      locateBtn.disabled = false;
+    }
+  });
+
+  return {
+    showMap,
+    getCoords: () => place.getCoords(),
+    setFromBranch: (branch) => {
+      place.setFromBranch(branch);
+      const coords = place.getCoords();
+      if (coords.latitude != null) map?.setPosition(coords.latitude, coords.longitude);
+    },
+    reset: () => place.reset(),
   };
 }
 
@@ -555,7 +688,7 @@ function pinFieldHtml({ id, label }) {
 }
 
 function appVersion() {
-  return String(window.QUEUELESS_VENDOR_APP_VERSION || "1.2.1").trim() || "1.2.1";
+  return String(window.QUEUELESS_VENDOR_APP_VERSION || "1.3.0").trim() || "1.3.0";
 }
 
 function appVersionHtml({ onDark = false } = {}) {
@@ -564,16 +697,157 @@ function appVersionHtml({ onDark = false } = {}) {
 
 function authBrandHtml({ title, lead }) {
   return `
-    <div class="auth-brand">
-      <p class="brand">Queue<span>less</span></p>
-      <span class="auth-badge" aria-hidden="true">Vendor</span>
+    <div class="auth-header">
+      <div class="auth-brand">
+        <p class="brand">Queue<span>less</span></p>
+        <span class="auth-badge" aria-hidden="true">Vendor</span>
+      </div>
+      <h1 class="auth-title">${escapeHtml(title)}</h1>
+      <p class="auth-lead">${lead}</p>
     </div>
-    <h1 class="auth-title">${escapeHtml(title)}</h1>
-    <p class="auth-lead">${lead}</p>
   `;
 }
 
-function renderPendingActivation(phone = "") {
+function onboardingFetch(token) {
+  return async (path, options = {}) => {
+    const response = await fetch(`${API_BASE}${path}`, {
+      ...options,
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const error = new Error(data.error || "Request failed.");
+      error.status = response.status;
+      error.data = data;
+      throw error;
+    }
+    return data;
+  };
+}
+
+function renderOnboarding(phone, token) {
+  stopPolling();
+  const fetchJson = onboardingFetch(token);
+  app.innerHTML = `
+    <div class="login-shell">
+      <main id="main-content" class="login-stack onboarding-stack" tabindex="-1">
+        <form class="login-card onboarding-card" id="onboarding-form" novalidate>
+          ${authBrandHtml({
+            title: "Add your business",
+            lead: "Tell us about your business and its first branch. An admin reviews it before your account goes live.",
+          })}
+          <div class="field">
+            <label for="onboard-business">Business name</label>
+            <input id="onboard-business" name="business_name" required maxlength="120" placeholder="e.g. Mama Njeri Salon" />
+          </div>
+          <div class="field">
+            <label for="onboard-group">Category</label>
+            <select id="onboard-group" name="business_group_id" required>
+              <option value="">Loading categories…</option>
+            </select>
+          </div>
+          <h2 class="onboarding-section">First branch</h2>
+          <div class="field">
+            <label for="onboard-branch">Branch name</label>
+            <input id="onboard-branch" name="branch_name" required value="Main" placeholder="e.g. Westlands" />
+          </div>
+          ${branchLocationFieldHtml("onboard")}
+          <div class="field">
+            <label for="onboard-landmark">Landmark <span class="optional-label">(optional)</span></label>
+            <input id="onboard-landmark" name="landmark" placeholder="e.g. Opposite Naivas, next to the blue gate" />
+          </div>
+          <div class="field">
+            <label for="onboard-phone">Branch phone <span class="optional-label">(optional)</span></label>
+            <input id="onboard-phone" name="phone" type="tel" placeholder="07XXXXXXXX" />
+          </div>
+          <button class="btn btn-primary btn-block auth-submit" type="submit" id="onboard-submit">Send for approval</button>
+          <p class="message" id="onboard-message" role="status" aria-live="polite"></p>
+          <button class="btn btn-secondary btn-block" type="button" id="onboard-back">Back to sign in</button>
+        </form>
+        ${appVersionHtml()}
+      </main>
+    </div>
+  `;
+  focusPage({ preferSelector: "#onboard-business" });
+
+  const form = document.getElementById("onboarding-form");
+  const message = document.getElementById("onboard-message");
+  const submitBtn = document.getElementById("onboard-submit");
+  const groupSelect = document.getElementById("onboard-group");
+  const branchLocation = bindBranchLocation("onboard", { message, fetchJson });
+  void branchLocation.showMap();
+
+  const showError = (error) => {
+    message.classList.remove("success");
+    message.textContent =
+      error.status === 401 ? "Your setup link expired. Go back and sign in again to continue." : error.message;
+  };
+
+  document.getElementById("onboard-back").onclick = () => go("login");
+
+  fetchJson("/vendor/onboarding")
+    .then((data) => {
+      if (!data.needs_onboarding) {
+        renderPendingActivation(phone);
+        return;
+      }
+      groupSelect.innerHTML = [
+        `<option value="">Choose a category</option>`,
+        ...(data.groups || []).map(
+          (group) => `<option value="${group.id}">${escapeHtml(group.name)}</option>`
+        ),
+      ].join("");
+    })
+    .catch(showError);
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const data = Object.fromEntries(new FormData(form).entries());
+    message.textContent = "";
+    message.classList.remove("success");
+    if (!String(data.business_name || "").trim()) {
+      message.textContent = "Enter your business name.";
+      document.getElementById("onboard-business").focus();
+      return;
+    }
+    if (!data.business_group_id) {
+      message.textContent = "Pick a business category.";
+      groupSelect.focus();
+      return;
+    }
+    if (!String(data.location || "").trim()) {
+      message.textContent = "Add your branch location: search, use your current location, or drop the pin.";
+      document.getElementById("onboard-location").focus();
+      return;
+    }
+    const coords = branchLocation.getCoords();
+    submitBtn.disabled = true;
+    try {
+      const result = await fetchJson("/vendor/onboarding", {
+        method: "POST",
+        body: JSON.stringify({
+          business_name: data.business_name,
+          business_group_id: Number(data.business_group_id),
+          branch: {
+            name: data.branch_name || "Main",
+            location: data.location,
+            landmark: data.landmark,
+            phone: data.phone,
+            latitude: coords.latitude,
+            longitude: coords.longitude,
+          },
+        }),
+      });
+      renderPendingActivation(phone, { notice: result.message });
+    } catch (error) {
+      showError(error);
+    } finally {
+      submitBtn.disabled = false;
+    }
+  });
+}
+
+function renderPendingActivation(phone = "", { notice = "" } = {}) {
   stopPolling();
   app.innerHTML = `
     <div class="login-shell">
@@ -583,7 +857,10 @@ function renderPendingActivation(phone = "") {
             title: "Waiting for activation",
             lead: `Your account for <strong>+${escapeHtml(phone)}</strong> is waiting for admin activation.`,
           })}
-          <p class="auth-note">We'll notify you here and on the vendor app when it's ready. Then sign in with your phone and PIN.</p>
+          ${notice ? `<p class="message success" role="status">${escapeHtml(notice)}</p>` : ""}
+          <p class="auth-note">Turn on notifications and we'll alert you in this browser as soon as an admin activates your account. Then sign in with your phone and PIN.</p>
+          <button class="btn btn-secondary btn-block" type="button" id="enable-push">Turn on notifications</button>
+          <p class="message" id="push-status" role="status"></p>
           <button class="btn btn-primary btn-block auth-submit" type="button" id="back-phone">Back to sign in</button>
         </div>
         ${appVersionHtml()}
@@ -591,8 +868,44 @@ function renderPendingActivation(phone = "") {
     </div>
   `;
   focusPage();
-  if (phone) {
-    void registerVendorWebPush({ phone, interactive: true });
+  const pushButton = document.getElementById("enable-push");
+  const pushStatus = document.getElementById("push-status");
+  const showPushResult = (result) => {
+    if (result.ok) {
+      pushButton.hidden = true;
+      pushStatus.className = "message success";
+      pushStatus.textContent = "Notifications are on. We'll alert you here when your account is activated.";
+    } else if (result.reason === "permission_denied" && Notification.permission === "denied") {
+      pushStatus.className = "message";
+      pushStatus.textContent =
+        "Notifications are blocked for this site. Allow them in your browser's site settings, then try again.";
+    } else if (result.reason === "unavailable") {
+      pushButton.hidden = true;
+      pushStatus.className = "message";
+      pushStatus.textContent = "This browser can't receive notifications. Use the vendor Android app instead.";
+    } else if (result.reason !== "permission_denied") {
+      pushStatus.className = "message";
+      pushStatus.textContent = result.error || "Couldn't turn on notifications. Try again.";
+    }
+  };
+  if (!phone || !("Notification" in window)) {
+    pushButton.hidden = true;
+  } else {
+    if (Notification.permission === "granted") {
+      void registerVendorWebPush({ phone }).then(showPushResult);
+    }
+    pushButton.onclick = async () => {
+      pushButton.disabled = true;
+      pushStatus.className = "message pending";
+      pushStatus.textContent = "Turning on notifications…";
+      const result = await registerVendorWebPush({ phone, interactive: true });
+      pushButton.disabled = false;
+      if (result.reason === "permission_denied" && Notification.permission === "default") {
+        pushStatus.className = "message";
+        pushStatus.textContent = "";
+      }
+      showPushResult(result);
+    };
   }
   document.getElementById("back-phone").onclick = () => {
     localStorage.removeItem(PENDING_VENDOR_PHONE_KEY);
@@ -638,7 +951,7 @@ function renderLogin() {
         body: JSON.stringify({ phone }),
       });
       localStorage.setItem(PENDING_VENDOR_PHONE_KEY, status.phone);
-      if (status.pending_activation && status.has_pin) {
+      if (status.pending_activation && status.has_pin && !status.needs_onboarding) {
         renderPendingActivation(status.phone);
         return;
       }
@@ -720,7 +1033,11 @@ function renderPinLogin() {
       go("businesses");
     } catch (error) {
       if (error.data?.pending_activation) {
-        renderPendingActivation(phone);
+        if (error.data.needs_onboarding && error.data.onboarding_token) {
+          renderOnboarding(phone, error.data.onboarding_token);
+        } else {
+          renderPendingActivation(phone);
+        }
         return;
       }
       if (error.data?.needs_otp) {
@@ -855,6 +1172,10 @@ function renderSetPin() {
       });
       localStorage.removeItem(PENDING_VENDOR_PURPOSE_KEY);
       sessionStorage.removeItem("queueless_vendor_verified_otp");
+      if (session.needs_onboarding && session.onboarding_token) {
+        renderOnboarding(session.phone || phone, session.onboarding_token);
+        return;
+      }
       if (session.pending_activation || !session.token) {
         renderPendingActivation(session.phone || phone);
         return;
@@ -871,16 +1192,31 @@ function renderSetPin() {
   });
 }
 
+// Every symbol name used here must also be listed in the icon_names subset in index.html.
+function materialIcon(name) {
+  return `<span class="material-symbols-rounded" aria-hidden="true">${name}</span>`;
+}
+
 function navIcon(name) {
   const icons = {
-    businesses: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M3 21h18"/><path d="M5 21V7l7-4 7 4v14"/><path d="M9 21v-6h6v6"/></svg>`,
-    queue: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 7h16M4 12h12M4 17h8"/></svg>`,
-    services: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 3v2M12 19v2M4.2 6.2l1.4 1.4M18.4 16.4l1.4 1.4M3 12h2M19 12h2M4.2 17.8l1.4-1.4M18.4 7.6l1.4-1.4"/></svg>`,
-    branches: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M6 4v16M6 8h8a4 4 0 0 1 0 8H6"/><circle cx="18" cy="8" r="2"/><circle cx="18" cy="16" r="2"/></svg>`,
-    hours: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 7v5l3 2"/></svg>`,
+    businesses: "storefront",
+    queue: "format_list_numbered",
+    services: "design_services",
+    branches: "location_on",
+    hours: "settings",
+    waiting: "groups",
+    app: "smartphone",
+    walkins: "directions_walk",
   };
-  return icons[name] || icons.businesses;
+  return materialIcon(icons[name] || icons.businesses);
 }
+
+const SECTION_LABELS = {
+  queue: "Live queue",
+  hours: "Branch settings",
+  branches: "Branches",
+  services: "Services",
+};
 
 function frame({
   back = false,
@@ -904,14 +1240,18 @@ function frame({
       <span>${label}</span>
     </button>
   `;
+  const section = SECTION_LABELS[current] || "Businesses";
 
   return `
     <div class="shell">
-      <aside class="sidebar">
+      <aside class="sidebar" id="sidebar" aria-label="Main navigation">
         <div class="sidebar-brand">
+          <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="5.5" stroke-linecap="round"><circle cx="15.5" cy="15.5" r="9"/><path d="M19 19 25 25"/></g></svg>
           <div class="brand">Queue<span>less</span></div>
-          ${appVersionHtml()}
+          <span class="brand-tag">Vendor</span>
+          <button type="button" class="sidebar-close" id="sidebar-close" aria-label="Close menu">${materialIcon("close")}</button>
         </div>
+        <hr class="sidebar-divider" />
         <p class="nav-section">Main menu</p>
         <nav class="nav" aria-label="Vendor">
           ${
@@ -926,24 +1266,38 @@ function frame({
           }
         </nav>
         <div class="sidebar-foot">
-          <button class="btn btn-secondary btn-block" type="button" id="logout-btn">Sign out</button>
+          <button class="btn btn-primary btn-block" type="button" id="logout-btn">${materialIcon("logout")}Sign out</button>
+          ${appVersionHtml({ onDark: true })}
         </div>
       </aside>
+      <div class="sidebar-backdrop" id="sidebar-backdrop" hidden></div>
       <div class="workspace">
-        <header class="page-header">
-          <div class="page-header-copy">
-            ${
-              back
-                ? `<button type="button" class="back-btn" id="back-btn" aria-label="Back to previous screen">←</button>`
-                : ""
-            }
-            <div>
-              <h1 class="page-title">${escapeHtml(title || "Queueless Vendor")}</h1>
-              ${subtitle ? `<p class="page-sub">${escapeHtml(subtitle)}</p>` : ""}
-            </div>
+        <header class="navbar page-header">
+          ${
+            back
+              ? `<button type="button" class="navbar-icon-btn back-btn" id="back-btn" aria-label="Back to previous screen">${materialIcon("arrow_back")}</button>`
+              : ""
+          }
+          <div class="navbar-heading">
+            <nav class="breadcrumbs" aria-label="Breadcrumb">
+              <ol>
+                <li><button type="button" id="crumb-home" aria-label="Your businesses">${materialIcon("home")}</button></li>
+                <li aria-current="page">${escapeHtml(section)}</li>
+              </ol>
+            </nav>
+            <h1 class="page-title navbar-title">${escapeHtml(title || "Queueless Vendor")}</h1>
+          </div>
+          <div class="navbar-actions">
+            <button type="button" class="navbar-icon-btn" id="navbar-logout" aria-label="Sign out">${materialIcon("logout")}</button>
+            <button type="button" class="navbar-icon-btn navbar-menu" id="sidebar-toggle" aria-label="Open menu" aria-controls="sidebar" aria-expanded="false">${materialIcon("menu")}</button>
           </div>
         </header>
+        ${subtitle ? `<p class="page-sub page-lead">${escapeHtml(subtitle)}</p>` : ""}
         <main id="main-content" tabindex="-1">${body}</main>
+        <footer class="footer">
+          <span>© ${new Date().getFullYear()} Queueless Kenya</span>
+          <span>Vendor v${escapeHtml(appVersion())}</span>
+        </footer>
       </div>
     </div>
   `;
@@ -955,12 +1309,30 @@ function bindChrome({
   branchesFor = null,
   profileFor = null,
 } = {}) {
-  document.getElementById("logout-btn")?.addEventListener("click", () => {
+  const signOut = () => {
     stopPolling();
     clearToken();
     selectedBusinessId = null;
     go("login");
+  };
+  document.getElementById("logout-btn")?.addEventListener("click", signOut);
+  document.getElementById("navbar-logout")?.addEventListener("click", signOut);
+  document.getElementById("crumb-home")?.addEventListener("click", () => {
+    stopPolling();
+    go("businesses");
   });
+
+  const shellEl = document.querySelector(".shell");
+  const toggle = document.getElementById("sidebar-toggle");
+  const backdrop = document.getElementById("sidebar-backdrop");
+  const setSidebarOpen = (open) => {
+    shellEl?.classList.toggle("sidebar-open", open);
+    if (backdrop) backdrop.hidden = !open;
+    toggle?.setAttribute("aria-expanded", String(open));
+  };
+  toggle?.addEventListener("click", () => setSidebarOpen(!shellEl?.classList.contains("sidebar-open")));
+  backdrop?.addEventListener("click", () => setSidebarOpen(false));
+  document.getElementById("sidebar-close")?.addEventListener("click", () => setSidebarOpen(false));
   document.getElementById("back-btn")?.addEventListener("click", () => {
     stopPolling();
     go(backTo);
@@ -1061,12 +1433,197 @@ async function renderBusinesses() {
   }
 }
 
+let queueFilter = "all";
+let queueSnapshot = null;
+const walkInServicesByBranch = new Map();
+
+const QUEUE_FILTERS = [
+  { id: "all", label: "All" },
+  { id: "walk_in", label: "Walk-ins" },
+  { id: "app", label: "App" },
+];
+
+function walkInDialogHtml() {
+  return `
+    <dialog class="walkin-dialog" id="walkin-dialog" aria-labelledby="walkin-dialog-title">
+      <form id="walkin-form" novalidate>
+        <div class="walkin-dialog-head">
+          <h2 id="walkin-dialog-title">Add walk-in</h2>
+          <button type="button" class="walkin-dialog-close" id="walkin-close" aria-label="Close">${materialIcon("close")}</button>
+        </div>
+        <div class="field">
+          <label for="walkin-branch">Branch</label>
+          <select id="walkin-branch"></select>
+        </div>
+        <div class="field">
+          <label for="walkin-service">Service</label>
+          <select id="walkin-service"></select>
+        </div>
+        <div id="walkin-guest-fields">
+          <div class="field">
+            <label for="walkin-name">Name (optional)</label>
+            <input id="walkin-name" type="text" maxlength="80" autocomplete="off" />
+          </div>
+          <div class="walkin-row">
+            <div class="field">
+              <label for="walkin-phone">Phone (optional)</label>
+              <input id="walkin-phone" type="tel" inputmode="tel" autocomplete="off" placeholder="07XX XXX XXX" />
+            </div>
+            <div class="field">
+              <label for="walkin-party">Party size</label>
+              <input id="walkin-party" type="number" min="1" max="10" value="1" />
+            </div>
+          </div>
+        </div>
+        <p class="message" id="walkin-message" role="status" aria-live="polite"></p>
+        <div class="walkin-dialog-actions">
+          <button type="button" class="btn btn-secondary" id="walkin-cancel">Cancel</button>
+          <button type="submit" class="btn btn-primary" id="walkin-submit">Add to queue</button>
+        </div>
+      </form>
+    </dialog>
+  `;
+}
+
+async function walkInServicesFor(branchId) {
+  if (walkInServicesByBranch.has(branchId)) return walkInServicesByBranch.get(branchId);
+  const rows = await api(`/vendor/businesses/${branchId}/services`);
+  const services = (Array.isArray(rows) ? rows : []).filter((service) => service.is_active !== false);
+  walkInServicesByBranch.set(branchId, services);
+  return services;
+}
+
+function bindWalkInDialog(businessId) {
+  const dialog = document.getElementById("walkin-dialog");
+  const form = document.getElementById("walkin-form");
+  const branchSelect = document.getElementById("walkin-branch");
+  const serviceSelect = document.getElementById("walkin-service");
+  const message = document.getElementById("walkin-message");
+  const submit = document.getElementById("walkin-submit");
+  let editing = null;
+
+  const fillServices = async (branchId, selectedId = null) => {
+    serviceSelect.disabled = true;
+    serviceSelect.innerHTML = `<option value="">Loading services…</option>`;
+    try {
+      const services = await walkInServicesFor(branchId);
+      if (!services.length) {
+        serviceSelect.innerHTML = `<option value="">No services set up at this branch</option>`;
+        return;
+      }
+      const preselect = selectedId ?? (services.length === 1 ? services[0].id : null);
+      serviceSelect.innerHTML = [
+        services.length > 1 ? `<option value="">Choose a service</option>` : "",
+        ...services.map(
+          (service) => `
+            <option value="${service.id}" ${Number(service.id) === Number(preselect) ? "selected" : ""}>
+              ${escapeHtml(service.name)}${service.duration_minutes ? ` · ${Number(service.duration_minutes)} min` : ""}
+            </option>
+          `
+        ),
+      ].join("");
+      serviceSelect.disabled = false;
+    } catch (error) {
+      serviceSelect.innerHTML = `<option value="">Could not load services</option>`;
+      message.textContent = error.message;
+    }
+  };
+
+  const close = () => {
+    dialog.close();
+    editing = null;
+  };
+
+  window.openWalkInDialog = async (entry = null) => {
+    if (!queueSnapshot) return;
+    editing = entry;
+    const currentId = Number(queueSnapshot.business.id);
+    walkInServicesByBranch.set(currentId, queueSnapshot.services || []);
+    const selectedBranch = entry ? Number(entry.branch_id) : currentId;
+    const branches = switchableBranches(queueSnapshot.branches || [], selectedBranch);
+    branchSelect.innerHTML = branches
+      .map(
+        (branch) => `
+          <option value="${branch.id}" ${Number(branch.id) === selectedBranch ? "selected" : ""}>
+            ${escapeHtml(branch.name || `Branch ${branch.id}`)}${branch.queue_paused ? " (paused)" : ""}
+          </option>
+        `
+      )
+      .join("");
+    branchSelect.disabled = branches.length <= 1;
+    document.getElementById("walkin-dialog-title").textContent = entry ? "Edit walk-in" : "Add walk-in";
+    document.getElementById("walkin-guest-fields").hidden = Boolean(entry);
+    submit.textContent = entry ? "Save" : "Add to queue";
+    message.textContent = "";
+    message.classList.remove("success");
+    if (!entry) form.reset();
+    dialog.showModal();
+    await fillServices(selectedBranch, entry?.service_id ?? null);
+    (entry ? branchSelect : document.getElementById("walkin-name")).focus();
+  };
+
+  branchSelect.addEventListener("change", () => fillServices(Number(branchSelect.value)));
+  document.getElementById("walkin-close").addEventListener("click", close);
+  document.getElementById("walkin-cancel").addEventListener("click", close);
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const branchId = Number(branchSelect.value);
+    const hasServices = !serviceSelect.disabled;
+    const serviceId = Number(serviceSelect.value) || null;
+    if (hasServices && !serviceId) {
+      message.textContent = "Choose the service this guest is here for.";
+      serviceSelect.focus();
+      return;
+    }
+    submit.disabled = true;
+    message.textContent = "";
+    try {
+      const branchName = branchSelect.selectedOptions[0]?.textContent.trim() || "this branch";
+      if (editing) {
+        await api(`/vendor/queue/${editing.id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ branch_id: branchId, service_id: serviceId }),
+        });
+      } else {
+        await api(`/vendor/businesses/${businessId}/walk-ins`, {
+          method: "POST",
+          body: JSON.stringify({
+            branch_id: branchId,
+            service_id: serviceId,
+            name: document.getElementById("walkin-name").value.trim(),
+            phone: document.getElementById("walkin-phone").value.trim(),
+            party_size: Number(document.getElementById("walkin-party").value) || 1,
+          }),
+        });
+      }
+      const pageMessage = document.getElementById("page-message");
+      if (pageMessage) {
+        pageMessage.textContent = editing
+          ? "Walk-in updated."
+          : branchId === Number(businessId)
+            ? "Walk-in added to the queue."
+            : `Walk-in added to ${branchName}.`;
+        pageMessage.classList.add("success");
+      }
+      close();
+      await refreshQueue(businessId);
+    } catch (error) {
+      message.textContent = error.message;
+    } finally {
+      submit.disabled = false;
+    }
+  });
+}
+
 async function renderQueue(businessId) {
   selectedBusinessId = businessId;
+  queueSnapshot = null;
+  walkInServicesByBranch.clear();
   app.innerHTML = frame({
     back: true,
     title: "Live queue",
-    subtitle: "Serve guests, pause when needed, and keep walk-ins in sync.",
+    subtitle: "Serve app customers and walk-ins from one line, and pause when needed.",
     servicesFor: businessId,
     branchesFor: businessId,
     profileFor: businessId,
@@ -1074,10 +1631,67 @@ async function renderQueue(businessId) {
     body: `
       <div id="queue-root"><p class="empty" role="status">Loading queue…</p></div>
       <p class="message" id="page-message" role="status" aria-live="polite"></p>
+      ${walkInDialogHtml()}
     `,
   });
   bindChrome({ backTo: "businesses", servicesFor: businessId, branchesFor: businessId, profileFor: businessId });
+  bindWalkInDialog(businessId);
   await refreshQueue(businessId, { initial: true });
+}
+
+function queueCardHtml(entry, isNow) {
+  const walkIn = entry.source === "walk_in";
+  const name = entry.customer_first_name || (walkIn ? "Walk-in guest" : "Customer");
+  const partyLabel =
+    (entry.party_size > 1 ? `, party of ${entry.party_size}` : "") +
+    (entry.service_name ? `, ${entry.service_name}` : "") +
+    (entry.accessibility_need_labels?.length
+      ? `, accessibility needs: ${entry.accessibility_need_labels.join(", ")}`
+      : "");
+  return `
+    <article class="queue-card${isNow ? " now" : ""}${walkIn ? " is-walk-in" : ""}" role="listitem" aria-label="${escapeHtml(
+      `${walkIn ? "Walk-in" : "App"}: ${name}${partyLabel}, ${isNow ? "now serving" : `position ${entry.position}`}, estimated wait ${formatWaitMinutes(entry.estimated_wait_minutes)}`
+    )}">
+      <div class="queue-card-head">
+        <div>
+          <div class="queue-card-tags">
+            <span class="queue-pos">${isNow ? "Now serving" : `Position #${entry.position}`}</span>
+            <span class="source-badge ${walkIn ? "walk-in" : "app"}">${walkIn ? "Walk-in" : "App"}</span>
+          </div>
+          <h2>${escapeHtml(name)}${
+            entry.party_size > 1
+              ? ` <span class="party-badge" aria-label="plus ${entry.party_size - 1} more">+${entry.party_size - 1}</span>`
+              : ""
+          }</h2>
+          ${entry.customer_phone ? `<div class="phone">+${escapeHtml(entry.customer_phone)}</div>` : ""}
+          ${entry.service_name ? `<div class="queue-service">${escapeHtml(entry.service_name)}</div>` : ""}
+          ${
+            entry.party_size > 1
+              ? `<div class="party-meta">Party of ${entry.party_size}${
+                  Array.isArray(entry.party_names) && entry.party_names.length
+                    ? ` · ${escapeHtml(entry.party_names.join(", "))}`
+                    : ""
+                }</div>`
+              : ""
+          }
+          ${queueAccessibilityHtml(entry)}
+        </div>
+        <div class="queue-wait">
+          <strong>${escapeHtml(formatWaitMinutes(entry.estimated_wait_minutes))}</strong>
+          est. wait
+        </div>
+      </div>
+      <div class="queue-actions${walkIn ? " has-edit" : ""}">
+        <button class="btn ${isNow ? "btn-primary btn-lg" : "btn-secondary"} serve-btn" type="button" data-id="${entry.id}" data-focus-key="serve-${entry.id}" aria-label="Serve ${escapeHtml(name)}">Serve</button>
+        <button class="btn btn-danger no-show-btn" type="button" data-id="${entry.id}" data-focus-key="noshow-${entry.id}" aria-label="Mark ${escapeHtml(name)} as no-show">No-show</button>
+        ${
+          walkIn
+            ? `<button class="btn btn-secondary edit-walkin-btn" type="button" data-id="${entry.id}" data-focus-key="edit-${entry.id}" aria-label="Edit ${escapeHtml(name)}: service or branch">${materialIcon("edit")} Edit</button>`
+            : ""
+        }
+      </div>
+    </article>
+  `;
 }
 
 async function refreshQueue(businessId, { initial = false } = {}) {
@@ -1094,12 +1708,14 @@ async function refreshQueue(businessId, { initial = false } = {}) {
 
   try {
     const data = await api(`/vendor/businesses/${businessId}/queue`);
+    queueSnapshot = data;
     const business = data.business;
     const entries = data.entries || [];
     const fingerprint = JSON.stringify({
+      filter: queueFilter,
       waiting: business?.waiting_total,
       paused: business?.queue_paused,
-      ids: entries.map((entry) => [entry.id, entry.position, entry.status]),
+      ids: entries.map((entry) => [entry.id, entry.position, entry.service_id, entry.branch_id]),
     });
     if (!initial && root.dataset.queueFp === fingerprint) {
       schedulePoll(
@@ -1119,6 +1735,23 @@ async function refreshQueue(businessId, { initial = false } = {}) {
       }`.replace(/^ · /, "");
     }
 
+    const branchLabel = business.branch_name || "This branch";
+    const multiBranch = (data.branches || []).filter((branch) => branch.is_active).length > 1;
+    const counts = {
+      all: entries.length,
+      walk_in: entries.filter((entry) => entry.source === "walk_in").length,
+      app: entries.filter((entry) => entry.source !== "walk_in").length,
+    };
+    const visible =
+      queueFilter === "all"
+        ? entries
+        : entries.filter((entry) => (entry.source === "walk_in" ? "walk_in" : "app") === queueFilter);
+    const emptyCopy = {
+      all: "Queue is clear. Waiting for the next customer.",
+      walk_in: "No walk-ins waiting.",
+      app: "No app customers waiting.",
+    };
+
     root.innerHTML = `
       <p class="sr-only" id="queue-live" aria-live="polite">
         ${
@@ -1131,110 +1764,63 @@ async function refreshQueue(businessId, { initial = false } = {}) {
       </p>
 
       <div class="stats" aria-label="Queue statistics">
-        <div class="stat">
-          <span class="metric-icon" aria-hidden="true">${navIcon("queue")}</span>
-          <strong>${business.waiting_total ?? 0}</strong>
-          <span>Total waiting</span>
-        </div>
-        <div class="stat">
-          <strong>${business.app_waiting ?? entries.length}</strong>
-          <span>In app</span>
-        </div>
-        <div class="stat">
-          <strong>${business.queue_size ?? 0}</strong>
-          <span>Walk-ins</span>
-        </div>
+        ${[
+          { tone: "dark", icon: "waiting", value: business.waiting_total ?? 0, label: "Total waiting", sub: "App and walk-ins" },
+          { tone: "primary", icon: "app", value: business.app_waiting ?? 0, label: "In app", sub: "Joined on Queueless" },
+          { tone: "info", icon: "walkins", value: business.walk_in_waiting ?? 0, label: "Walk-ins", sub: "Added at the door" },
+        ]
+          .map(
+            (stat) => `
+              <div class="stat metric-card metric-tone-${stat.tone}">
+                <div class="metric-card-top">
+                  <span class="metric-icon" aria-hidden="true">${navIcon(stat.icon)}</span>
+                  <div class="metric-copy">
+                    <span class="metric-label">${stat.label}</span>
+                    <strong class="metric-value">${stat.value}</strong>
+                  </div>
+                </div>
+                <div class="metric-foot"><span class="metric-sub">${stat.sub}</span></div>
+              </div>
+            `
+          )
+          .join("")}
       </div>
 
       <div class="queue-pause-card${business.queue_paused ? " is-paused" : ""}">
         <div class="queue-pause-copy">
-          <strong>${business.queue_paused ? "Queue paused" : "Queue open"}</strong>
+          <strong>${escapeHtml(branchLabel)} queue ${business.queue_paused ? "paused" : "open"}</strong>
           <span>${
             business.queue_paused
-              ? "Customers cannot join right now. You can still serve people already waiting."
-              : "Customers can join this queue. Pause to take a short break."
-          }</span>
+              ? "Customers cannot join this branch right now. You can still serve people already waiting."
+              : "Customers can join this branch. Pause to take a short break."
+          }${multiBranch ? " Your other branches are not affected." : ""}</span>
         </div>
         <button
           class="btn ${business.queue_paused ? "btn-primary" : "btn-secondary"}"
           type="button"
           id="queue-pause-btn"
           data-focus-key="queue-pause"
-        >${business.queue_paused ? "Resume queue" : "Pause / take a break"}</button>
+        >${business.queue_paused ? `Resume ${escapeHtml(branchLabel)}` : `Pause ${escapeHtml(branchLabel)}`}</button>
       </div>
 
-      <div class="walkins">
-        <div class="walkins-copy">
-          <strong id="walkin-label">Walk-in baseline</strong>
-          <span>People physically in line who did not join via the app</span>
+      <div class="queue-toolbar">
+        <div class="queue-filter" role="group" aria-label="Show in the queue">
+          ${QUEUE_FILTERS.map(
+            (filter) => `
+              <button type="button" class="queue-filter-btn" data-filter="${filter.id}" data-focus-key="filter-${filter.id}" aria-pressed="${queueFilter === filter.id}">
+                ${filter.label} <span class="queue-filter-count">${counts[filter.id]}</span>
+              </button>
+            `
+          ).join("")}
         </div>
-        <div class="stepper" role="group" aria-labelledby="walkin-label">
-          <button type="button" id="walkin-dec" data-focus-key="walkin-dec" aria-label="Decrease walk-ins">−</button>
-          <strong id="walkin-count" aria-live="polite" aria-atomic="true">${business.queue_size ?? 0}</strong>
-          <button type="button" id="walkin-inc" data-focus-key="walkin-inc" aria-label="Increase walk-ins">+</button>
-        </div>
+        <button class="btn btn-primary" type="button" id="add-walkin-btn" data-focus-key="add-walkin">${materialIcon("person_add")} Add walk-in</button>
       </div>
 
       ${
-        !entries.length
-          ? `<p class="empty" role="status">Queue is clear. Waiting for the next customer.</p>`
-          : `<div class="queue-list" role="list" aria-label="Customers in queue">
-              ${entries
-                .map((entry, index) => {
-                  const isNow = index === 0;
-                  const name = entry.customer_first_name || "Customer";
-                  const partyLabel =
-                    (entry.party_size > 1 ? `, party of ${entry.party_size}` : "") +
-                    (entry.accessibility_need_labels?.length
-                      ? `, accessibility needs: ${entry.accessibility_need_labels.join(", ")}`
-                      : "");
-                  return `
-                    <article class="queue-card${isNow ? " now" : ""}" role="listitem" aria-label="${escapeHtml(
-                      name
-                    )}${partyLabel}, ${isNow ? "now serving" : `position ${entry.position}`}, estimated wait ${escapeHtml(
-                      formatWaitMinutes(entry.estimated_wait_minutes)
-                    )}">
-                      <div class="queue-card-head">
-                        <div>
-                          <div class="queue-pos">${isNow ? "Now serving" : `Position #${entry.position}`}</div>
-                          <h2>${escapeHtml(name)}${
-                            entry.party_size > 1
-                              ? ` <span class="party-badge" aria-label="plus ${
-                                  entry.party_size - 1
-                                } more">+${entry.party_size - 1}</span>`
-                              : ""
-                          }</h2>
-                          <div class="phone">+${escapeHtml(entry.customer_phone || "")}</div>
-                          ${
-                            entry.party_size > 1
-                              ? `<div class="party-meta">Party of ${entry.party_size}${
-                                  Array.isArray(entry.party_names) && entry.party_names.length
-                                    ? ` · ${escapeHtml(entry.party_names.join(", "))}`
-                                    : ""
-                                }</div>`
-                              : Array.isArray(entry.party_names) && entry.party_names.length > 1
-                                ? `<div class="party-meta">${escapeHtml(entry.party_names.join(", "))}</div>`
-                                : ""
-                          }
-                          ${queueAccessibilityHtml(entry)}
-                        </div>
-                        <div class="queue-wait">
-                          <strong>${escapeHtml(formatWaitMinutes(entry.estimated_wait_minutes))}</strong>
-                          est. wait
-                        </div>
-                      </div>
-                      ${
-                        isNow
-                          ? `<div class="queue-actions">
-                              <button class="btn btn-primary btn-lg serve-btn" type="button" data-id="${entry.id}" data-focus-key="serve-${entry.id}" aria-label="Serve ${escapeHtml(name)}">Serve</button>
-                              <button class="btn btn-danger no-show-btn" type="button" data-id="${entry.id}" data-focus-key="noshow-${entry.id}" aria-label="Mark ${escapeHtml(name)} as no-show">No-show</button>
-                            </div>`
-                          : ""
-                      }
-                    </article>
-                  `;
-                })
-                .join("")}
+        !visible.length
+          ? `<p class="empty" role="status">${emptyCopy[queueFilter]}</p>`
+          : `<div class="queue-list" role="list" aria-label="People in queue">
+              ${visible.map((entry) => queueCardHtml(entry, entry.id === entries[0]?.id)).join("")}
             </div>`
       }
     `;
@@ -1243,25 +1829,21 @@ async function refreshQueue(businessId, { initial = false } = {}) {
     if (initial) focusPage();
     else restoreFocusKey(focusKey);
 
-    const setWalkIns = async (next) => {
-      const value = Math.max(0, Math.min(500, next));
-      try {
-        await api(`/vendor/businesses/${businessId}/walk-ins`, {
-          method: "PUT",
-          body: JSON.stringify({ queue_size: value }),
-        });
-        await refreshQueue(businessId);
-      } catch (error) {
-        if (message) message.textContent = error.message;
-      }
-    };
+    document.getElementById("add-walkin-btn")?.addEventListener("click", () => window.openWalkInDialog?.());
 
-    document.getElementById("walkin-dec")?.addEventListener("click", () =>
-      setWalkIns((business.queue_size || 0) - 1)
-    );
-    document.getElementById("walkin-inc")?.addEventListener("click", () =>
-      setWalkIns((business.queue_size || 0) + 1)
-    );
+    root.querySelectorAll(".queue-filter-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        queueFilter = btn.dataset.filter;
+        refreshQueue(businessId);
+      });
+    });
+
+    root.querySelectorAll(".edit-walkin-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const entry = entries.find((item) => Number(item.id) === Number(btn.dataset.id));
+        if (entry) window.openWalkInDialog?.(entry);
+      });
+    });
 
     document.getElementById("queue-pause-btn")?.addEventListener("click", async (event) => {
       const btn = event.currentTarget;
@@ -1278,31 +1860,22 @@ async function refreshQueue(businessId, { initial = false } = {}) {
       }
     });
 
-    root.querySelectorAll(".serve-btn").forEach((btn) => {
-      btn.addEventListener("click", async () => {
-        btn.disabled = true;
-        try {
-          await api(`/vendor/queue/${btn.dataset.id}/serve`, { method: "POST" });
-          await refreshQueue(businessId);
-        } catch (error) {
-          if (message) message.textContent = error.message;
-          btn.disabled = false;
-        }
+    const closeEntry = (selector, action) => {
+      root.querySelectorAll(selector).forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          btn.disabled = true;
+          try {
+            await api(`/vendor/queue/${btn.dataset.id}/${action}`, { method: "POST" });
+            await refreshQueue(businessId);
+          } catch (error) {
+            if (message) message.textContent = error.message;
+            btn.disabled = false;
+          }
+        });
       });
-    });
-
-    root.querySelectorAll(".no-show-btn").forEach((btn) => {
-      btn.addEventListener("click", async () => {
-        btn.disabled = true;
-        try {
-          await api(`/vendor/queue/${btn.dataset.id}/no-show`, { method: "POST" });
-          await refreshQueue(businessId);
-        } catch (error) {
-          if (message) message.textContent = error.message;
-          btn.disabled = false;
-        }
-      });
-    });
+    };
+    closeEntry(".serve-btn", "serve");
+    closeEntry(".no-show-btn", "no-show");
 
     schedulePoll(
       () => refreshQueue(businessId),
@@ -1423,7 +1996,8 @@ async function renderServices(businessId) {
   }
 
   function fillBranchSelect(branches, selectedId) {
-    branchSelect.innerHTML = branches
+    const options = switchableBranches(branches, selectedId);
+    branchSelect.innerHTML = options
       .map(
         (branch) => `
           <option value="${branch.id}" ${Number(branch.id) === Number(selectedId) ? "selected" : ""}>
@@ -1432,10 +2006,10 @@ async function renderServices(businessId) {
         `
       )
       .join("");
-    branchSelect.disabled = branches.length <= 1;
+    branchSelect.disabled = options.length <= 1;
     document
       .querySelector("#services-branch-switcher .branch-switcher-control")
-      ?.classList.toggle("is-single", branches.length <= 1);
+      ?.classList.toggle("is-single", options.length <= 1);
   }
 
   function resetForm() {
@@ -1609,7 +2183,7 @@ async function renderBranches(businessId) {
         <div class="sheet">
           <div class="sheet-header">
             <h2 id="branch-form-title">Add branch</h2>
-            <button type="button" class="sheet-close" id="branch-sheet-close" aria-label="Close">✕</button>
+            <button type="button" class="sheet-close" id="branch-sheet-close" aria-label="Close">${materialIcon("close")}</button>
           </div>
           <form id="branch-form" class="sheet-form">
             <input type="hidden" id="branch-edit-id" value="" />
@@ -1617,13 +2191,7 @@ async function renderBranches(businessId) {
               <label for="branch-name">Branch name</label>
               <input id="branch-name" name="name" required placeholder="e.g. Westlands" />
             </div>
-            <div class="field place-field">
-              <label for="branch-location">Location</label>
-              <input id="branch-location" name="location" placeholder="Start typing a Kenya place…" autocomplete="off" />
-              <button class="btn btn-secondary" type="button" id="branch-use-location">
-                Use my current location
-              </button>
-            </div>
+            ${branchLocationFieldHtml("branch")}
             <div class="field">
               <label for="branch-landmark">Landmark <span class="optional-label">(optional)</span></label>
               <input id="branch-landmark" name="landmark" placeholder="e.g. Opposite Naivas, next to the blue gate" />
@@ -1671,9 +2239,7 @@ async function renderBranches(businessId) {
   const formTitle = document.getElementById("branch-form-title");
   const sub = document.getElementById("branches-sub");
   const countEl = document.getElementById("branch-count");
-  const branchPlace = bindPlaceAutocomplete(document.getElementById("branch-location"), {
-    listId: "branch-place-suggestions",
-  });
+  const branchPlace = bindBranchLocation("branch", { message });
   let currentBranches = [];
 
   function openSheet() {
@@ -1681,6 +2247,7 @@ async function renderBranches(businessId) {
     document.body.style.overflow = "hidden";
     document.addEventListener("keydown", onSheetKeydown);
     window.setTimeout(() => document.getElementById("branch-name")?.focus(), 30);
+    void branchPlace.showMap();
   }
 
   function closeSheet() {
@@ -1812,47 +2379,6 @@ async function renderBranches(businessId) {
   document.getElementById("branch-sheet-close")?.addEventListener("click", closeSheet);
   sheet.addEventListener("click", (event) => {
     if (event.target === sheet) closeSheet();
-  });
-
-  document.getElementById("branch-use-location")?.addEventListener("click", async () => {
-    message.textContent = "";
-    message.classList.remove("success");
-    if (!navigator.geolocation) {
-      message.textContent = "This browser cannot share your location.";
-      return;
-    }
-    const btn = document.getElementById("branch-use-location");
-    btn.disabled = true;
-    const previousLabel = btn.textContent;
-    btn.textContent = "Finding location…";
-    try {
-      const position = await new Promise((resolve, reject) => {
-        navigator.geolocation.getCurrentPosition(resolve, reject, {
-          enableHighAccuracy: true,
-          timeout: 15000,
-          maximumAge: 60000,
-        });
-      });
-      const { latitude, longitude } = position.coords;
-      const place = await api(
-        `/places/reverse?lat=${encodeURIComponent(latitude)}&lon=${encodeURIComponent(longitude)}`
-      );
-      branchPlace.setPlace(place);
-      message.textContent = "Current location set. You can refine the place name if needed.";
-      message.classList.add("success");
-    } catch (error) {
-      const geoCode = error?.code;
-      if (geoCode === 1) {
-        message.textContent = "Allow location access to use your current position.";
-      } else if (geoCode === 2 || geoCode === 3) {
-        message.textContent = "Could not read your current location. Try again outdoors or search instead.";
-      } else {
-        message.textContent = error.message || "Could not use current location.";
-      }
-    } finally {
-      btn.disabled = false;
-      btn.textContent = previousLabel;
-    }
   });
 
   form.addEventListener("submit", async (event) => {
@@ -2067,7 +2593,8 @@ async function renderProfile(businessId) {
 
   function fillBranchSelect(branches, selectedId) {
     siblingBranches = branches;
-    branchSelect.innerHTML = branches
+    const options = switchableBranches(branches, selectedId);
+    branchSelect.innerHTML = options
       .map(
         (branch) => `
           <option value="${branch.id}" ${Number(branch.id) === Number(selectedId) ? "selected" : ""}>
@@ -2076,8 +2603,8 @@ async function renderProfile(businessId) {
         `
       )
       .join("");
-    branchSelect.disabled = branches.length <= 1;
-    document.querySelector(".branch-switcher-control")?.classList.toggle("is-single", branches.length <= 1);
+    branchSelect.disabled = options.length <= 1;
+    document.querySelector(".branch-switcher-control")?.classList.toggle("is-single", options.length <= 1);
   }
 
   branchSelect.addEventListener("change", () => {

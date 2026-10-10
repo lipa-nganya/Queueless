@@ -28,8 +28,8 @@ android {
         applicationId = "tech.thewolfgang.queueless.vendor"
         minSdk = 26
         targetSdk = 35
-        versionCode = 4
-        versionName = "1.2.1"
+        versionCode = 5
+        versionName = "1.3.0"
         buildConfigField("boolean", "PUSH_ENABLED", hasGoogleServices.toString())
     }
 
@@ -128,6 +128,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.9.0")
     implementation("com.google.android.gms:play-services-location:21.3.0")
+    implementation("org.osmdroid:osmdroid-android:6.1.20")
 
     // Firebase Messaging — only fully wired when google-services.json is present.
     implementation(platform("com.google.firebase:firebase-bom:33.7.0"))

@@ -10,20 +10,19 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
+import tech.thewolfgang.queueless.vendor.ui.theme.GhostButton
+import androidx.compose.material3.TextField
+import tech.thewolfgang.queueless.vendor.ui.theme.queuelessFieldColors
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -41,6 +40,16 @@ import tech.thewolfgang.queueless.vendor.ui.theme.Navy
 import tech.thewolfgang.queueless.vendor.ui.theme.SurfaceCard
 import tech.thewolfgang.queueless.vendor.ui.theme.TextMuted
 import tech.thewolfgang.queueless.vendor.ui.theme.TextPrimary
+import tech.thewolfgang.queueless.vendor.ui.theme.PageBackground
+import tech.thewolfgang.queueless.vendor.ui.theme.LimeDim
+import tech.thewolfgang.queueless.vendor.ui.theme.LimeInk
+import tech.thewolfgang.queueless.vendor.ui.theme.CardShape
+import tech.thewolfgang.queueless.vendor.ui.theme.ButtonShape
+import tech.thewolfgang.queueless.vendor.ui.theme.FieldShape
+import tech.thewolfgang.queueless.vendor.ui.theme.OnDanger
+import tech.thewolfgang.queueless.vendor.ui.theme.LimeSoft
+import tech.thewolfgang.queueless.vendor.ui.theme.ChipShape
+import tech.thewolfgang.queueless.vendor.ui.theme.SurfaceMuted
 
 @Composable
 fun ServicesScreen(
@@ -61,7 +70,7 @@ fun ServicesScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(Navy),
+            .background(PageBackground),
     ) {
         Column(
             modifier = Modifier
@@ -78,7 +87,7 @@ fun ServicesScreen(
                         verticalArrangement = Arrangement.Center,
                         horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
-                        CircularProgressIndicator(color = Lime)
+                        CircularProgressIndicator(color = LimeDim)
                         Text("Loading services…", color = TextMuted, modifier = Modifier.padding(top = 12.dp))
                     }
                 }
@@ -106,7 +115,7 @@ fun ServicesScreen(
                         BranchSwitcherCard(
                             branchName = state.branchName.ifBlank { "Untitled branch" },
                             meta = state.branchMeta,
-                            branches = state.siblingBranches,
+                            allBranches = state.siblingBranches,
                             selectedId = state.branchId,
                             onSelect = onSwitchBranch,
                         )
@@ -115,7 +124,7 @@ fun ServicesScreen(
                             Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .background(SurfaceCard, RoundedCornerShape(14.dp))
+                                    .background(SurfaceCard, CardShape)
                                     .padding(16.dp),
                                 verticalArrangement = Arrangement.spacedBy(6.dp),
                             ) {
@@ -153,7 +162,8 @@ fun ServicesScreen(
                             color = TextMuted,
                         )
 
-                        OutlinedTextField(
+                        TextField(
+                            shape = FieldShape,
                             value = state.name,
                             onValueChange = viewModel::onNameChange,
                             modifier = Modifier.fillMaxWidth(),
@@ -161,7 +171,8 @@ fun ServicesScreen(
                             singleLine = true,
                             colors = fieldColors(),
                         )
-                        OutlinedTextField(
+                        TextField(
+                            shape = FieldShape,
                             value = state.durationMinutes,
                             onValueChange = viewModel::onDurationChange,
                             modifier = Modifier.fillMaxWidth(),
@@ -169,7 +180,8 @@ fun ServicesScreen(
                             singleLine = true,
                             colors = fieldColors(),
                         )
-                        OutlinedTextField(
+                        TextField(
+                            shape = FieldShape,
                             value = state.description,
                             onValueChange = viewModel::onDescriptionChange,
                             modifier = Modifier.fillMaxWidth(),
@@ -181,7 +193,7 @@ fun ServicesScreen(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .background(SurfaceCard, RoundedCornerShape(14.dp))
+                                .background(SurfaceCard, CardShape)
                                 .padding(16.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically,
@@ -211,16 +223,16 @@ fun ServicesScreen(
                             Text(text = state.error ?: "", color = Danger)
                         }
                         if (!state.savedMessage.isNullOrBlank()) {
-                            Text(text = state.savedMessage ?: "", color = Lime)
+                            Text(text = state.savedMessage ?: "", color = LimeInk)
                         }
 
                         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                             if (state.editingId != null) {
-                                OutlinedButton(
+                                GhostButton(
                                     onClick = viewModel::startCreate,
                                     enabled = !state.saving,
                                     modifier = Modifier.weight(1f).height(48.dp),
-                                    shape = RoundedCornerShape(10.dp),
+                                    shape = ButtonShape,
                                 ) {
                                     Text("Cancel")
                                 }
@@ -236,7 +248,7 @@ fun ServicesScreen(
                                     contentColor = Navy,
                                     disabledContainerColor = Lime.copy(alpha = 0.5f),
                                 ),
-                                shape = RoundedCornerShape(10.dp),
+                                shape = ButtonShape,
                             ) {
                                 if (state.saving) {
                                     CircularProgressIndicator(
@@ -279,7 +291,7 @@ private fun ServiceRow(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(SurfaceCard, RoundedCornerShape(14.dp))
+            .background(SurfaceCard, CardShape)
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
@@ -300,20 +312,29 @@ private fun ServiceRow(
             }
             Text(
                 text = "${service.durationMinutes} min",
-                color = Lime,
-                fontWeight = FontWeight.Bold,
+                color = TextPrimary,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 13.sp,
+                modifier = Modifier
+                    .background(PageBackground, ChipShape)
+                    .padding(horizontal = 10.dp, vertical = 4.dp),
             )
         }
         Text(
             text = if (service.isActive) "Active" else "Inactive",
-            color = if (service.isActive) Lime else TextMuted,
+            color = if (service.isActive) LimeInk else TextMuted,
+            fontWeight = FontWeight.SemiBold,
+            fontSize = 12.sp,
+            modifier = Modifier
+                .background(if (service.isActive) LimeSoft else SurfaceMuted, ChipShape)
+                .padding(horizontal = 10.dp, vertical = 3.dp),
         )
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            OutlinedButton(
+            GhostButton(
                 onClick = onEdit,
                 enabled = !busy,
                 modifier = Modifier.weight(1f),
-                shape = RoundedCornerShape(10.dp),
+                shape = ButtonShape,
             ) {
                 Text("Edit")
             }
@@ -323,9 +344,9 @@ private fun ServiceRow(
                 modifier = Modifier.weight(1f),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = Danger,
-                    contentColor = TextPrimary,
+                    contentColor = OnDanger,
                 ),
-                shape = RoundedCornerShape(10.dp),
+                shape = ButtonShape,
             ) {
                 Text("Delete")
             }
@@ -334,14 +355,4 @@ private fun ServiceRow(
 }
 
 @Composable
-private fun fieldColors() = OutlinedTextFieldDefaults.colors(
-    focusedBorderColor = Lime,
-    unfocusedBorderColor = TextMuted.copy(alpha = 0.4f),
-    focusedLabelColor = Lime,
-    unfocusedLabelColor = TextMuted,
-    cursorColor = Lime,
-    focusedTextColor = TextPrimary,
-    unfocusedTextColor = TextPrimary,
-    focusedPlaceholderColor = TextMuted,
-    unfocusedPlaceholderColor = TextMuted,
-)
+private fun fieldColors() = queuelessFieldColors()

@@ -3,24 +3,31 @@ package tech.thewolfgang.queueless.vendor.ui.components
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.AccountTree
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.MiscellaneousServices
 import androidx.compose.material.icons.filled.Person
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -36,8 +43,13 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import tech.thewolfgang.queueless.vendor.BuildConfig
+import tech.thewolfgang.queueless.vendor.ui.theme.FieldShape
 import tech.thewolfgang.queueless.vendor.ui.theme.Lime
-import tech.thewolfgang.queueless.vendor.ui.theme.NavyElevated
+import tech.thewolfgang.queueless.vendor.ui.theme.LimeInk
+import tech.thewolfgang.queueless.vendor.ui.theme.Navy
+import tech.thewolfgang.queueless.vendor.ui.theme.PageBackground
+import tech.thewolfgang.queueless.vendor.ui.theme.SurfaceCard
+import tech.thewolfgang.queueless.vendor.ui.theme.TextFaint
 import tech.thewolfgang.queueless.vendor.ui.theme.TextMuted
 import tech.thewolfgang.queueless.vendor.ui.theme.TextPrimary
 
@@ -57,7 +69,7 @@ fun BrandMark(
         withStyle(SpanStyle(color = TextPrimary, fontWeight = FontWeight.Bold)) {
             append("Queue")
         }
-        withStyle(SpanStyle(color = Lime, fontWeight = FontWeight.Bold)) {
+        withStyle(SpanStyle(color = LimeInk, fontWeight = FontWeight.Bold)) {
             append("less")
         }
     }
@@ -84,7 +96,7 @@ fun AppVersionLabel(
         modifier = modifier.semantics {
             contentDescription = "App version ${BuildConfig.VERSION_NAME}"
         },
-        color = if (onDark) TextMuted.copy(alpha = 0.75f) else TextMuted,
+        color = if (onDark) Color.White.copy(alpha = 0.6f) else TextFaint,
         fontSize = 12.sp,
         fontWeight = FontWeight.Medium,
         textAlign = TextAlign.Center,
@@ -106,9 +118,23 @@ fun TopBar(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (showBack && onBack != null) {
-            TextButton(onClick = onBack) {
-                Text("Back")
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(FieldShape)
+                    .background(SurfaceCard)
+                    .semantics { role = Role.Button }
+                    .clickable(onClickLabel = "Back", onClick = onBack),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = "Back",
+                    tint = TextPrimary,
+                    modifier = Modifier.size(22.dp),
+                )
             }
+            if (showBrand) Spacer(Modifier.width(12.dp))
         }
         if (showBrand) {
             BrandMark(subtitle = title)
@@ -125,16 +151,17 @@ fun VendorBottomBar(
     onProfile: () -> Unit,
     onSignOut: () -> Unit,
 ) {
+    val barShape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
     Column(
         modifier = Modifier
-            .background(NavyElevated)
+            .shadow(18.dp, barShape, ambientColor = Navy.copy(alpha = 0.25f), spotColor = Navy.copy(alpha = 0.25f))
+            .background(PageBackground, barShape)
             .semantics { contentDescription = "Main navigation" },
     ) {
-        HorizontalDivider(color = TextMuted.copy(alpha = 0.2f))
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 2.dp, vertical = 6.dp),
+                .padding(horizontal = 8.dp, vertical = 6.dp),
             horizontalArrangement = Arrangement.SpaceEvenly,
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -182,8 +209,7 @@ fun VendorBottomBar(
         AppVersionLabel(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(bottom = 8.dp),
-            onDark = true,
+                .padding(bottom = 6.dp),
         )
     }
 }
@@ -199,7 +225,7 @@ private fun BottomItem(
     role: BottomRole,
     modifier: Modifier = Modifier,
 ) {
-    val tint = if (selected) Lime else TextMuted
+    val tint = if (selected) LimeInk else TextMuted
     Column(
         modifier = modifier
             .semantics(mergeDescendants = true) {
@@ -210,22 +236,22 @@ private fun BottomItem(
                     stateDescription = if (selected) "Selected" else "Not selected"
                 }
             }
+            .clip(RoundedCornerShape(16.dp))
             .clickable(onClick = onClick)
-            .padding(vertical = 8.dp),
+            .padding(top = 12.dp, bottom = 6.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(4.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Icon(
             imageVector = icon,
             contentDescription = null,
             tint = tint,
-            modifier = Modifier.size(22.dp),
+            modifier = Modifier.size(24.dp),
         )
-        Text(
-            text = label,
-            color = tint,
-            fontSize = 11.sp,
-            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+        Box(
+            modifier = Modifier
+                .size(5.dp)
+                .background(if (selected) Lime else Color.Transparent, CircleShape),
         )
     }
 }

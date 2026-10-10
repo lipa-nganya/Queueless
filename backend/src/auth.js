@@ -75,6 +75,15 @@ export function signVendorToken(vendor) {
   );
 }
 
+/** Short-lived token that only lets a pending vendor describe their business. */
+export function signVendorOnboardingToken(vendor) {
+  return jwt.sign(
+    { sub: vendor.id, phone: vendor.phone, role: "vendor_onboarding" },
+    JWT_SECRET,
+    { expiresIn: "2h" }
+  );
+}
+
 export async function vendorLoginWithPin(phone, pin) {
   const phoneDigits = String(phone || "").trim();
   const pinValue = String(pin || "");
@@ -168,6 +177,17 @@ export function requireCustomer(req, res, next) {
   }
 }
 
+/** Lets guests through; a valid customer token still sets req.customer. */
+export function optionalCustomer(req, _res, next) {
+  try {
+    const payload = readToken(req);
+    if (payload?.role === "customer") req.customer = payload;
+  } catch {
+    // An expired or foreign token browses as a guest.
+  }
+  return next();
+}
+
 export function requireVendor(req, res, next) {
   try {
     const payload = readToken(req);
@@ -182,10 +202,24 @@ export function requireVendor(req, res, next) {
 }
 
 /** Admin or vendor — used for shared tools like Kenya place search. */
+export function requireVendorOnboarding(req, res, next) {
+  try {
+    const payload = readToken(req);
+    if (!payload || payload.role !== "vendor_onboarding") {
+      return res.status(401).json({ error: "Your setup link expired. Log in again to continue." });
+    }
+    req.onboardingVendor = payload;
+    return next();
+  } catch {
+    return res.status(401).json({ error: "Your setup link expired. Log in again to continue." });
+  }
+}
+
 export function requireAdminOrVendor(req, res, next) {
   try {
     const payload = readToken(req);
-    if (!payload || (payload.role !== "admin" && payload.role !== "vendor")) {
+    // Vendors still in onboarding need place search to pin their first branch.
+    if (!payload || !["admin", "vendor", "vendor_onboarding"].includes(payload.role)) {
       return res.status(401).json({ error: "Unauthorized" });
     }
     if (payload.role === "admin") req.admin = payload;

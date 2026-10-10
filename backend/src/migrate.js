@@ -160,6 +160,7 @@ export async function migrate() {
     ALTER TABLE vendors ADD COLUMN IF NOT EXISTS otp_last_sent_at TIMESTAMPTZ;
     ALTER TABLE vendors ADD COLUMN IF NOT EXISTS trial_ends_at TIMESTAMPTZ;
     ALTER TABLE vendors ALTER COLUMN password_hash DROP NOT NULL;
+    ALTER TABLE vendors ALTER COLUMN activated_at DROP NOT NULL;
 
     CREATE UNIQUE INDEX IF NOT EXISTS vendors_phone_unique
       ON vendors (phone)
@@ -376,6 +377,38 @@ export async function migrate() {
     ) sub
     WHERE b.id = sub.business_id
       AND sub.avg_duration IS NOT NULL;
+
+    -- Vendors who signed up themselves describe their own business before approval.
+    ALTER TABLE vendors ADD COLUMN IF NOT EXISTS self_registered BOOLEAN NOT NULL DEFAULT false;
+
+    -- The service a booking is for carries over when the customer checks in.
+    ALTER TABLE bookings
+      ADD COLUMN IF NOT EXISTS service_id INTEGER REFERENCES business_services(id) ON DELETE SET NULL;
+
+    -- Walk-ins are real tickets in the same line as app customers.
+    ALTER TABLE queue_entries ALTER COLUMN customer_id DROP NOT NULL;
+    ALTER TABLE queue_entries ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'app';
+    ALTER TABLE queue_entries ADD COLUMN IF NOT EXISTS walk_in_name TEXT;
+    ALTER TABLE queue_entries ADD COLUMN IF NOT EXISTS walk_in_phone TEXT;
+
+    -- The old walk-in counter becomes anonymous tickets ahead of everyone waiting.
+    INSERT INTO queue_entries (business_id, branch_id, customer_id, source, status, joined_at)
+    SELECT
+      br.business_id,
+      br.id,
+      NULL,
+      'walk_in',
+      'waiting',
+      COALESCE(
+        (SELECT MIN(qe.joined_at) FROM queue_entries qe WHERE qe.branch_id = br.id AND qe.status = 'waiting'),
+        NOW()
+      ) - make_interval(secs => br.queue_size - g + 1)
+    FROM business_branches br
+    CROSS JOIN LATERAL generate_series(1, br.queue_size) AS g
+    WHERE br.queue_size > 0;
+
+    UPDATE business_branches SET queue_size = 0 WHERE queue_size <> 0;
+    UPDATE businesses SET queue_size = 0 WHERE queue_size <> 0;
   `);
 }
 

@@ -54,8 +54,9 @@ class VendorRepository(
 
     suspend fun queue(businessId: Int) = api.getQueue(businessId)
 
-    suspend fun setWalkIns(businessId: Int, queueSize: Int) =
-        api.setWalkIns(businessId, queueSize.coerceIn(0, 500))
+    suspend fun addWalkIn(businessId: Int, body: AddWalkInRequest) = api.addWalkIn(businessId, body)
+
+    suspend fun updateWalkIn(entryId: Int, body: UpdateWalkInRequest) = api.updateWalkIn(entryId, body)
 
     suspend fun setQueuePaused(businessId: Int, paused: Boolean) =
         api.setQueuePaused(businessId, paused)
@@ -88,10 +89,15 @@ class VendorRepository(
 
     suspend fun branches(branchId: Int) = api.getBranches(branchId)
 
-    suspend fun searchPlaces(query: String) = api.searchPlaces(query)
+    suspend fun searchPlaces(query: String, bearer: String? = null) = api.searchPlaces(query, bearer)
 
-    suspend fun reverseGeocode(latitude: Double, longitude: Double) =
-        api.reverseGeocode(latitude, longitude)
+    suspend fun reverseGeocode(latitude: Double, longitude: Double, bearer: String? = null) =
+        api.reverseGeocode(latitude, longitude, bearer)
+
+    suspend fun onboardingInfo(onboardingToken: String) = api.getOnboarding(onboardingToken)
+
+    suspend fun submitOnboarding(onboardingToken: String, body: OnboardingRequest) =
+        api.submitOnboarding(onboardingToken, body)
 
     suspend fun createBranch(
         branchId: Int,

@@ -1,6 +1,28 @@
 package tech.thewolfgang.queueless.vendor.ui.queue
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.PersonAdd
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.RadioButtonDefaults
+import androidx.compose.material3.TextField
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.input.KeyboardType
+import tech.thewolfgang.queueless.vendor.data.QueueBranchOption
+import tech.thewolfgang.queueless.vendor.ui.theme.SheetShape
+import tech.thewolfgang.queueless.vendor.ui.theme.queuelessFieldColors
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -10,20 +32,19 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.OutlinedButton
+import tech.thewolfgang.queueless.vendor.ui.theme.GhostButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
@@ -47,6 +68,18 @@ import tech.thewolfgang.queueless.vendor.ui.theme.Navy
 import tech.thewolfgang.queueless.vendor.ui.theme.SurfaceCard
 import tech.thewolfgang.queueless.vendor.ui.theme.TextMuted
 import tech.thewolfgang.queueless.vendor.ui.theme.TextPrimary
+import tech.thewolfgang.queueless.vendor.ui.theme.PageBackground
+import tech.thewolfgang.queueless.vendor.ui.theme.LimeDim
+import tech.thewolfgang.queueless.vendor.ui.theme.LimeInk
+import tech.thewolfgang.queueless.vendor.ui.theme.CardShape
+import tech.thewolfgang.queueless.vendor.ui.theme.ButtonShape
+import tech.thewolfgang.queueless.vendor.ui.theme.ChipShape
+import tech.thewolfgang.queueless.vendor.ui.theme.OnDanger
+import tech.thewolfgang.queueless.vendor.ui.theme.LimeSoft
+import tech.thewolfgang.queueless.vendor.ui.theme.FieldShape
+import tech.thewolfgang.queueless.vendor.ui.theme.TealInk
+import tech.thewolfgang.queueless.vendor.ui.theme.Teal
+import tech.thewolfgang.queueless.vendor.ui.theme.limeCard
 
 @Composable
 fun QueueScreen(
@@ -83,7 +116,7 @@ fun QueueScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(Navy),
+            .background(PageBackground),
     ) {
         Column(
             modifier = Modifier
@@ -105,7 +138,7 @@ fun QueueScreen(
                         horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
                         CircularProgressIndicator(
-                            color = Lime,
+                            color = LimeDim,
                             modifier = Modifier.semantics { contentDescription = "Loading queue" },
                         )
                         Text("Loading queue…", color = TextMuted, modifier = Modifier.padding(top = 12.dp))
@@ -154,25 +187,42 @@ fun QueueScreen(
                             ) {
                                 StatCard("Total waiting", "${business.waitingTotal}", Modifier.weight(1f))
                                 StatCard("In app", "${business.appWaiting}", Modifier.weight(1f))
-                                StatCard("Walk-ins", "${business.queueSize}", Modifier.weight(1f))
+                                StatCard("Walk-ins", "${business.walkInWaiting}", Modifier.weight(1f))
                             }
                         }
 
                         item {
-                            WalkInStepper(
-                                count = business.queueSize,
-                                enabled = !state.actionBusy,
-                                onDecrease = { viewModel.adjustWalkIns(-1) },
-                                onIncrease = { viewModel.adjustWalkIns(1) },
-                            )
-                        }
-
-                        item {
                             QueuePauseCard(
+                                branchName = business.branchName?.takeIf { it.isNotBlank() } ?: "This branch",
+                                otherBranches = data.branches.count { it.isActive } > 1,
                                 paused = business.queuePaused,
                                 enabled = !state.actionBusy,
                                 onToggle = viewModel::toggleQueuePause,
                             )
+                        }
+
+                        item {
+                            QueueToolbar(
+                                filter = state.filter,
+                                counts = mapOf(
+                                    QueueFilter.All to data.entries.size,
+                                    QueueFilter.WalkIns to data.entries.count { it.isWalkIn },
+                                    QueueFilter.App to data.entries.count { !it.isWalkIn },
+                                ),
+                                onFilter = viewModel::setFilter,
+                                onAddWalkIn = viewModel::openAddWalkIn,
+                            )
+                        }
+
+                        if (!state.notice.isNullOrBlank()) {
+                            item {
+                                Text(
+                                    text = state.notice ?: "",
+                                    color = LimeInk,
+                                    fontWeight = FontWeight.Medium,
+                                    modifier = Modifier.liveStatus(),
+                                )
+                            }
                         }
 
                         if (!state.error.isNullOrBlank()) {
@@ -185,10 +235,20 @@ fun QueueScreen(
                             }
                         }
 
-                        if (data.entries.isEmpty()) {
+                        val visible = when (state.filter) {
+                            QueueFilter.All -> data.entries
+                            QueueFilter.WalkIns -> data.entries.filter { it.isWalkIn }
+                            QueueFilter.App -> data.entries.filter { !it.isWalkIn }
+                        }
+                        val frontId = data.entries.firstOrNull()?.id
+                        if (visible.isEmpty()) {
                             item {
                                 Text(
-                                    text = "Queue is clear. Waiting for the next customer.",
+                                    text = when (state.filter) {
+                                        QueueFilter.All -> "Queue is clear. Waiting for the next customer."
+                                        QueueFilter.WalkIns -> "No walk-ins waiting."
+                                        QueueFilter.App -> "No app customers waiting."
+                                    },
                                     color = TextMuted,
                                     modifier = Modifier
                                         .padding(vertical = 24.dp)
@@ -196,13 +256,14 @@ fun QueueScreen(
                                 )
                             }
                         } else {
-                            itemsIndexed(data.entries, key = { _, entry -> entry.id }) { index, entry ->
+                            items(visible, key = { entry -> entry.id }) { entry ->
                                 QueueCard(
                                     entry = entry,
-                                    isNow = index == 0,
+                                    isNow = entry.id == frontId,
                                     busy = state.actionBusy,
                                     onServe = { viewModel.serve(entry) },
                                     onNoShow = { viewModel.noShow(entry) },
+                                    onEdit = { viewModel.openEditWalkIn(entry) },
                                 )
                             }
                         }
@@ -211,6 +272,20 @@ fun QueueScreen(
                     }
                 }
             }
+        }
+        state.walkInSheet?.let { sheet ->
+            WalkInSheet(
+                sheet = sheet,
+                branches = state.data?.branches.orEmpty()
+                    .filter { it.isActive || it.id == sheet.branchId },
+                onDismiss = viewModel::closeWalkInSheet,
+                onBranch = viewModel::onSheetBranch,
+                onService = viewModel::onSheetService,
+                onName = viewModel::onSheetName,
+                onPhone = viewModel::onSheetPhone,
+                onPartySize = viewModel::onSheetPartySize,
+                onSubmit = viewModel::submitWalkIn,
+            )
         }
         VendorBottomBar(
             selected = VendorTab.Queue,
@@ -227,20 +302,22 @@ fun QueueScreen(
 private fun StatCard(label: String, value: String, modifier: Modifier = Modifier) {
     Column(
         modifier = modifier
-            .background(SurfaceCard, RoundedCornerShape(12.dp))
+            .background(SurfaceCard, RoundedCornerShape(16.dp))
             .semantics(mergeDescendants = true) {
                 contentDescription = "$label: $value"
             }
             .padding(12.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Text(text = value, color = Lime, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+        Text(text = value, color = TextPrimary, fontSize = 24.sp, fontWeight = FontWeight.Bold)
         Text(text = label, color = TextMuted, fontSize = 12.sp)
     }
 }
 
 @Composable
 private fun QueuePauseCard(
+    branchName: String,
+    otherBranches: Boolean,
     paused: Boolean,
     enabled: Boolean,
     onToggle: () -> Unit,
@@ -250,22 +327,27 @@ private fun QueuePauseCard(
             .fillMaxWidth()
             .background(
                 if (paused) Danger.copy(alpha = 0.12f) else SurfaceCard,
-                RoundedCornerShape(14.dp),
+                CardShape,
             )
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Column {
             Text(
-                text = if (paused) "Queue paused" else "Queue open",
+                text = if (paused) "$branchName queue paused" else "$branchName queue open",
                 color = TextPrimary,
                 fontWeight = FontWeight.SemiBold,
             )
             Text(
-                text = if (paused) {
-                    "Customers cannot join right now. You can still serve people already waiting."
-                } else {
-                    "Customers can join this queue. Pause to take a short break."
+                text = buildString {
+                    append(
+                        if (paused) {
+                            "Customers cannot join this branch right now. You can still serve people already waiting."
+                        } else {
+                            "Customers can join this branch. Pause to take a short break."
+                        },
+                    )
+                    if (otherBranches) append(" Your other branches are not affected.")
                 },
                 color = TextMuted,
                 fontSize = 13.sp,
@@ -280,80 +362,22 @@ private fun QueuePauseCard(
                     containerColor = Lime,
                     contentColor = Navy,
                 ),
-                modifier = Modifier.fillMaxWidth(),
+                shape = ButtonShape,
+                modifier = Modifier.fillMaxWidth().height(48.dp),
             ) {
-                Text("Resume queue")
+                Text("Resume $branchName")
             }
         } else {
-            OutlinedButton(
+            GhostButton(
                 onClick = onToggle,
                 enabled = enabled,
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().height(48.dp),
             ) {
-                Text("Pause / take a break")
+                Text("Pause $branchName")
             }
         }
     }
 }
-
-@Composable
-private fun WalkInStepper(
-    count: Int,
-    enabled: Boolean,
-    onDecrease: () -> Unit,
-    onIncrease: () -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(SurfaceCard, RoundedCornerShape(14.dp))
-            .padding(16.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text("Walk-in baseline", color = TextPrimary, fontWeight = FontWeight.SemiBold)
-            Text(
-                text = "People physically in line who did not join via the app",
-                color = TextMuted,
-                fontSize = 13.sp,
-                modifier = Modifier.padding(top = 4.dp),
-            )
-        }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            OutlinedButton(
-                onClick = onDecrease,
-                enabled = enabled && count > 0,
-                shape = RoundedCornerShape(8.dp),
-                modifier = Modifier.semantics {
-                    contentDescription = "Decrease walk-ins"
-                },
-            ) { Text("−", fontSize = 20.sp) }
-            Text(
-                text = "$count",
-                color = TextPrimary,
-                fontWeight = FontWeight.Bold,
-                fontSize = 20.sp,
-                modifier = Modifier
-                    .padding(horizontal = 12.dp)
-                    .semantics {
-                        contentDescription = "$count walk-ins"
-                        liveRegion = LiveRegionMode.Polite
-                    },
-            )
-            OutlinedButton(
-                onClick = onIncrease,
-                enabled = enabled && count < 500,
-                shape = RoundedCornerShape(8.dp),
-                modifier = Modifier.semantics {
-                    contentDescription = "Increase walk-ins"
-                },
-            ) { Text("+", fontSize = 20.sp) }
-        }
-    }
-}
-
-private val A11yTeal = Color(0xFF00D1C1)
 
 @Composable
 private fun QueueCard(
@@ -362,23 +386,24 @@ private fun QueueCard(
     busy: Boolean,
     onServe: () -> Unit,
     onNoShow: () -> Unit,
+    onEdit: () -> Unit,
 ) {
-    val name = entry.customerFirstName ?: "Customer"
+    val name = entry.customerFirstName ?: if (entry.isWalkIn) "Walk-in guest" else "Customer"
     val partyLabel = if (entry.partySize > 1) ", party of ${entry.partySize}" else ""
     val accessibilityNote = entry.accessibilityNote?.trim()
     val hasAccessibility =
         entry.accessibilityNeedLabels.isNotEmpty() || !accessibilityNote.isNullOrEmpty()
+    val muted = if (isNow) Navy.copy(alpha = 0.72f) else TextMuted
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(
-                if (isNow) SurfaceCard.copy(alpha = 1f) else SurfaceCard.copy(alpha = 0.7f),
-                RoundedCornerShape(14.dp),
-            )
+            .then(if (isNow) Modifier.limeCard() else Modifier.background(SurfaceCard, CardShape))
             .semantics(mergeDescendants = true) {
                 contentDescription = buildString {
+                    append(if (entry.isWalkIn) "Walk-in: " else "App: ")
                     append(name)
                     append(partyLabel)
+                    entry.serviceName?.let { append(", $it") }
                     append(if (isNow) ", now serving" else ", position ${entry.position}")
                     append(", estimated wait ${formatWaitMinutes(entry.estimatedWaitMinutes)}")
                     if (entry.accessibilityNeedLabels.isNotEmpty()) {
@@ -395,11 +420,32 @@ private fun QueueCard(
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = if (isNow) "Now serving" else "Position #${entry.position}",
-                    color = Lime,
-                    fontWeight = FontWeight.Medium,
-                )
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        text = if (isNow) "Now serving" else "Position #${entry.position}",
+                        color = if (isNow) Navy else LimeInk,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 12.sp,
+                        modifier = Modifier
+                            .background(
+                                if (isNow) PageBackground.copy(alpha = 0.55f) else LimeSoft,
+                                ChipShape,
+                            )
+                            .padding(horizontal = 10.dp, vertical = 3.dp),
+                    )
+                    Text(
+                        text = if (entry.isWalkIn) "Walk-in" else "App",
+                        color = if (entry.isWalkIn) TealInk else muted,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 12.sp,
+                        modifier = Modifier
+                            .background(
+                                if (entry.isWalkIn) Teal.copy(alpha = 0.14f) else Navy.copy(alpha = 0.06f),
+                                ChipShape,
+                            )
+                            .padding(horizontal = 10.dp, vertical = 3.dp),
+                    )
+                }
                 Text(
                     text = buildString {
                         append(name)
@@ -410,11 +456,22 @@ private fun QueueCard(
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.padding(top = 4.dp),
                 )
-                Text(
-                    text = "+${entry.customerPhone.orEmpty()}",
-                    color = TextMuted,
-                    modifier = Modifier.padding(top = 2.dp),
-                )
+                if (!entry.customerPhone.isNullOrBlank()) {
+                    Text(
+                        text = "+${entry.customerPhone}",
+                        color = muted,
+                        modifier = Modifier.padding(top = 2.dp),
+                    )
+                }
+                entry.serviceName?.let { service ->
+                    Text(
+                        text = service,
+                        color = if (isNow) Navy else LimeInk,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 13.sp,
+                        modifier = Modifier.padding(top = 2.dp),
+                    )
+                }
                 if (entry.partySize > 1 || entry.partyNames.size > 1) {
                     Text(
                         text = buildString {
@@ -424,7 +481,7 @@ private fun QueueCard(
                                 append(entry.partyNames.joinToString(", "))
                             }
                         },
-                        color = TextMuted,
+                        color = muted,
                         fontSize = 13.sp,
                         modifier = Modifier.padding(top = 4.dp),
                     )
@@ -436,7 +493,7 @@ private fun QueueCard(
                     color = TextPrimary,
                     fontWeight = FontWeight.Bold,
                 )
-                Text(text = "est. wait", color = TextMuted, fontSize = 12.sp)
+                Text(text = "est. wait", color = muted, fontSize = 12.sp)
             }
         }
         if (hasAccessibility) {
@@ -444,13 +501,13 @@ private fun QueueCard(
                 modifier = Modifier
                     .padding(top = 12.dp)
                     .fillMaxWidth()
-                    .background(A11yTeal.copy(alpha = 0.14f), RoundedCornerShape(10.dp))
+                    .background(if (isNow) PageBackground.copy(alpha = 0.7f) else Teal.copy(alpha = 0.12f), FieldShape)
                     .padding(horizontal = 12.dp, vertical = 10.dp),
             ) {
                 Text(
-                    text = "ACCESSIBILITY NEEDS",
-                    color = A11yTeal,
-                    fontSize = 11.sp,
+                    text = "Accessibility needs",
+                    color = TealInk,
+                    fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
                 )
                 if (entry.accessibilityNeedLabels.isNotEmpty()) {
@@ -465,14 +522,14 @@ private fun QueueCard(
                 if (!accessibilityNote.isNullOrEmpty()) {
                     Text(
                         text = "\u201C$accessibilityNote\u201D",
-                        color = TextMuted,
+                        color = muted,
                         fontSize = 13.sp,
                         modifier = Modifier.padding(top = 4.dp),
                     )
                 }
             }
         }
-        if (isNow) {
+        run {
             Spacer(Modifier.height(14.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Button(
@@ -483,12 +540,24 @@ private fun QueueCard(
                         .height(48.dp)
                         .semantics { contentDescription = "Serve $name" },
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = Lime,
-                        contentColor = Navy,
+                        containerColor = Navy,
+                        contentColor = Lime,
                     ),
-                    shape = RoundedCornerShape(10.dp),
+                    shape = ButtonShape,
                 ) {
                     Text("Serve", fontWeight = FontWeight.SemiBold)
+                }
+                if (entry.isWalkIn) {
+                    GhostButton(
+                        onClick = onEdit,
+                        enabled = !busy,
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(48.dp)
+                            .semantics { contentDescription = "Edit $name: service or branch" },
+                    ) {
+                        Text("Edit")
+                    }
                 }
                 Button(
                     onClick = onNoShow,
@@ -499,13 +568,213 @@ private fun QueueCard(
                         .semantics { contentDescription = "Mark $name as no-show" },
                     colors = ButtonDefaults.buttonColors(
                         containerColor = Danger,
-                        contentColor = TextPrimary,
+                        contentColor = OnDanger,
                     ),
-                    shape = RoundedCornerShape(10.dp),
+                    shape = ButtonShape,
                 ) {
                     Text("No-show", fontWeight = FontWeight.SemiBold)
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun QueueToolbar(
+    filter: QueueFilter,
+    counts: Map<QueueFilter, Int>,
+    onFilter: (QueueFilter) -> Unit,
+    onAddWalkIn: () -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Button(
+            onClick = onAddWalkIn,
+            colors = ButtonDefaults.buttonColors(containerColor = Lime, contentColor = Navy),
+            shape = ButtonShape,
+            modifier = Modifier.fillMaxWidth().height(52.dp),
+        ) {
+            Icon(Icons.Rounded.PersonAdd, contentDescription = null)
+            Spacer(Modifier.padding(start = 8.dp))
+            Text("Add walk-in", fontWeight = FontWeight.SemiBold)
+        }
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+                .selectableGroup(),
+        ) {
+            QueueFilter.entries.forEach { option ->
+                val count = counts[option] ?: 0
+                FilterChip(
+                    selected = filter == option,
+                    onClick = { onFilter(option) },
+                    label = { Text("${option.label} ($count)") },
+                    shape = ChipShape,
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = Navy,
+                        selectedLabelColor = PageBackground,
+                    ),
+                    modifier = Modifier.semantics {
+                        contentDescription = "Show ${option.label.lowercase()}, $count"
+                    },
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun WalkInSheet(
+    sheet: WalkInSheetState,
+    branches: List<QueueBranchOption>,
+    onDismiss: () -> Unit,
+    onBranch: (Int) -> Unit,
+    onService: (Int) -> Unit,
+    onName: (String) -> Unit,
+    onPhone: (String) -> Unit,
+    onPartySize: (Int) -> Unit,
+    onSubmit: () -> Unit,
+) {
+    val editing = sheet.editingEntryId != null
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        shape = SheetShape,
+        containerColor = PageBackground,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text(
+                text = if (editing) "Edit walk-in" else "Add walk-in",
+                color = TextPrimary,
+                fontSize = 22.sp,
+                fontWeight = FontWeight.Bold,
+            )
+            if (branches.size > 1) {
+                SheetLabel("Branch")
+                Column(Modifier.selectableGroup()) {
+                    branches.forEach { branch ->
+                        ChoiceRow(
+                            label = branch.name + if (branch.queuePaused) " (paused)" else "",
+                            selected = branch.id == sheet.branchId,
+                            onSelect = { onBranch(branch.id) },
+                        )
+                    }
+                }
+            }
+            SheetLabel("Service")
+            when {
+                sheet.loadingServices -> Text("Loading services…", color = TextMuted)
+                sheet.services.isEmpty() -> Text("No services set up at this branch.", color = TextMuted)
+                else -> Column(Modifier.selectableGroup()) {
+                    sheet.services.forEach { service ->
+                        ChoiceRow(
+                            label = "${service.name} · ${service.durationMinutes} min",
+                            selected = service.id == sheet.serviceId,
+                            onSelect = { onService(service.id) },
+                        )
+                    }
+                }
+            }
+            if (!editing) {
+                TextField(
+                    shape = FieldShape,
+                    value = sheet.name,
+                    onValueChange = onName,
+                    label = { Text("Name (optional)") },
+                    singleLine = true,
+                    colors = queuelessFieldColors(),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                TextField(
+                    shape = FieldShape,
+                    value = sheet.phone,
+                    onValueChange = onPhone,
+                    label = { Text("Phone (optional)") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                    colors = queuelessFieldColors(),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Text("Party size", color = TextPrimary, modifier = Modifier.weight(1f))
+                    GhostButton(
+                        onClick = { onPartySize(sheet.partySize - 1) },
+                        enabled = sheet.partySize > 1,
+                        shape = ChipShape,
+                        modifier = Modifier.semantics { contentDescription = "Fewer people" },
+                    ) { Text("−", fontSize = 20.sp) }
+                    Text(
+                        text = "${sheet.partySize}",
+                        color = TextPrimary,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 20.sp,
+                        modifier = Modifier.semantics {
+                            contentDescription = "Party of ${sheet.partySize}"
+                            liveRegion = LiveRegionMode.Polite
+                        },
+                    )
+                    GhostButton(
+                        onClick = { onPartySize(sheet.partySize + 1) },
+                        enabled = sheet.partySize < 10,
+                        shape = ChipShape,
+                        modifier = Modifier.semantics { contentDescription = "More people" },
+                    ) { Text("+", fontSize = 20.sp) }
+                }
+            }
+            if (!sheet.error.isNullOrBlank()) {
+                Text(text = sheet.error, color = Danger, modifier = Modifier.liveStatus())
+            }
+            Button(
+                onClick = onSubmit,
+                enabled = !sheet.saving && !sheet.loadingServices,
+                colors = ButtonDefaults.buttonColors(containerColor = Navy, contentColor = Lime),
+                shape = ButtonShape,
+                modifier = Modifier.fillMaxWidth().height(52.dp),
+            ) {
+                Text(
+                    text = when {
+                        sheet.saving -> "Saving…"
+                        editing -> "Save"
+                        else -> "Add to queue"
+                    },
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SheetLabel(text: String) {
+    Text(text = text, color = TextMuted, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+}
+
+@Composable
+private fun ChoiceRow(label: String, selected: Boolean, onSelect: () -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .selectable(selected = selected, onClick = onSelect, role = Role.RadioButton)
+            .padding(vertical = 4.dp),
+    ) {
+        RadioButton(
+            selected = selected,
+            onClick = null,
+            colors = RadioButtonDefaults.colors(selectedColor = LimeInk),
+        )
+        Text(text = label, color = TextPrimary, modifier = Modifier.padding(start = 8.dp))
     }
 }

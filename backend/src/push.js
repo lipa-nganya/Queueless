@@ -212,8 +212,18 @@ async function pruneInvalidToken(token) {
   await query(`DELETE FROM vendor_push_tokens WHERE token = $1`, [token]);
 }
 
+function isInvalidTokenError(code = "") {
+  return (
+    code.includes("registration-token-not-registered") ||
+    code.includes("invalid-registration-token")
+  );
+}
+
 /**
- * Send a data+notification push to one or more FCM tokens.
+ * Send a push to FCM tokens. Android tokens get a notification payload; web
+ * tokens get data only, so the vendor service worker alone shows the
+ * notification and routes the click (no duplicate from the Firebase SDK).
+ * `tokens` may be strings (treated as Android) or { token, platform } rows.
  * Never throws for partial failures — returns per-token results.
  */
 export async function sendVendorPush({
@@ -222,14 +232,18 @@ export async function sendVendorPush({
   body,
   data = {},
 }) {
-  const uniqueTokens = [...new Set((tokens || []).map((t) => String(t || "").trim()).filter(Boolean))];
-  if (!uniqueTokens.length) {
+  const byToken = new Map();
+  for (const entry of tokens || []) {
+    const token = String(typeof entry === "string" ? entry : entry?.token || "").trim();
+    if (!token) continue;
+    const platform = typeof entry === "string" ? "android" : String(entry.platform || "android");
+    byToken.set(token, platform === "web" ? "web" : "android");
+  }
+  if (!byToken.size) {
     return { sent: false, reason: "no_tokens", results: [] };
   }
   if (!pushConfigured()) {
-    console.log(
-      `[push:web] would notify ${uniqueTokens.length} device(s): ${title} — ${body}`
-    );
+    console.log(`[push:web] would notify ${byToken.size} device(s): ${title} — ${body}`);
     return { sent: false, reason: "not_configured", results: [] };
   }
 
@@ -249,59 +263,55 @@ export async function sendVendorPush({
     }).map(([key, value]) => [key, String(value ?? "")])
   );
 
-  const results = [];
-  // FCM multicast supports up to 500 tokens.
-  for (let i = 0; i < uniqueTokens.length; i += 500) {
-    const chunk = uniqueTokens.slice(i, i + 500);
-    try {
-      const response = await client.sendEachForMulticast({
-        tokens: chunk,
-        notification: { title, body },
-        data: stringData,
-        android: {
+  const groups = {
+    android: {
+      notification: { title, body },
+      data: stringData,
+      android: {
+        priority: "high",
+        notification: {
+          channelId: "queueless_vendor",
           priority: "high",
-          notification: {
-            channelId: "queueless_vendor",
-            priority: "high",
-          },
         },
-        webpush: {
-          headers: { Urgency: "high" },
-          notification: {
-            title,
-            body,
-            icon: "/favicon.svg",
-            badge: "/favicon.svg",
-          },
-          fcmOptions: {
-            link: String(data?.link || data?.url || "/"),
-          },
-        },
-      });
-      response.responses.forEach((entry, index) => {
-        const token = chunk[index];
-        if (entry.success) {
-          results.push({ token, ok: true, id: entry.messageId || null });
-        } else {
-          const code = entry.error?.code || "";
-          if (
-            code.includes("registration-token-not-registered") ||
-            code.includes("invalid-registration-token")
-          ) {
-            void pruneInvalidToken(token);
+      },
+    },
+    web: {
+      data: stringData,
+      webpush: {
+        headers: { Urgency: "high", TTL: "86400" },
+      },
+    },
+  };
+
+  const results = [];
+  for (const [platform, message] of Object.entries(groups)) {
+    const platformTokens = [...byToken].filter(([, p]) => p === platform).map(([t]) => t);
+    // FCM multicast supports up to 500 tokens.
+    for (let i = 0; i < platformTokens.length; i += 500) {
+      const chunk = platformTokens.slice(i, i + 500);
+      try {
+        const response = await client.sendEachForMulticast({ tokens: chunk, ...message });
+        response.responses.forEach((entry, index) => {
+          const token = chunk[index];
+          if (entry.success) {
+            results.push({ token, platform, ok: true, id: entry.messageId || null });
+            return;
           }
+          const code = entry.error?.code || "";
+          if (isInvalidTokenError(code)) void pruneInvalidToken(token);
           results.push({
             token,
+            platform,
             ok: false,
             error: entry.error?.message || "send failed",
             code,
           });
+        });
+      } catch (error) {
+        console.error("[push] multicast failed:", error.message);
+        for (const token of chunk) {
+          results.push({ token, platform, ok: false, error: error.message });
         }
-      });
-    } catch (error) {
-      console.error("[push] multicast failed:", error.message);
-      for (const token of chunk) {
-        results.push({ token, ok: false, error: error.message });
       }
     }
   }
@@ -325,7 +335,7 @@ export async function notifyVendorsPushByPhones({
     return { sent: false, reason: "no_tokens", results: [] };
   }
   return sendVendorPush({
-    tokens: tokens.map((row) => row.token),
+    tokens,
     title,
     body,
     data,
@@ -343,7 +353,7 @@ export async function notifyVendorsPushByIds({
     return { sent: false, reason: "no_tokens", results: [] };
   }
   return sendVendorPush({
-    tokens: tokens.map((row) => row.token),
+    tokens,
     title,
     body,
     data,

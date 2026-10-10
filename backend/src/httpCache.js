@@ -58,13 +58,34 @@ export function reverseCacheKey(lat, lon) {
  * Send JSON with an ETag. Repeat polls that see no change get a 304 and an
  * empty body, which cuts egress on the busiest endpoints.
  */
-export function sendJsonEtag(req, res, payload) {
+export function sendJsonEtag(req, res, payload, { cacheControl = "private, no-cache" } = {}) {
+  return sendSerialized(req, res, serialize(payload), cacheControl);
+}
+
+// Payloads served from in-process caches are the same object until they expire,
+// so their JSON + hash only needs computing once per cache fill.
+const serializedPayloads = new WeakMap();
+
+export function sendCachedJsonEtag(req, res, payload, { cacheControl = "private, no-cache" } = {}) {
+  let serialized = serializedPayloads.get(payload);
+  if (!serialized) {
+    serialized = serialize(payload);
+    serializedPayloads.set(payload, serialized);
+  }
+  return sendSerialized(req, res, serialized, cacheControl);
+}
+
+function serialize(payload) {
   const body = JSON.stringify(payload);
   const etag = `"${crypto.createHash("sha1").update(body).digest("hex")}"`;
+  return { body, etag };
+}
+
+function sendSerialized(req, res, { body, etag }, cacheControl) {
   res.setHeader("ETag", etag);
-  res.setHeader("Cache-Control", "private, no-cache");
+  res.setHeader("Cache-Control", cacheControl);
   if (req.headers["if-none-match"] === etag) {
     return res.status(304).end();
   }
-  res.type("json").send(body);
+  return res.type("json").send(body);
 }

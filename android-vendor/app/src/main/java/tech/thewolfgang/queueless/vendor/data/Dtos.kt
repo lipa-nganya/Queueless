@@ -18,6 +18,7 @@ data class PhoneStatusResponse(
     @SerialName("pending_activation") val pendingActivation: Boolean = false,
     val activated: Boolean = false,
     @SerialName("can_register") val canRegister: Boolean = false,
+    @SerialName("needs_onboarding") val needsOnboarding: Boolean = false,
     val username: String? = null,
 )
 
@@ -92,6 +93,8 @@ data class LoginResponse(
     val message: String? = null,
     @SerialName("pending_activation") val pendingActivation: Boolean = false,
     val activated: Boolean = false,
+    @SerialName("needs_onboarding") val needsOnboarding: Boolean = false,
+    @SerialName("onboarding_token") val onboardingToken: String? = null,
 )
 
 @Serializable
@@ -103,6 +106,8 @@ data class ErrorResponse(
     @SerialName("pending_activation") val pendingActivation: Boolean = false,
     @SerialName("has_pin") val hasPin: Boolean = false,
     @SerialName("can_register") val canRegister: Boolean = false,
+    @SerialName("needs_onboarding") val needsOnboarding: Boolean = false,
+    @SerialName("onboarding_token") val onboardingToken: String? = null,
     val phone: String? = null,
 )
 
@@ -156,6 +161,8 @@ data class BusinessProfile(
     @SerialName("accessibility_options") val accessibilityOptions: List<String> = emptyList(),
     val accessibility: List<AccessibilityInfo> = emptyList(),
     @SerialName("image_url") val imageUrl: String? = null,
+    val latitude: Double? = null,
+    val longitude: Double? = null,
     @SerialName("is_active") val isActive: Boolean = true,
     @SerialName("business_group_id") val businessGroupId: Int? = null,
     @SerialName("business_group_name") val businessGroupName: String? = null,
@@ -188,6 +195,41 @@ data class PlaceSuggestion(
 )
 
 @Serializable
+data class BusinessGroup(
+    val id: Int,
+    val name: String,
+)
+
+@Serializable
+data class OnboardingInfoResponse(
+    @SerialName("needs_onboarding") val needsOnboarding: Boolean = true,
+    val groups: List<BusinessGroup> = emptyList(),
+)
+
+@Serializable
+data class OnboardingBranch(
+    val name: String,
+    val location: String,
+    val landmark: String? = null,
+    val phone: String? = null,
+    val latitude: Double? = null,
+    val longitude: Double? = null,
+)
+
+@Serializable
+data class OnboardingRequest(
+    @SerialName("business_name") val businessName: String,
+    @SerialName("business_group_id") val businessGroupId: Int,
+    val branch: OnboardingBranch,
+)
+
+@Serializable
+data class OnboardingResponse(
+    val ok: Boolean = false,
+    val message: String? = null,
+)
+
+@Serializable
 data class BranchesResponse(
     @SerialName("business_id") val businessId: Int,
     @SerialName("business_name") val businessName: String? = null,
@@ -208,6 +250,15 @@ data class QueueBusiness(
     @SerialName("business_group_name") val businessGroupName: String? = null,
     @SerialName("waiting_total") val waitingTotal: Int = 0,
     @SerialName("app_waiting") val appWaiting: Int = 0,
+    @SerialName("walk_in_waiting") val walkInWaiting: Int = 0,
+    @SerialName("queue_paused") val queuePaused: Boolean = false,
+)
+
+@Serializable
+data class QueueBranchOption(
+    val id: Int,
+    val name: String,
+    @SerialName("is_active") val isActive: Boolean = true,
     @SerialName("queue_paused") val queuePaused: Boolean = false,
 )
 
@@ -215,6 +266,10 @@ data class QueueBusiness(
 data class QueueEntry(
     val id: Int,
     @SerialName("business_id") val businessId: Int? = null,
+    @SerialName("branch_id") val branchId: Int? = null,
+    @SerialName("service_id") val serviceId: Int? = null,
+    @SerialName("service_name") val serviceName: String? = null,
+    val source: String = "app",
     @SerialName("joined_at") val joinedAt: String? = null,
     @SerialName("booking_id") val bookingId: Int? = null,
     @SerialName("customer_first_name") val customerFirstName: String? = null,
@@ -227,12 +282,16 @@ data class QueueEntry(
     val position: Int = 0,
     @SerialName("people_ahead") val peopleAhead: Int = 0,
     @SerialName("estimated_wait_minutes") val estimatedWaitMinutes: Double = 0.0,
-)
+) {
+    val isWalkIn: Boolean get() = source == "walk_in"
+}
 
 @Serializable
 data class QueueResponse(
     val business: QueueBusiness,
     val entries: List<QueueEntry> = emptyList(),
+    val services: List<BusinessService> = emptyList(),
+    val branches: List<QueueBranchOption> = emptyList(),
 )
 
 @Serializable
@@ -250,16 +309,18 @@ data class QueuePauseResponse(
 )
 
 @Serializable
-data class WalkInsRequest(
-    @SerialName("queue_size") val queueSize: Int,
+data class AddWalkInRequest(
+    @SerialName("branch_id") val branchId: Int,
+    @SerialName("service_id") val serviceId: Int? = null,
+    val name: String? = null,
+    val phone: String? = null,
+    @SerialName("party_size") val partySize: Int = 1,
 )
 
 @Serializable
-data class WalkInsResponse(
-    val id: Int,
-    val name: String? = null,
-    @SerialName("queue_size") val queueSize: Int = 0,
-    @SerialName("avg_wait_minutes") val avgWaitMinutes: Double? = null,
+data class UpdateWalkInRequest(
+    @SerialName("branch_id") val branchId: Int,
+    @SerialName("service_id") val serviceId: Int? = null,
 )
 
 @Serializable

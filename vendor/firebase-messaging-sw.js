@@ -1,123 +1,92 @@
-/* global importScripts, firebase */
-importScripts("https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js");
-importScripts("https://www.gstatic.com/firebasejs/10.14.1/firebase-messaging-compat.js");
+/**
+ * Vendor web push service worker.
+ *
+ * Handles FCM web pushes directly instead of through the Firebase SDK: the
+ * browser can start this worker just to deliver a push, and listeners must be
+ * registered synchronously during that first evaluation or the push is lost.
+ * The page still uses the Firebase SDK to obtain the FCM token.
+ */
 
-const DEFAULT_API_ORIGINS = {
-  local: "http://localhost:4000",
-  staging: "https://queueless-staging.up.railway.app",
-};
-
-function resolveApiOrigin() {
+function parsePush(event) {
+  if (!event.data) return { data: {} };
   try {
-    const host = self.location.hostname;
-    if (host === "localhost" || host === "127.0.0.1") return DEFAULT_API_ORIGINS.local;
+    const payload = event.data.json();
+    const data = payload?.data || {};
+    const notification = payload?.notification || {};
+    return {
+      title: notification.title || data.title || "Queueless Vendor",
+      body: notification.body || data.body || data.message || "You have a new update.",
+      data,
+    };
   } catch {
-    /* ignore */
+    return { title: "Queueless Vendor", body: event.data.text(), data: {} };
   }
-  return DEFAULT_API_ORIGINS.staging;
 }
 
-async function loadFirebaseWebConfig() {
-  if (self.QUEUELESS_FIREBASE_WEB?.apiKey && self.QUEUELESS_FIREBASE_WEB?.appId) {
-    return self.QUEUELESS_FIREBASE_WEB;
+function queueTarget(data = {}) {
+  const businessId = String(data.business_id || "").trim();
+  const kind = String(data.type || "");
+  if (businessId && (kind === "queue_join" || kind === "queue_leave")) {
+    return `#queue-${businessId}`;
   }
-  try {
-    const local = await fetch("./firebase-web-config.js", { cache: "no-store" });
-    if (local.ok) {
-      const text = await local.text();
-      // Evaluate config assignment safely by extracting JSON after first "="
-      const match = text.match(/self\.QUEUELESS_FIREBASE_WEB\s*=\s*(\{[\s\S]*?\}|null)\s*;/);
-      if (match?.[1] && match[1] !== "null") {
-        const cfg = JSON.parse(match[1]);
-        if (cfg?.apiKey) {
-          self.QUEUELESS_FIREBASE_WEB = cfg;
-          return cfg;
-        }
+  return "";
+}
+
+self.addEventListener("install", () => {
+  self.skipWaiting();
+});
+
+self.addEventListener("activate", (event) => {
+  event.waitUntil(self.clients.claim());
+});
+
+self.addEventListener("push", (event) => {
+  const { title, body, data } = parsePush(event);
+  event.waitUntil(
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clients) => {
+      const visible = clients.filter((client) => client.visibilityState === "visible");
+      for (const client of clients) {
+        client.postMessage({
+          type: "queueless-push",
+          title,
+          body,
+          data,
+          shown: visible.length === 0,
+        });
       }
-    }
-  } catch {
-    /* ignore */
-  }
-  try {
-    const response = await fetch(`${resolveApiOrigin()}/api/vendor/push-config`, {
-      headers: { Accept: "application/json" },
-    });
-    const data = await response.json();
-    if (data?.enabled && data.config) {
-      self.QUEUELESS_FIREBASE_WEB = data.config;
-      return data.config;
-    }
-  } catch (error) {
-    console.error("[queueless-sw] config fetch failed", error);
-  }
-  return null;
-}
-
-async function initMessaging() {
-  const config = await loadFirebaseWebConfig();
-  if (!config?.apiKey || !config?.projectId || !config?.appId) return;
-  try {
-    if (!firebase.apps.length) {
-      firebase.initializeApp({
-        apiKey: config.apiKey,
-        authDomain: config.authDomain,
-        projectId: config.projectId,
-        storageBucket: config.storageBucket,
-        messagingSenderId: config.messagingSenderId,
-        appId: config.appId,
-      });
-    }
-    const messaging = firebase.messaging();
-    messaging.onBackgroundMessage((payload) => {
-      const title =
-        payload.notification?.title ||
-        payload.data?.title ||
-        "Queueless Vendor";
-      const body =
-        payload.notification?.body ||
-        payload.data?.body ||
-        "You have a new update.";
-      const data = payload.data || {};
-      self.registration.showNotification(title, {
+      if (visible.length) return undefined;
+      return self.registration.showNotification(title, {
         body,
         icon: "/favicon.svg",
         badge: "/favicon.svg",
-        tag: data.type || "queueless-vendor",
-        renotify: true,
+        tag: data.entry_id ? `${data.type}-${data.entry_id}` : `${data.type || "queueless"}-${Date.now()}`,
         data,
       });
-    });
-  } catch (error) {
-    console.error("[queueless-sw] init failed", error);
-  }
-}
-
-void initMessaging();
+    })
+  );
+});
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   const data = event.notification.data || {};
-  const businessId = String(data.business_id || "").trim();
-  const kind = String(data.type || "");
-  let targetUrl = data.link || data.url || "./";
-  if (businessId && (kind === "queue_join" || kind === "queue_leave")) {
-    targetUrl = `./#queue-${businessId}`;
-  }
+  const hash = queueTarget(data);
+  const targetUrl = new URL(`/${hash}`, self.location.origin).href;
   event.waitUntil(
-    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clients) => {
-      for (const client of clients) {
-        if ("focus" in client) {
-          client.postMessage({
-            type: "queueless-push-click",
-            data,
-          });
-          return client.focus();
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then(async (clients) => {
+      const client = clients.find((c) => new URL(c.url).origin === self.location.origin);
+      if (client) {
+        client.postMessage({ type: "queueless-push-click", data });
+        await client.focus();
+        if (hash && !client.url.endsWith(hash) && "navigate" in client) {
+          try {
+            await client.navigate(targetUrl);
+          } catch {
+            /* uncontrolled clients cannot be navigated; the postMessage handles it */
+          }
         }
+        return undefined;
       }
-      if (self.clients.openWindow) {
-        return self.clients.openWindow(targetUrl);
-      }
-      return undefined;
+      return self.clients.openWindow ? self.clients.openWindow(targetUrl) : undefined;
     })
   );
 });

@@ -1,10 +1,5 @@
 package tech.thewolfgang.queueless.vendor.ui.branches
 
-import android.Manifest
-import android.annotation.SuppressLint
-import android.content.pm.PackageManager
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -15,42 +10,28 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExposedDropdownMenuBox
-import androidx.compose.material3.ExposedDropdownMenuDefaults
-import androidx.compose.material3.MenuAnchorType
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
+import tech.thewolfgang.queueless.vendor.ui.theme.GhostButton
+import androidx.compose.material3.TextField
+import tech.thewolfgang.queueless.vendor.ui.theme.queuelessFieldColors
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.google.android.gms.location.FusedLocationProviderClient
-import com.google.android.gms.location.LocationServices
-import com.google.android.gms.location.Priority
-import com.google.android.gms.tasks.CancellationTokenSource
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.tasks.await
 import tech.thewolfgang.queueless.vendor.data.BusinessProfile
+import tech.thewolfgang.queueless.vendor.ui.components.BranchLocationField
 import tech.thewolfgang.queueless.vendor.ui.components.TopBar
 import tech.thewolfgang.queueless.vendor.ui.components.VendorBottomBar
 import tech.thewolfgang.queueless.vendor.ui.components.VendorTab
@@ -60,6 +41,15 @@ import tech.thewolfgang.queueless.vendor.ui.theme.Navy
 import tech.thewolfgang.queueless.vendor.ui.theme.SurfaceCard
 import tech.thewolfgang.queueless.vendor.ui.theme.TextMuted
 import tech.thewolfgang.queueless.vendor.ui.theme.TextPrimary
+import tech.thewolfgang.queueless.vendor.ui.theme.PageBackground
+import tech.thewolfgang.queueless.vendor.ui.theme.LimeDim
+import tech.thewolfgang.queueless.vendor.ui.theme.LimeInk
+import tech.thewolfgang.queueless.vendor.ui.theme.CardShape
+import tech.thewolfgang.queueless.vendor.ui.theme.FieldShape
+import tech.thewolfgang.queueless.vendor.ui.theme.LimeSoft
+import tech.thewolfgang.queueless.vendor.ui.theme.ButtonShape
+import tech.thewolfgang.queueless.vendor.ui.theme.ChipShape
+import tech.thewolfgang.queueless.vendor.ui.theme.SurfaceMuted
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -73,63 +63,16 @@ fun BranchesScreen(
     onUnauthorized: () -> Unit,
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    val fusedLocationClient = remember {
-        LocationServices.getFusedLocationProviderClient(context)
-    }
-
     LaunchedEffect(state.unauthorized) {
         if (state.unauthorized) onUnauthorized()
     }
 
-    fun hasLocationPermission(): Boolean {
-        val fine = ContextCompat.checkSelfPermission(
-            context,
-            Manifest.permission.ACCESS_FINE_LOCATION,
-        ) == PackageManager.PERMISSION_GRANTED
-        val coarse = ContextCompat.checkSelfPermission(
-            context,
-            Manifest.permission.ACCESS_COARSE_LOCATION,
-        ) == PackageManager.PERMISSION_GRANTED
-        return fine || coarse
-    }
-
-    fun fetchCurrentLocation() {
-        scope.launch {
-            viewModel.beginLocating()
-            readDeviceLocation(fusedLocationClient)?.let { (lat, lon) ->
-                viewModel.applyCurrentLocation(lat, lon)
-            } ?: viewModel.onLocationUnavailable()
-        }
-    }
-
-    val permissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions(),
-    ) { grants ->
-        val granted = grants[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
-            grants[Manifest.permission.ACCESS_COARSE_LOCATION] == true
-        if (granted) {
-            fetchCurrentLocation()
-        } else {
-            viewModel.onLocationPermissionDenied()
-        }
-    }
-
-    val fieldColors = OutlinedTextFieldDefaults.colors(
-        focusedTextColor = TextPrimary,
-        unfocusedTextColor = TextPrimary,
-        focusedBorderColor = Lime,
-        unfocusedBorderColor = TextMuted.copy(alpha = 0.4f),
-        focusedLabelColor = Lime,
-        unfocusedLabelColor = TextMuted,
-        cursorColor = Lime,
-    )
+    val fieldColors = queuelessFieldColors()
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(Navy),
+            .background(PageBackground),
     ) {
         Column(
             modifier = Modifier
@@ -146,7 +89,7 @@ fun BranchesScreen(
                         verticalArrangement = Arrangement.Center,
                         horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
-                        CircularProgressIndicator(color = Lime)
+                        CircularProgressIndicator(color = LimeDim)
                         Text("Loading branches…", color = TextMuted, modifier = Modifier.padding(top = 12.dp))
                     }
                 }
@@ -175,7 +118,7 @@ fun BranchesScreen(
                             Text(text = state.error ?: "", color = Danger)
                         }
                         if (!state.savedMessage.isNullOrBlank()) {
-                            Text(text = state.savedMessage ?: "", color = Lime)
+                            Text(text = state.savedMessage ?: "", color = LimeInk)
                         }
 
                         if (state.branches.isEmpty()) {
@@ -198,7 +141,8 @@ fun BranchesScreen(
                             modifier = Modifier.padding(top = 8.dp),
                         )
 
-                        OutlinedTextField(
+                        TextField(
+                            shape = FieldShape,
                             value = state.name,
                             onValueChange = viewModel::onNameChange,
                             label = { Text("Branch name") },
@@ -207,58 +151,14 @@ fun BranchesScreen(
                             colors = fieldColors,
                         )
 
-                        ExposedDropdownMenuBox(
-                            expanded = state.locationMenuExpanded,
-                            onExpandedChange = { /* driven by suggestions */ },
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            OutlinedTextField(
-                                value = state.location,
-                                onValueChange = viewModel::onLocationChange,
-                                label = { Text("Location") },
-                                placeholder = { Text("Start typing a Kenya place…") },
-                                singleLine = true,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .menuAnchor(MenuAnchorType.PrimaryEditable),
-                                colors = fieldColors,
-                            )
-                            ExposedDropdownMenu(
-                                expanded = state.locationMenuExpanded && state.locationSuggestions.isNotEmpty(),
-                                onDismissRequest = viewModel::dismissLocationSuggestions,
-                            ) {
-                                state.locationSuggestions.forEach { place ->
-                                    DropdownMenuItem(
-                                        text = { Text(place.label, color = TextPrimary) },
-                                        onClick = { viewModel.onPlaceSelected(place) },
-                                        contentPadding = ExposedDropdownMenuDefaults.ItemContentPadding,
-                                    )
-                                }
-                            }
-                        }
+                        BranchLocationField(
+                            state = state.location,
+                            controller = viewModel.location,
+                            enabled = !state.saving,
+                        )
 
-                        OutlinedButton(
-                            onClick = {
-                                if (!hasLocationPermission()) {
-                                    permissionLauncher.launch(
-                                        arrayOf(
-                                            Manifest.permission.ACCESS_FINE_LOCATION,
-                                            Manifest.permission.ACCESS_COARSE_LOCATION,
-                                        ),
-                                    )
-                                } else {
-                                    fetchCurrentLocation()
-                                }
-                            },
-                            enabled = !state.locating && !state.saving,
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Text(
-                                if (state.locating) "Finding location…" else "Use my current location",
-                            )
-                        }
-
-                        OutlinedTextField(
+                        TextField(
+                            shape = FieldShape,
                             value = state.landmark,
                             onValueChange = viewModel::onLandmarkChange,
                             label = { Text("Landmark (optional)") },
@@ -268,7 +168,8 @@ fun BranchesScreen(
                             colors = fieldColors,
                         )
 
-                        OutlinedTextField(
+                        TextField(
+                            shape = FieldShape,
                             value = state.phone,
                             onValueChange = viewModel::onPhoneChange,
                             label = { Text("Phone") },
@@ -277,11 +178,14 @@ fun BranchesScreen(
                             colors = fieldColors,
                         )
                         Row(
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(SurfaceCard, CardShape)
+                                .padding(horizontal = 16.dp, vertical = 12.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Text("Branch active", color = TextPrimary)
+                            Text("Branch active", color = TextPrimary, fontWeight = FontWeight.Medium)
                             Switch(
                                 checked = state.isActive,
                                 onCheckedChange = viewModel::onActiveChange,
@@ -299,9 +203,10 @@ fun BranchesScreen(
                             modifier = Modifier.fillMaxWidth(),
                         ) {
                             if (state.editingId != null) {
-                                OutlinedButton(
+                                GhostButton(
                                     onClick = viewModel::startCreate,
                                     enabled = !state.saving,
+                                    modifier = Modifier.height(52.dp),
                                 ) {
                                     Text("Cancel")
                                 }
@@ -313,7 +218,8 @@ fun BranchesScreen(
                                     containerColor = Lime,
                                     contentColor = Navy,
                                 ),
-                                modifier = Modifier.weight(1f),
+                                shape = ButtonShape,
+                                modifier = Modifier.weight(1f).height(52.dp),
                             ) {
                                 Text(
                                     if (state.saving) {
@@ -342,23 +248,6 @@ fun BranchesScreen(
     }
 }
 
-@SuppressLint("MissingPermission")
-private suspend fun readDeviceLocation(
-    client: FusedLocationProviderClient,
-): Pair<Double, Double>? {
-    val cancellation = CancellationTokenSource()
-    return try {
-        val location = client
-            .getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, cancellation.token)
-            .await()
-        if (location != null) location.latitude to location.longitude else null
-    } catch (_: Exception) {
-        null
-    } finally {
-        cancellation.cancel()
-    }
-}
-
 @Composable
 private fun BranchCard(
     branch: BusinessProfile,
@@ -368,7 +257,7 @@ private fun BranchCard(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(SurfaceCard, RoundedCornerShape(14.dp))
+            .background(SurfaceCard, CardShape)
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
@@ -388,13 +277,18 @@ private fun BranchCard(
         )
         Text(
             text = if (branch.isActive) "Active" else "Inactive",
-            color = if (branch.isActive) Lime else TextMuted,
+            color = if (branch.isActive) LimeInk else TextMuted,
+            fontWeight = FontWeight.SemiBold,
+            fontSize = 12.sp,
+            modifier = Modifier
+                .background(if (branch.isActive) LimeSoft else SurfaceMuted, ChipShape)
+                .padding(horizontal = 10.dp, vertical = 3.dp),
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = onEdit) {
+            GhostButton(onClick = onEdit) {
                 Text("Edit")
             }
-            OutlinedButton(onClick = onHours) {
+            GhostButton(onClick = onHours) {
                 Text("Settings")
             }
         }

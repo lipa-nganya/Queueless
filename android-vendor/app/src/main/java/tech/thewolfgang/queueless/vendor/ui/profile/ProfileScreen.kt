@@ -22,8 +22,8 @@ import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.TextField
+import tech.thewolfgang.queueless.vendor.ui.theme.queuelessFieldColors
 import androidx.compose.material3.ScrollableTabRow
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
@@ -33,14 +33,15 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TimePicker
 import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -66,6 +67,14 @@ import tech.thewolfgang.queueless.vendor.ui.theme.Navy
 import tech.thewolfgang.queueless.vendor.ui.theme.SurfaceCard
 import tech.thewolfgang.queueless.vendor.ui.theme.TextMuted
 import tech.thewolfgang.queueless.vendor.ui.theme.TextPrimary
+import tech.thewolfgang.queueless.vendor.ui.theme.PageBackground
+import tech.thewolfgang.queueless.vendor.ui.theme.LimeDim
+import tech.thewolfgang.queueless.vendor.ui.theme.LimeInk
+import tech.thewolfgang.queueless.vendor.ui.theme.CardShape
+import tech.thewolfgang.queueless.vendor.ui.theme.ButtonShape
+import tech.thewolfgang.queueless.vendor.ui.theme.FieldShape
+import tech.thewolfgang.queueless.vendor.ui.theme.ChipShape
+import tech.thewolfgang.queueless.vendor.ui.theme.SurfaceMuted
 
 private data class TimePickerTarget(val day: String, val field: String)
 
@@ -96,7 +105,7 @@ fun ProfileScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(Navy),
+            .background(PageBackground),
     ) {
         Column(
             modifier = Modifier
@@ -113,7 +122,7 @@ fun ProfileScreen(
                         verticalArrangement = Arrangement.Center,
                         horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
-                        CircularProgressIndicator(color = Lime)
+                        CircularProgressIndicator(color = LimeDim)
                         Text("Loading settings…", color = TextMuted, modifier = Modifier.padding(top = 12.dp))
                     }
                 }
@@ -141,7 +150,7 @@ fun ProfileScreen(
                         BranchSwitcherCard(
                             branchName = state.branchName.ifBlank { "Untitled branch" },
                             meta = state.branchMeta,
-                            branches = state.siblingBranches,
+                            allBranches = state.siblingBranches,
                             selectedId = state.branchId,
                             onSelect = { id ->
                                 ProfileTabRetainer.index = selectedTab
@@ -151,13 +160,14 @@ fun ProfileScreen(
 
                         ScrollableTabRow(
                             selectedTabIndex = selectedTab,
-                            containerColor = SurfaceCard,
+                            containerColor = Color.Transparent,
                             contentColor = TextPrimary,
                             edgePadding = 8.dp,
+                            indicator = {},
                             divider = {},
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .background(SurfaceCard, RoundedCornerShape(14.dp)),
+                                .background(SurfaceCard, CardShape),
                         ) {
                             profileTabs.forEachIndexed { index, title ->
                                 Tab(
@@ -179,10 +189,11 @@ fun ProfileScreen(
                                         )
                                     },
                                     modifier = Modifier
-                                        .padding(vertical = 4.dp)
+                                        .padding(vertical = 6.dp)
+                                        .clip(FieldShape)
                                         .background(
                                             if (selectedTab == index) Lime else Color.Transparent,
-                                            RoundedCornerShape(10.dp),
+                                            FieldShape,
                                         ),
                                 )
                             }
@@ -213,7 +224,7 @@ fun ProfileScreen(
                         if (!state.savedMessage.isNullOrBlank()) {
                             Text(
                                 text = state.savedMessage ?: "",
-                                color = Lime,
+                                color = LimeInk,
                                 modifier = Modifier.liveStatus(),
                             )
                         }
@@ -229,7 +240,7 @@ fun ProfileScreen(
                                 contentColor = Navy,
                                 disabledContainerColor = Lime.copy(alpha = 0.5f),
                             ),
-                            shape = RoundedCornerShape(10.dp),
+                            shape = ButtonShape,
                         ) {
                             if (state.saving) {
                                 CircularProgressIndicator(
@@ -287,7 +298,8 @@ private fun DetailsTab(
     viewModel: ProfileViewModel,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        OutlinedTextField(
+        TextField(
+            shape = FieldShape,
             value = state.name,
             onValueChange = viewModel::onNameChange,
             modifier = Modifier.fillMaxWidth(),
@@ -299,7 +311,7 @@ private fun DetailsTab(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(SurfaceCard, RoundedCornerShape(14.dp))
+                .background(SurfaceCard, CardShape)
                 .padding(16.dp),
         ) {
             Row(
@@ -327,7 +339,7 @@ private fun DetailsTab(
                         checkedThumbColor = Navy,
                         checkedTrackColor = Lime,
                         uncheckedThumbColor = TextMuted,
-                        uncheckedTrackColor = SurfaceCard,
+                        uncheckedTrackColor = SurfaceMuted,
                     ),
                 )
             }
@@ -385,7 +397,8 @@ private fun AccessibilityTab(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(SurfaceCard, RoundedCornerShape(14.dp))
+                    .clip(CardShape)
+                    .background(SurfaceCard)
                     .clickable {
                         viewModel.onAccessibilityToggle(option.id, !checked)
                     }
@@ -447,7 +460,7 @@ private fun DayHoursRow(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(SurfaceCard, RoundedCornerShape(14.dp))
+            .background(SurfaceCard, CardShape)
             .padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
@@ -460,14 +473,14 @@ private fun DayHoursRow(
                 Text(text = label, color = TextPrimary, fontWeight = FontWeight.SemiBold)
                 Text(
                     text = if (day.open) "Open" else "Closed",
-                    color = if (day.open) Lime else TextMuted,
+                    color = if (day.open) LimeInk else TextMuted,
                     fontSize = 13.sp,
                 )
             }
             Button(
                 onClick = { onOpenChange(!day.open) },
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = if (day.open) Lime else Navy.copy(alpha = 0.35f),
+                    containerColor = if (day.open) Lime else SurfaceMuted,
                     contentColor = if (day.open) Navy else TextMuted,
                 ),
                 shape = RoundedCornerShape(999.dp),
@@ -520,9 +533,10 @@ private fun TimeChip(
 ) {
     Column(
         modifier = modifier
+            .clip(ChipShape)
             .background(
-                if (enabled) Navy.copy(alpha = 0.35f) else Navy.copy(alpha = 0.15f),
-                RoundedCornerShape(10.dp),
+                if (enabled) PageBackground else SurfaceMuted.copy(alpha = 0.6f),
+                ChipShape,
             )
             .clickable(enabled = enabled, onClick = onClick)
             .semantics(mergeDescendants = true) {
@@ -584,14 +598,4 @@ private fun TimePickerDialog(
 }
 
 @Composable
-private fun fieldColors() = OutlinedTextFieldDefaults.colors(
-    focusedBorderColor = Lime,
-    unfocusedBorderColor = TextMuted.copy(alpha = 0.4f),
-    focusedLabelColor = Lime,
-    unfocusedLabelColor = TextMuted,
-    cursorColor = Lime,
-    focusedTextColor = TextPrimary,
-    unfocusedTextColor = TextPrimary,
-    focusedPlaceholderColor = TextMuted,
-    unfocusedPlaceholderColor = TextMuted,
-)
+private fun fieldColors() = queuelessFieldColors()

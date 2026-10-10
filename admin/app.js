@@ -479,7 +479,7 @@ function formatTrialEndsAt(value) {
 }
 
 function appVersion() {
-  return String(window.QUEUELESS_ADMIN_APP_VERSION || "1.2.1").trim() || "1.2.1";
+  return String(window.QUEUELESS_ADMIN_APP_VERSION || "1.3.0").trim() || "1.3.0";
 }
 
 function appVersionHtml({ onDark = false } = {}) {
@@ -490,12 +490,15 @@ function renderLogin() {
   app.innerHTML = `
     <div class="login-shell">
       <form class="login-card" id="login-form">
-        <div class="auth-brand">
-          <p class="brand">Queue<span>less</span></p>
-          <span class="auth-badge" aria-hidden="true">Admin</span>
+        <div class="auth-header">
+          <div class="auth-brand">
+            <p class="brand">Queue<span>less</span></p>
+            <span class="auth-badge" aria-hidden="true">Admin</span>
+          </div>
+          <h1 class="auth-title">Sign in</h1>
+          <p class="auth-lead">Manage business groups, vendors, and live queues.</p>
         </div>
-        <h1 class="auth-title">Sign in</h1>
-        <p class="auth-lead">Manage business groups, vendors, and live queues.</p>
+        <div class="auth-body">
         <div class="field">
           <label for="username">Username or email</label>
           <input id="username" name="username" autocomplete="username" value="admin" required />
@@ -507,6 +510,7 @@ function renderLogin() {
         <button class="btn btn-primary btn-block auth-submit" type="submit">Sign in</button>
         <p class="message" id="login-message" role="status"></p>
         ${appVersionHtml()}
+        </div>
       </form>
     </div>
   `;
@@ -539,22 +543,37 @@ function renderLogin() {
   });
 }
 
-function navIcon(name) {
-  const icons = {
-    dashboard: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>`,
-    customers: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="9" cy="8" r="3.2"/><path d="M2.8 19c1.2-3 3.3-4.5 6.2-4.5S14 16 15.2 19"/><circle cx="17" cy="9" r="2.4"/><path d="M16.2 19c.5-1.6 1.6-2.7 3.5-3.2"/></svg>`,
-    groups: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 8h16M4 12h16M4 16h10"/></svg>`,
-    businesses: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M3 21h18"/><path d="M5 21V7l7-4 7 4v14"/><path d="M9 21v-6h6v6"/></svg>`,
-    vendors: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8 11h8M8 15h5"/><circle cx="12" cy="8" r="1.4"/></svg>`,
-    admins: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 3l8 4v5c0 5-3.4 8.4-8 9-4.6-.6-8-4-8-9V7l8-4Z"/><path d="M9.5 12.2l1.8 1.8 3.4-3.6"/></svg>`,
-    settings: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 3v2.2M12 18.8V21M4.9 6.5l1.6 1.6M17.5 15.9l1.6 1.6M3 12h2.2M18.8 12H21M4.9 17.5l1.6-1.6M17.5 8.1l1.6-1.6"/></svg>`,
-    queues: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 7h16M4 12h12M4 17h8"/></svg>`,
-    waiting: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 7v5l3 2"/></svg>`,
-  };
-  return icons[name] || icons.dashboard;
+// Every symbol name used here must also be listed in the icon_names subset in index.html.
+function materialIcon(name) {
+  return `<span class="material-symbols-rounded" aria-hidden="true">${name}</span>`;
 }
 
-function shell(active, content) {
+function navIcon(name) {
+  const icons = {
+    dashboard: "dashboard",
+    customers: "group",
+    groups: "category",
+    businesses: "storefront",
+    vendors: "badge",
+    admins: "admin_panel_settings",
+    settings: "settings",
+    queues: "format_list_numbered",
+    waiting: "hourglass_top",
+  };
+  return materialIcon(icons[name] || icons.dashboard);
+}
+
+const SHELL_PAGE_TITLES = {
+  dashboard: "Dashboard",
+  customers: "Customers",
+  groups: "Business groups",
+  businesses: "Businesses",
+  vendors: "Vendors",
+  admins: "Admins",
+  settings: "Settings",
+};
+
+function shell(active, content, { crumb = "" } = {}) {
   const item = (view, label, icon) => `
     <button type="button" data-view="${view}" class="nav-item${active === view ? " active" : ""}"${
       active === view ? ' aria-current="page"' : ""
@@ -563,14 +582,23 @@ function shell(active, content) {
       <span>${label}</span>
     </button>
   `;
+  const sectionTitle = SHELL_PAGE_TITLES[active] || "Dashboard";
+  const pageTitle = crumb || sectionTitle;
+  const crumbs = crumb
+    ? `<li><button type="button" data-view="${active}">${escapeHtml(sectionTitle)}</button></li>
+       <li aria-current="page">${escapeHtml(crumb)}</li>`
+    : `<li aria-current="page">${escapeHtml(sectionTitle)}</li>`;
 
   return `
     <div class="shell">
-      <aside class="sidebar">
+      <aside class="sidebar" id="sidebar" aria-label="Main navigation">
         <div class="sidebar-brand">
+          <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="5.5" stroke-linecap="round"><circle cx="15.5" cy="15.5" r="9"/><path d="M19 19 25 25"/></g></svg>
           <div class="brand">Queue<span>less</span></div>
-          ${appVersionHtml()}
+          <span class="brand-tag">Admin</span>
+          <button type="button" class="sidebar-close" id="sidebar-close" aria-label="Close menu">${materialIcon("close")}</button>
         </div>
+        <hr class="sidebar-divider" />
         <p class="nav-section">Main menu</p>
         <nav class="nav" aria-label="Admin">
           ${item("dashboard", "Dashboard", "dashboard")}
@@ -585,10 +613,34 @@ function shell(active, content) {
           ${item("settings", "Settings", "settings")}
         </nav>
         <div class="sidebar-foot">
-          <button class="btn btn-secondary btn-block" type="button" id="logout-btn">Sign out</button>
+          <button class="btn btn-primary btn-block" type="button" id="logout-btn">${materialIcon("logout")}Sign out</button>
+          ${appVersionHtml({ onDark: true })}
         </div>
       </aside>
-      <main class="main" id="main">${content}</main>
+      <div class="sidebar-backdrop" id="sidebar-backdrop" hidden></div>
+      <div class="main-wrap">
+        <header class="navbar">
+          <div class="navbar-heading">
+            <nav class="breadcrumbs" aria-label="Breadcrumb">
+              <ol>
+                <li><button type="button" data-view="dashboard" aria-label="Dashboard">${materialIcon("home")}</button></li>
+                ${crumbs}
+              </ol>
+            </nav>
+            <h1 class="navbar-title">${escapeHtml(pageTitle)}</h1>
+          </div>
+          <div class="navbar-actions">
+            <button type="button" class="navbar-icon-btn" data-view="settings" aria-label="Settings">${materialIcon("settings")}</button>
+            <button type="button" class="navbar-icon-btn" id="navbar-logout" aria-label="Sign out">${materialIcon("logout")}</button>
+            <button type="button" class="navbar-icon-btn navbar-menu" id="sidebar-toggle" aria-label="Open menu" aria-controls="sidebar" aria-expanded="false">${materialIcon("menu")}</button>
+          </div>
+        </header>
+        <main class="main" id="main">${content}</main>
+        <footer class="footer">
+          <span>© ${new Date().getFullYear()} Queueless Kenya</span>
+          <span>Admin v${escapeHtml(appVersion())}</span>
+        </footer>
+      </div>
     </div>
   `;
 }
@@ -602,11 +654,25 @@ function bindShellNav() {
     });
   });
 
-  document.getElementById("logout-btn")?.addEventListener("click", () => {
+  const signOut = () => {
     clearToken();
     location.hash = "";
     render();
-  });
+  };
+  document.getElementById("logout-btn")?.addEventListener("click", signOut);
+  document.getElementById("navbar-logout")?.addEventListener("click", signOut);
+
+  const shellEl = document.querySelector(".shell");
+  const toggle = document.getElementById("sidebar-toggle");
+  const backdrop = document.getElementById("sidebar-backdrop");
+  const setSidebarOpen = (open) => {
+    shellEl?.classList.toggle("sidebar-open", open);
+    if (backdrop) backdrop.hidden = !open;
+    toggle?.setAttribute("aria-expanded", String(open));
+  };
+  toggle?.addEventListener("click", () => setSidebarOpen(!shellEl?.classList.contains("sidebar-open")));
+  backdrop?.addEventListener("click", () => setSidebarOpen(false));
+  document.getElementById("sidebar-close")?.addEventListener("click", () => setSidebarOpen(false));
 }
 
 function formatWaitMinutes(minutes) {
@@ -683,20 +749,27 @@ function topQueuesListHtml(queues) {
   `;
 }
 
+const METRIC_TONES = { queues: "dark", waiting: "primary", customers: "success", businesses: "info" };
+
 function metricCardHtml({ label, value, sub = "", icon, href }) {
+  const tone = METRIC_TONES[icon] || "dark";
   return `
-    <article class="metric-card">
+    <article class="metric-card metric-tone-${tone}">
       <div class="metric-card-top">
         <span class="metric-icon" aria-hidden="true">${navIcon(icon)}</span>
+        <div class="metric-copy">
+          <p class="metric-label">${escapeHtml(label)}</p>
+          <p class="metric-value">${escapeHtml(String(value))}</p>
+        </div>
       </div>
-      <p class="metric-label">${escapeHtml(label)}</p>
-      <p class="metric-value">${escapeHtml(String(value))}</p>
-      ${sub ? `<p class="metric-sub">${escapeHtml(sub)}</p>` : ""}
-      ${
-        href
-          ? `<button type="button" class="metric-link" data-view="${escapeHtml(href)}">See details →</button>`
-          : ""
-      }
+      <div class="metric-foot">
+        ${sub ? `<p class="metric-sub">${escapeHtml(sub)}</p>` : `<p class="metric-sub">Live now</p>`}
+        ${
+          href
+            ? `<button type="button" class="metric-link" data-view="${escapeHtml(href)}">Details${materialIcon("arrow_forward")}</button>`
+            : ""
+        }
+      </div>
     </article>
   `;
 }
@@ -957,7 +1030,7 @@ async function renderGroups() {
       <div class="edit-drawer">
         <div class="edit-drawer-header">
           <h3>Edit business group</h3>
-          <button type="button" class="btn-icon" id="group-edit-close" aria-label="Close">✕</button>
+          <button type="button" class="btn-icon" id="group-edit-close" aria-label="Close">${materialIcon("close")}</button>
         </div>
         <form id="group-edit-form">
           <div class="field">
@@ -1229,7 +1302,7 @@ async function renderEditBusiness(businessId) {
     `
       <div class="main-header">
         <div>
-          <button type="button" class="btn btn-secondary btn-sm" id="back-to-businesses">← Back to businesses</button>
+          <button type="button" class="btn btn-secondary btn-sm" id="back-to-businesses">${materialIcon("arrow_back")}Back to businesses</button>
           <h2 style="margin-top:0.85rem">Edit business</h2>
           <p id="edit-business-subtitle">Update brand details and manage branches.</p>
         </div>
@@ -1397,7 +1470,8 @@ async function renderEditBusiness(businessId) {
           </div>
         </form>
       </section>
-    `
+    `,
+    { crumb: "Edit business" }
   );
   bindShellNav();
 
@@ -1957,6 +2031,41 @@ async function publicApi(path, options = {}) {
   return data;
 }
 
+function awaitingVendorSetup(vendor) {
+  return Boolean(vendor.self_registered && !vendor.businesses?.length);
+}
+
+function vendorBusinessesCell(vendor) {
+  if (!vendor.businesses?.length) {
+    return awaitingVendorSetup(vendor)
+      ? `<span class="muted">Hasn't added a business yet</span>`
+      : `<span class="muted">None assigned</span>`;
+  }
+  if (vendor.status === "active") {
+    return `<div class="biz-chip-row">${vendor.businesses
+      .map((b) => `<span class="group-chip">${escapeHtml(b.name)}</span>`)
+      .join("")}</div>`;
+  }
+  return vendor.businesses
+    .map((b) => {
+      const branches = (b.branches || [])
+        .map((br) => [br.name, br.location].filter(Boolean).join(" · "))
+        .filter(Boolean);
+      return `
+        <div class="proposed-biz">
+          <span class="cell-title">${escapeHtml(b.name)}</span>
+          <span class="cell-sub">${escapeHtml(b.business_group_name || "No category")}${
+            b.is_active ? "" : " · Not published yet"
+          }</span>
+          ${branches
+            .map((line) => `<span class="cell-sub proposed-branch">${escapeHtml(line)}</span>`)
+            .join("")}
+        </div>
+      `;
+    })
+    .join("");
+}
+
 async function renderVendors() {
   app.innerHTML = shell(
     "vendors",
@@ -2016,7 +2125,7 @@ async function renderVendors() {
         <div class="edit-drawer">
           <div class="edit-drawer-header">
             <h3>Edit vendor</h3>
-            <button type="button" class="btn-icon" id="vendor-edit-close" aria-label="Close">✕</button>
+            <button type="button" class="btn-icon" id="vendor-edit-close" aria-label="Close">${materialIcon("close")}</button>
           </div>
           <form id="vendor-edit-form">
             <div class="field">
@@ -2382,19 +2491,10 @@ async function renderVendors() {
                     <div class="cell-text">
                       <span class="cell-title">${escapeHtml(vendor.username)}</span>
                       <span class="cell-sub">${escapeHtml(vendor.phone || vendor.email || "No phone")}</span>
+                      ${vendor.self_registered ? `<span class="self-signup-tag">Self sign-up</span>` : ""}
                     </div>
                   </td>
-                  <td>
-                    <div class="biz-chip-row">
-                      ${
-                        vendor.businesses?.length
-                          ? vendor.businesses
-                              .map((b) => `<span class="group-chip">${escapeHtml(b.name)}</span>`)
-                              .join("")
-                          : `<span class="muted">None assigned</span>`
-                      }
-                    </div>
-                  </td>
+                  <td>${vendorBusinessesCell(vendor)}</td>
                   <td>
                     <span class="status-pill status-${escapeHtml(vendor.status || "awaiting_pin")}">${escapeHtml(
                       vendorStatusLabel(vendor.status)
@@ -2421,11 +2521,13 @@ async function renderVendors() {
                     ${
                       vendor.status !== "active"
                         ? `<button class="btn btn-primary btn-sm vendor-activate-btn" data-id="${vendor.id}" ${
-                            vendor.phone ? "" : "disabled"
+                            vendor.phone && !awaitingVendorSetup(vendor) ? "" : "disabled"
                           } title="${
-                            vendor.phone
-                              ? "Activate account and notify"
-                              : "Add a phone number first"
+                            !vendor.phone
+                              ? "Add a phone number first"
+                              : awaitingVendorSetup(vendor)
+                                ? "Waiting for the vendor to add their business"
+                                : "Activate account, publish their business and notify"
                           }">Activate</button>`
                         : ""
                     }
@@ -2681,7 +2783,7 @@ async function renderAdmins() {
                 <tr>
                   <td>${escapeHtml(admin.username)}</td>
                   <td>${escapeHtml(admin.email || "—")}</td>
-                  <td><span class="status-pill status-${escapeHtml(admin.status)}">${escapeHtml(admin.status)}</span></td>
+                  <td><span class="status-pill status-${escapeHtml(admin.status)}">${escapeHtml(String(admin.status || "").replace(/_/g, " "))}</span></td>
                   <td class="muted">${escapeHtml(admin.invited_by_username || "—")}</td>
                   <td>
                     ${
@@ -2767,12 +2869,15 @@ async function renderAcceptInvite(view) {
   app.innerHTML = `
     <div class="login-shell">
       <form class="login-card" id="accept-form">
-        <div class="auth-brand">
-          <p class="brand">Queue<span>less</span></p>
-          <span class="auth-badge" aria-hidden="true">Admin</span>
+        <div class="auth-header">
+          <div class="auth-brand">
+            <p class="brand">Queue<span>less</span></p>
+            <span class="auth-badge" aria-hidden="true">Admin</span>
+          </div>
+          <h1 class="auth-title">Accept invite</h1>
+          <p class="auth-lead" id="accept-lead">Checking invite…</p>
         </div>
-        <h1 class="auth-title">Accept invite</h1>
-        <p class="auth-lead" id="accept-lead">Checking invite…</p>
+        <div class="auth-body">
         <div id="accept-fields" class="hidden">
           <div class="field">
             <label for="accept-email">Email</label>
@@ -2795,6 +2900,7 @@ async function renderAcceptInvite(view) {
         <p class="message" id="accept-message" role="status"></p>
         <button class="btn btn-secondary btn-block auth-secondary hidden" type="button" id="to-login">Go to sign in</button>
         ${appVersionHtml()}
+        </div>
       </form>
     </div>
   `;
@@ -2948,6 +3054,21 @@ async function renderSettings() {
         </p>
         <p class="setting-desc ${alertsOn ? "hidden" : ""}" id="vendor-texts-note">
           No texts are sent while Queue alerts is off.
+        </p>
+        <p class="setting-desc">
+          HQ numbers (set on the server):
+          ${
+            settings.hq_alert_phones?.length
+              ? settings.hq_alert_phones
+                  .map(
+                    (row) =>
+                      `+${escapeHtml(row.phone)}${
+                        row.is_vendor ? " (a vendor's phone, so skipped while this is off)" : ""
+                      }`
+                  )
+                  .join(", ")
+              : "none"
+          }
         </p>
       </div>
       <label class="switch" title="Text vendors about queue joins and leaves">
