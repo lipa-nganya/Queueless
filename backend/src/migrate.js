@@ -305,20 +305,12 @@ export async function migrate() {
     ALTER TABLE business_services
       DROP CONSTRAINT IF EXISTS business_services_business_id_name_key;
 
-    UPDATE business_services bs
-    SET branch_id = (
-      SELECT bb.id
-      FROM business_branches bb
-      WHERE bb.business_id = bs.business_id
-      ORDER BY bb.id ASC
-      LIMIT 1
-    )
-    WHERE bs.branch_id IS NULL;
-
+    -- Only legacy rows (branch_id IS NULL) are cloned; services a vendor added
+    -- to one branch must stay on that branch across restarts.
     INSERT INTO business_services (
       business_id, branch_id, name, duration_minutes, description, is_active, created_at
     )
-    SELECT
+    SELECT DISTINCT ON (bb.id, bs.name)
       bs.business_id,
       bb.id,
       bs.name,
@@ -328,14 +320,34 @@ export async function migrate() {
       NOW()
     FROM business_services bs
     INNER JOIN business_branches bb ON bb.business_id = bs.business_id
-    WHERE bs.branch_id IS NOT NULL
-      AND bb.id <> bs.branch_id
+    WHERE bs.branch_id IS NULL
+      AND bb.id <> (
+        SELECT MIN(first.id) FROM business_branches first WHERE first.business_id = bs.business_id
+      )
       AND NOT EXISTS (
         SELECT 1
         FROM business_services existing
         WHERE existing.branch_id = bb.id
           AND existing.name = bs.name
+      )
+    ORDER BY bb.id, bs.name, bs.id;
+
+    DELETE FROM business_services bs
+    WHERE bs.branch_id IS NULL
+      AND EXISTS (
+        SELECT 1
+        FROM business_services existing
+        WHERE existing.name = bs.name
+          AND existing.branch_id = (
+            SELECT MIN(first.id) FROM business_branches first WHERE first.business_id = bs.business_id
+          )
       );
+
+    UPDATE business_services bs
+    SET branch_id = (
+      SELECT MIN(first.id) FROM business_branches first WHERE first.business_id = bs.business_id
+    )
+    WHERE bs.branch_id IS NULL;
 
     DELETE FROM business_services WHERE branch_id IS NULL;
 
