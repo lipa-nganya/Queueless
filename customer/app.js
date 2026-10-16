@@ -810,7 +810,7 @@ function tabbar(active) {
     { id: "queue", label: "Queue", icon: "queue" },
     getToken()
       ? { id: "profile", label: "Profile", icon: "profile" }
-      : { id: "login", label: "Log in", icon: "profile" },
+      : { id: "login", label: "Sign in", icon: "profile", labeled: true },
   ];
   return `
     <nav class="tabbar" aria-label="Main">
@@ -818,7 +818,7 @@ function tabbar(active) {
         .map(
           (tab) => `
             <button
-              class="tab ${active === tab.id ? "active" : ""}"
+              class="tab ${active === tab.id ? "active" : ""}${tab.labeled ? " tab-labeled" : ""}"
               data-tab="${tab.id}"
               type="button"
               ${active === tab.id ? 'aria-current="page"' : ""}
@@ -2050,11 +2050,19 @@ async function renderBusinessDetail(id) {
   const alreadyInQueue = Boolean(myEntry);
   const queuePaused = Boolean(item.queue_paused);
 
-  const queueBadgeColor = item.queueSize <= 3 ? "#007a57" : item.queueSize <= 8 ? "var(--lime-ink)" : "var(--danger)";
-  const queueLabel = item.queueSize === 0 ? "No queue" : item.queueSize === 1 ? "1 person" : `${item.queueSize} people`;
+  const detailBranches = itemBranches(item);
+  const detailBranch = detailBranches.length ? defaultJoinBranch(item) : null;
+  item.detailBranchId = detailBranch?.id ?? null;
+  const detailServices = servicesForBranch(item, detailBranch);
+  const shownQueueSize =
+    detailBranches.length > 1 ? Number(detailBranch?.queue_size) || 0 : item.queueSize;
+  const branchClosed =
+    detailBranches.length > 1 ? Boolean(detailBranch?.queue_paused) : queuePaused;
+  const queueBadgeColor = shownQueueSize <= 3 ? "#007a57" : shownQueueSize <= 8 ? "var(--lime-ink)" : "var(--danger)";
+  const queueLabel = shownQueueSize === 0 ? "No queue" : shownQueueSize === 1 ? "1 person" : `${shownQueueSize} people`;
   const joinLabel = alreadyInQueue
     ? `View my place · #${myEntry.position}`
-    : queuePaused
+    : branchClosed
       ? "On a break"
       : "Join Queue";
 
@@ -2080,7 +2088,11 @@ async function renderBusinessDetail(id) {
                 .map((branch) => {
                   const summary = branch.awaySummary;
                   return `
-                    <div class="detail-branch-card${branch.queue_paused ? " is-paused" : ""}">
+                    <div role="button" tabindex="0" class="detail-branch-card${branch.queue_paused ? " is-paused" : ""}${
+                      detailBranch && Number(detailBranch.id) === Number(branch.id) ? " is-selected" : ""
+                    }" data-branch-id="${branch.id}" aria-pressed="${
+                      detailBranch && Number(detailBranch.id) === Number(branch.id) ? "true" : "false"
+                    }">
                       <div class="detail-branch-name">${escapeHtml(branch.name || "Branch")}${
                         branch.queue_paused ? `<span class="branch-away-closed">Closed</span>` : ""
                       }</div>
@@ -2151,7 +2163,7 @@ async function renderBusinessDetail(id) {
 
         <div class="queue-stats">
           <div class="queue-stat">
-            <div class="queue-stat-value" style="color:${queueBadgeColor}">${queueLabel}</div>
+            <div class="queue-stat-value" id="detail-queue-value" style="color:${queueBadgeColor}">${queueLabel}</div>
             <div class="queue-stat-label">in queue now</div>
           </div>
           <div class="queue-divider"></div>
@@ -2167,12 +2179,14 @@ async function renderBusinessDetail(id) {
         </div>
 
         ${
-          item.services?.length
+          detailServices.length
             ? `
-          <section class="detail-services" aria-labelledby="detail-services-heading">
-            <h2 id="detail-services-heading" class="detail-services-heading">Services</h2>
-            <ul class="service-list">
-              ${item.services
+          <section class="detail-services" id="detail-services" aria-labelledby="detail-services-heading">
+            <h2 id="detail-services-heading" class="detail-services-heading">Services${
+              detailBranch && detailBranches.length > 1 ? ` at ${escapeHtml(detailBranch.name)}` : ""
+            }</h2>
+            <ul class="service-list" id="detail-service-list">
+              ${detailServices
                 .map(
                   (service) => `
                 <li class="service-row">
@@ -2183,7 +2197,7 @@ async function renderBusinessDetail(id) {
                 .join("")}
             </ul>
           </section>`
-            : ""
+            : `<section class="detail-services hidden" id="detail-services" aria-labelledby="detail-services-heading"><h2 id="detail-services-heading" class="detail-services-heading">Services</h2><ul class="service-list" id="detail-service-list"></ul></section>`
         }
 
         <div class="detail-rating">
@@ -2192,7 +2206,7 @@ async function renderBusinessDetail(id) {
 
         <div class="detail-actions">
           ${
-            queuePaused && !alreadyInQueue
+            branchClosed && !alreadyInQueue
               ? `
           <button
             class="btn detail-book-btn"
@@ -2262,6 +2276,61 @@ async function renderBusinessDetail(id) {
     const bookBtn = document.querySelector(".detail-book-btn");
     if (bookBtn) bookBtn.onclick = () => requireLogin(`business-${item.id}`, "Log in to book a visit.");
   }
+
+  document.querySelectorAll(".detail-branch-card").forEach((card) => {
+    const chooseBranch = (event) => {
+      if (event.target.closest("a")) return;
+      const branch = branchById(item, card.dataset.branchId);
+      if (!branch) return;
+      item.detailBranchId = branch.id;
+      document.querySelectorAll(".detail-branch-card").forEach((el) => {
+        const on = el === card;
+        el.classList.toggle("is-selected", on);
+        el.setAttribute("aria-pressed", on ? "true" : "false");
+      });
+      const services = servicesForBranch(item, branch);
+      const section = document.getElementById("detail-services");
+      const list = document.getElementById("detail-service-list");
+      const heading = document.getElementById("detail-services-heading");
+      if (section) section.classList.toggle("hidden", services.length === 0);
+      if (heading) {
+        heading.textContent =
+          detailBranches.length > 1 ? `Services at ${branch.name}` : "Services";
+      }
+      if (list) {
+        list.innerHTML = services
+          .map(
+            (service) => `
+              <li class="service-row">
+                <span class="service-name">${escapeHtml(service.name)}</span>
+                <span class="service-duration">${Number(service.duration_minutes) || 0} min</span>
+              </li>`
+          )
+          .join("");
+      }
+      const size = Number(branch.queue_size) || 0;
+      const value = document.getElementById("detail-queue-value");
+      if (value) {
+        value.textContent = size === 0 ? "No queue" : size === 1 ? "1 person" : `${size} people`;
+        value.style.color = size <= 3 ? "#007a57" : size <= 8 ? "var(--lime-ink)" : "var(--danger)";
+      }
+      const paused = Boolean(branch.queue_paused);
+      const join = document.getElementById("detail-join-btn");
+      if (join && !alreadyInQueue) {
+        join.disabled = paused;
+        join.classList.toggle("is-paused", paused);
+        join.textContent = paused ? "On a break" : "Join Queue";
+      }
+    };
+    card.addEventListener("click", chooseBranch);
+    card.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        chooseBranch(event);
+      }
+    });
+  });
+
   focusPage();
 }
 
@@ -2417,7 +2486,9 @@ function itemBranches(item) {
 /** Branches arrive sorted nearest-first, so the first open one is the best default. */
 function defaultJoinBranch(item) {
   const branches = itemBranches(item);
-  return branches.find((branch) => !branch.queue_paused) || null;
+  const chosen = branchById(item, item.detailBranchId);
+  if (chosen) return chosen;
+  return branches.find((branch) => !branch.queue_paused) || branches[0] || null;
 }
 
 function branchById(item, branchId) {

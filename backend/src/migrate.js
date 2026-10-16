@@ -393,6 +393,9 @@ export async function migrate() {
     -- Vendors who signed up themselves describe their own business before approval.
     ALTER TABLE vendors ADD COLUMN IF NOT EXISTS self_registered BOOLEAN NOT NULL DEFAULT false;
 
+    -- Set by an admin. The business stays published; the vendor just cannot sign in.
+    ALTER TABLE vendors ADD COLUMN IF NOT EXISTS deactivated_at TIMESTAMPTZ;
+
     -- The service a booking is for carries over when the customer checks in.
     ALTER TABLE bookings
       ADD COLUMN IF NOT EXISTS service_id INTEGER REFERENCES business_services(id) ON DELETE SET NULL;

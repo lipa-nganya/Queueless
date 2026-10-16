@@ -14,6 +14,7 @@ export const QUEUE_ALERT_CHANNEL = "queue_alert_channel";
 export const VENDOR_QUEUE_TEXTS_ENABLED = "vendor_queue_texts_enabled";
 export const CONTACT_PHONE = "contact_phone";
 export const CONTACT_EMAIL = "contact_email";
+export const HQ_ALERT_PHONES = "hq_alert_phones";
 
 export const QUEUE_ALERT_CHANNELS = ["whatsapp", "sms"];
 

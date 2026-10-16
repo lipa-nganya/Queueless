@@ -93,6 +93,10 @@ class MyQueueViewModel(private val repository: CustomerRepository) : ViewModel()
         }
     }
 
+    fun dismissMessage() {
+        _uiState.update { it.copy(message = null) }
+    }
+
     fun leave(entry: QueueEntry) {
         viewModelScope.launch {
             _uiState.update { it.copy(leavingId = entry.id, error = null, message = null) }

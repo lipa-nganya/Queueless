@@ -1851,7 +1851,22 @@ tbody tr:hover {
   align-items: flex-start;
   justify-content: space-between;
   gap: 1.5rem;
-  padding: 1rem 0 0.35rem;
+  padding: 0.85rem 0;
+}
+
+.setting-row + .setting-row {
+  position: relative;
+  margin-top: 0.25rem;
+}
+
+.setting-row + .setting-row::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: var(--divider);
 }
 
 .setting-copy {
@@ -1928,15 +1943,15 @@ tbody tr:hover {
 
 .channel-option {
   appearance: none;
-  min-width: 6.5rem;
-  padding: 0.45rem 1.25rem;
+  min-width: 0;
+  padding: 0.35rem 0.85rem;
   border: 0;
   border-radius: var(--radius-lg);
   background: transparent;
   color: var(--text);
   cursor: pointer;
-  font-size: var(--font-size);
-  font-weight: 400;
+  font-size: var(--font-size-sm);
+  font-weight: 500;
   transition: background 0.2s ease, box-shadow 0.2s ease;
 }
 
@@ -2568,5 +2583,111 @@ tbody tr:hover {
   .footer {
     justify-content: center;
     text-align: center;
+  }
+}
+
+.settings-section {
+  position: relative;
+  margin-top: 1.75rem;
+  padding-top: 1.25rem;
+}
+
+.settings-section::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: var(--divider);
+}
+
+.settings-section > .setting-desc {
+  margin: 0 0 1rem;
+}
+
+.setting-add {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 0.75rem;
+  max-width: 28rem;
+}
+
+.setting-add > .field {
+  min-width: 0;
+  margin-top: 0;
+}
+
+.setting-add > .btn {
+  width: auto;
+  margin-bottom: 0.4rem;
+}
+
+.setting-test .setting-desc {
+  max-width: 36rem;
+  margin-top: 0.65rem;
+}
+
+#contact-form .form-row {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  max-width: 42rem;
+}
+
+#contact-form .field {
+  margin-top: 0;
+}
+
+#contact-form > .btn {
+  margin-top: 1rem;
+}
+
+.hq-phone-list {
+  list-style: none;
+  max-width: 36rem;
+  margin: 0 0 1rem;
+  padding: 0;
+  border-top: 1px solid var(--line);
+}
+
+.hq-phone-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.55rem 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.hq-phone-list .hq-phone-empty {
+  display: block;
+  color: var(--text-dim);
+  font-weight: 300;
+}
+
+.hq-phone-main {
+  min-width: 0;
+}
+
+.hq-phone-main strong {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.hq-phone-main span {
+  display: block;
+  margin-top: 0.1rem;
+  color: var(--text-dim);
+  font-size: var(--font-size-sm);
+  font-weight: 300;
+}
+
+.hq-phone-list .btn {
+  flex-shrink: 0;
+}
+
+@media (max-width: 720px) {
+  #contact-form .form-row {
+    grid-template-columns: 1fr;
   }
 }

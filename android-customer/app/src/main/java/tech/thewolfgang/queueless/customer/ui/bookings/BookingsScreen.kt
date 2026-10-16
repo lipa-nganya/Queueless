@@ -26,9 +26,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -128,6 +132,10 @@ class BookingsViewModel(private val repository: CustomerRepository) : ViewModel(
     fun consumeCheckedIn() {
         _checkedIn.value = false
     }
+
+    fun dismissMessage() {
+        _uiState.update { it.copy(message = null) }
+    }
 }
 
 fun formatBookingTime(iso: String): String =
@@ -144,6 +152,18 @@ fun BookingsScreen(
     val checkedIn by viewModel.checkedIn.collectAsStateWithLifecycle()
     var confirmCancel by remember { mutableStateOf<Booking?>(null) }
 
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(lifecycle) {
+        lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            viewModel.load()
+        }
+    }
+    LaunchedEffect(state.message) {
+        if (state.message != null) {
+            delay(4000)
+            viewModel.dismissMessage()
+        }
+    }
     LaunchedEffect(checkedIn) {
         if (checkedIn) {
             viewModel.consumeCheckedIn()

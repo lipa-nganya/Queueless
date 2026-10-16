@@ -2222,6 +2222,7 @@ async function renderVendors() {
     if (status === "active") return "Active";
     if (status === "pending_activation") return "Pending activation";
     if (status === "awaiting_pin") return "Awaiting PIN";
+    if (status === "deactivated") return "Deactivated";
     return status || "Unknown";
   }
 
@@ -2529,7 +2530,7 @@ async function renderVendors() {
                                 ? "Waiting for the vendor to add their business"
                                 : "Activate account, publish their business and notify"
                           }">Activate</button>`
-                        : ""
+                        : `<button class="btn btn-secondary btn-sm vendor-deactivate-btn" data-id="${vendor.id}" title="Stop this vendor signing in. Their businesses stay published.">Deactivate</button>`
                     }
                     <button class="btn btn-secondary btn-sm vendor-whatsapp-btn" data-id="${vendor.id}" ${vendor.phone ? "" : "disabled"} title="${vendor.phone ? "Open WhatsApp" : "Add a phone number first"}">WhatsApp</button>
                     <button class="btn btn-secondary btn-sm vendor-edit-btn" data-id="${vendor.id}">Edit</button>
@@ -2546,6 +2547,28 @@ async function renderVendors() {
       btn.addEventListener("click", () => {
         const vendor = vendorsById.get(Number(btn.dataset.id));
         if (vendor) openEdit(vendor);
+      });
+    });
+
+    table.querySelectorAll(".vendor-deactivate-btn").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const vendor = vendorsById.get(Number(btn.dataset.id));
+        if (!vendor) return;
+        const ok = window.confirm(
+          `Deactivate ${vendor.username || "this vendor"}? They will not be able to sign in. Their businesses stay published and are not deleted.`
+        );
+        if (!ok) return;
+        btn.disabled = true;
+        try {
+          const result = await api(`/admins/vendors/${vendor.id}/deactivate`, { method: "POST" });
+          message.textContent = result.message || "Vendor deactivated.";
+          message.classList.add("success");
+          await loadVendors();
+        } catch (error) {
+          message.textContent = error.message;
+          message.classList.remove("success");
+          btn.disabled = false;
+        }
       });
     });
 
@@ -2996,6 +3019,25 @@ async function renderSettings() {
   const waConfigured = settings.whatsapp_configured;
   const alertChannel = settings.queue_alert_channel === "sms" ? "sms" : "whatsapp";
   const alertsOn = Boolean(settings.whatsapp_enabled);
+  const hqPhoneItems = (rows) =>
+    rows?.length
+      ? rows
+          .map(
+            (row) => `
+              <li>
+                <div class="hq-phone-main">
+                  <strong>+${escapeHtml(row.phone)}</strong>
+                  ${
+                    row.is_vendor
+                      ? `<span>Skipped while vendor texts are off</span>`
+                      : ""
+                  }
+                </div>
+                <button type="button" class="btn btn-secondary btn-sm hq-remove" data-phone="${escapeHtml(row.phone)}">Remove</button>
+              </li>`
+          )
+          .join("")
+      : `<li class="hq-phone-empty">No HQ numbers yet.</li>`;
 
   panel.innerHTML = `
     <h3>Notifications</h3>
@@ -3019,16 +3061,16 @@ async function renderSettings() {
     </div>
 
     <div class="setting-test ${settings.sms_enabled && configured ? "" : "hidden"}" id="sms-test">
-      <div class="field" style="margin-top:0">
-        <label for="test-phone">Send a test SMS</label>
-        <div class="form-row two">
+      <div class="setting-add">
+        <div class="field">
+          <label for="test-phone">Send a test SMS</label>
           <input id="test-phone" placeholder="07XXXXXXXX" inputmode="tel" />
-          <button class="btn btn-secondary" type="button" id="test-sms-btn">Send test</button>
         </div>
+        <button class="btn btn-secondary btn-sm" type="button" id="test-sms-btn">Send test</button>
       </div>
     </div>
 
-    <div class="setting-row" style="margin-top:1.5rem">
+    <div class="setting-row">
       <div class="setting-copy">
         <div class="setting-title">Queue alerts</div>
         <p class="setting-desc">
@@ -3055,26 +3097,26 @@ async function renderSettings() {
         <p class="setting-desc ${alertsOn ? "hidden" : ""}" id="vendor-texts-note">
           No texts are sent while Queue alerts is off.
         </p>
-        <p class="setting-desc">
-          HQ numbers (set on the server):
-          ${
-            settings.hq_alert_phones?.length
-              ? settings.hq_alert_phones
-                  .map(
-                    (row) =>
-                      `+${escapeHtml(row.phone)}${
-                        row.is_vendor ? " (a vendor's phone, so skipped while this is off)" : ""
-                      }`
-                  )
-                  .join(", ")
-              : "none"
-          }
-        </p>
       </div>
       <label class="switch" title="Text vendors about queue joins and leaves">
         <input type="checkbox" id="vendor-texts-toggle" ${settings.vendor_queue_texts_enabled ? "checked" : ""} />
         <span class="switch-track"><span class="switch-thumb"></span></span>
       </label>
+    </div>
+
+    <div class="settings-section" id="hq-phones">
+      <h3>HQ alert numbers</h3>
+      <p class="setting-desc">These numbers get a text when someone joins or leaves a queue. Add 07… or +254…</p>
+      <ul class="hq-phone-list" id="hq-phone-list">
+        ${hqPhoneItems(settings.hq_alert_phones)}
+      </ul>
+      <div class="setting-add">
+        <div class="field">
+          <label for="hq-phone-input">Phone number</label>
+          <input id="hq-phone-input" placeholder="0712345678" inputmode="tel" />
+        </div>
+        <button class="btn btn-secondary btn-sm" type="button" id="hq-phone-add">Add number</button>
+      </div>
     </div>
 
     <div class="channel-switch-wrap" id="alert-channel-wrap">
@@ -3126,45 +3168,49 @@ async function renderSettings() {
     </div>
 
     <div class="setting-test ${alertsOn && alertChannel === "whatsapp" && waConfigured ? "" : "hidden"}" id="wa-test">
-      <div class="field" style="margin-top:0">
-        <label for="test-wa-phone">Send a test WhatsApp</label>
-        <div class="form-row two">
+      <div class="setting-add">
+        <div class="field">
+          <label for="test-wa-phone">Send a test WhatsApp</label>
           <input id="test-wa-phone" placeholder="07XXXXXXXX" inputmode="tel" />
-          <button class="btn btn-secondary" type="button" id="test-wa-btn">Send test</button>
         </div>
-        <p class="setting-desc" style="margin-top:0.5rem">
-          Use an allowlisted number (Meta → Step 1 → To), e.g. <code>0727893741</code>.
-          Tests send Meta's <code>hello_world</code> template from the +1 555 test line.
-        </p>
+        <button class="btn btn-secondary btn-sm" type="button" id="test-wa-btn">Send test</button>
       </div>
+      <p class="setting-desc">
+        Use an allowlisted number (Meta → Step 1 → To), e.g. <code>0727893741</code>.
+        Tests send Meta's <code>hello_world</code> template from the +1 555 test line.
+      </p>
     </div>
 
     <div class="setting-test ${alertsOn && alertChannel === "sms" && configured ? "" : "hidden"}" id="alert-sms-test">
-      <div class="field" style="margin-top:0">
-        <label for="test-alert-sms-phone">Send a test queue-alert SMS</label>
-        <div class="form-row two">
+      <div class="setting-add">
+        <div class="field">
+          <label for="test-alert-sms-phone">Test queue-alert SMS</label>
           <input id="test-alert-sms-phone" placeholder="07XXXXXXXX" inputmode="tel" />
-          <button class="btn btn-secondary" type="button" id="test-alert-sms-btn">Send test</button>
         </div>
+        <button class="btn btn-secondary btn-sm" type="button" id="test-alert-sms-btn">Send test</button>
       </div>
     </div>
 
-    <h3 style="margin-top:2rem">Customer support</h3>
-    <p class="setting-desc" style="margin:0 0 1rem">
+    <div class="settings-section">
+    <h3>Customer support</h3>
+    <p class="setting-desc">
       These details appear on the customer Profile under Contact us. The phone
       number is also used as the admin recipient for queue alerts.
     </p>
-    <form id="contact-form" class="form-row two">
-      <div class="field" style="margin-top:0">
-        <label for="contact-phone">Contact phone</label>
-        <input id="contact-phone" name="contact_phone" value="${escapeHtml(settings.contact_phone || "")}" placeholder="+254712674333" inputmode="tel" />
+    <form id="contact-form">
+      <div class="form-row two">
+        <div class="field">
+          <label for="contact-phone">Contact phone</label>
+          <input id="contact-phone" name="contact_phone" value="${escapeHtml(settings.contact_phone || "")}" placeholder="+254712674333" inputmode="tel" />
+        </div>
+        <div class="field">
+          <label for="contact-email">Contact email</label>
+          <input id="contact-email" name="contact_email" type="email" value="${escapeHtml(settings.contact_email || "")}" placeholder="support@queueless.co.ke" />
+        </div>
       </div>
-      <div class="field" style="margin-top:0">
-        <label for="contact-email">Contact email</label>
-        <input id="contact-email" name="contact_email" type="email" value="${escapeHtml(settings.contact_email || "")}" placeholder="support@queueless.co.ke" />
-      </div>
-      <button class="btn btn-primary" type="submit">Save contact</button>
+      <button class="btn btn-primary btn-sm" type="submit">Save contact</button>
     </form>
+    </div>
 
     <p class="message" id="page-message" role="status"></p>
   `;
@@ -3250,6 +3296,50 @@ async function renderSettings() {
       setMessage(error.message);
     } finally {
       waToggle.disabled = false;
+    }
+  });
+
+  const hqList = () =>
+    [...document.querySelectorAll("#hq-phone-list .hq-remove")].map((btn) => btn.dataset.phone);
+
+  const saveHqPhones = async (phones) => {
+    const saved = await api("/settings", {
+      method: "PUT",
+      body: JSON.stringify({ hq_alert_phones: phones }),
+    });
+    const list = document.getElementById("hq-phone-list");
+    list.innerHTML = hqPhoneItems(saved.hq_alert_phones);
+  };
+
+  document.getElementById("hq-phones")?.addEventListener("click", async (event) => {
+    const remove = event.target.closest(".hq-remove");
+    if (!remove) return;
+    remove.disabled = true;
+    setMessage("");
+    try {
+      await saveHqPhones(hqList().filter((phone) => phone !== remove.dataset.phone));
+      setMessage("HQ numbers updated.", "success");
+    } catch (error) {
+      setMessage(error.message);
+      remove.disabled = false;
+    }
+  });
+
+  document.getElementById("hq-phone-add")?.addEventListener("click", async () => {
+    const input = document.getElementById("hq-phone-input");
+    const raw = input.value.trim();
+    if (!raw) return;
+    const button = document.getElementById("hq-phone-add");
+    button.disabled = true;
+    setMessage("");
+    try {
+      await saveHqPhones([...hqList(), raw]);
+      input.value = "";
+      setMessage("HQ number added.", "success");
+    } catch (error) {
+      setMessage(error.message);
+    } finally {
+      button.disabled = false;
     }
   });
 

@@ -1,6 +1,7 @@
 package tech.thewolfgang.queueless.vendor
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.os.Build
@@ -50,6 +51,7 @@ class MainActivity : ComponentActivity() {
     private val notificationPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { /* no-op */ }
 
+    private val pendingQueueId = mutableStateOf<Int?>(null)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge(
@@ -57,6 +59,10 @@ class MainActivity : ComponentActivity() {
             navigationBarStyle = SystemBarStyle.light(Color.WHITE, Color.WHITE),
         )
         val app = application as QueuelessVendorApp
+        PushRegistrar.ensureNotificationChannel(this)
+        maybeRequestNotificationPermission()
+        if (app.repository.hasSession()) {
+        pendingQueueId.value = intent.queueBranchId()
         PushRegistrar.ensureNotificationChannel(this)
         maybeRequestNotificationPermission()
         if (app.repository.hasSession()) {
@@ -72,10 +78,16 @@ class MainActivity : ComponentActivity() {
                         .safeDrawingPadding(),
                     color = PageBackground,
                 ) {
-                    VendorNav(repository = app.repository)
+                    VendorNav(repository = app.repository, pendingQueueId = pendingQueueId)
                 }
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        pendingQueueId.value = intent.queueBranchId()
     }
 
     private fun maybeRequestNotificationPermission() {
@@ -88,6 +100,11 @@ class MainActivity : ComponentActivity() {
             notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
     }
+}
+
+private fun Intent.queueBranchId(): Int? {
+    val raw = getStringExtra("business_id") ?: extras?.get("business_id")?.toString()
+    return raw?.toIntOrNull()?.takeIf { it > 0 }
 }
 
 private object Routes {
@@ -108,8 +125,15 @@ private object Routes {
 }
 
 @Composable
-private fun VendorNav(repository: VendorRepository) {
+private fun VendorNav(repository: VendorRepository, pendingQueueId: MutableState<Int?>) {
     val navController = rememberNavController()
+    val queueId = pendingQueueId.value
+    LaunchedEffect(queueId) {
+        val id = queueId ?: return@LaunchedEffect
+        if (!repository.hasSession()) return@LaunchedEffect
+        navController.navigate(Routes.queue(id)) { launchSingleTop = true }
+        pendingQueueId.value = null
+    }
     val context = LocalContext.current
     val startDestination = remember {
         if (repository.hasSession()) Routes.Businesses else Routes.Login
@@ -359,7 +383,3 @@ private fun VendorNav(repository: VendorRepository) {
                 onOpenProfile = { goProfile(businessId) },
                 onSignOut = ::signOut,
                 onUnauthorized = ::onUnauthorized,
-            )
-        }
-    }
-}

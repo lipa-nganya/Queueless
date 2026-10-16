@@ -36,6 +36,7 @@ import {
   VENDOR_QUEUE_TEXTS_ENABLED,
   CONTACT_PHONE,
   CONTACT_EMAIL,
+  HQ_ALERT_PHONES,
   getBoolSetting,
   getQueueAlertChannel,
   getSetting,
@@ -412,16 +413,27 @@ async function settingsPayload() {
   };
 }
 
-/** HQ queue-alert numbers from WHATSAPP_NOTIFY_PHONES, flagged when a vendor uses the same phone. */
-async function hqAlertPhones() {
-  const phones = [
+/**
+ * HQ queue-alert numbers. Once an admin saves the list it lives in settings.
+ * Until then, WHATSAPP_NOTIFY_PHONES is the list.
+ */
+async function configuredHqPhones() {
+  const stored = await getSetting(HQ_ALERT_PHONES, null);
+  const raw =
+    stored === null ? String(process.env.WHATSAPP_NOTIFY_PHONES || "") : String(stored || "");
+  return [
     ...new Set(
-      String(process.env.WHATSAPP_NOTIFY_PHONES || "")
+      raw
         .split(",")
         .map((phone) => normalizeWhatsAppPhone(phone.trim()))
         .filter(Boolean)
     ),
   ];
+}
+
+/** HQ queue-alert numbers, flagged when a vendor uses the same phone. */
+async function hqAlertPhones() {
+  const phones = await configuredHqPhones();
   if (!phones.length) return [];
   const vendors = await query(
     `SELECT DISTINCT phone FROM vendors WHERE phone = ANY($1::text[])`,
@@ -512,6 +524,20 @@ router.put("/settings", requireAdmin, async (req, res) => {
         phone ? `+${normalizeKenyaPhone(phone)}` : "",
         req.admin?.sub ?? null
       );
+    }
+
+    if (Array.isArray(req.body?.hq_alert_phones)) {
+      const phones = [];
+      for (const value of req.body.hq_alert_phones) {
+        const raw = String(value || "").trim();
+        if (!raw) continue;
+        const phone = normalizeWhatsAppPhone(raw);
+        if (!phone) {
+          return res.status(400).json({ error: `“${raw}” is not a valid phone number.` });
+        }
+        phones.push(phone);
+      }
+      await setSetting(HQ_ALERT_PHONES, [...new Set(phones)].join(","), req.admin?.sub ?? null);
     }
 
     if (typeof req.body?.contact_email !== "undefined") {
@@ -2966,9 +2992,8 @@ function decorateQueueEntry(row) {
 async function queueAlertTargets(businessId, branchPhone = null) {
   const otherPhones = new Set();
 
-  for (const phone of String(process.env.WHATSAPP_NOTIFY_PHONES || "").split(",")) {
-    const trimmed = phone.trim();
-    if (trimmed) otherPhones.add(trimmed);
+  for (const phone of await configuredHqPhones()) {
+    otherPhones.add(phone);
   }
 
   if (process.env.QUEUE_ALERT_INCLUDE_CONTACT === "1") {
@@ -3435,6 +3460,7 @@ router.get("/customer/bookings", requireCustomer, async (req, res) => {
       `,
       [req.customer.sub]
     );
+    res.setHeader("Cache-Control", "private, no-store");
     return res.json(result.rows);
   } catch (error) {
     console.error("Load bookings failed:", error);
@@ -3528,7 +3554,7 @@ async function replaceVendorBusinesses(vendorId, businessIds) {
 async function vendorWithBusinesses(vendorId) {
   const vendor = await query(
     `
-      SELECT id, username, email, phone, created_at, activated_at, trial_ends_at
+      SELECT id, username, email, phone, created_at, activated_at, deactivated_at, trial_ends_at
       FROM vendors WHERE id = $1
     `,
     [vendorId]
@@ -4110,7 +4136,7 @@ router.post("/vendor/login", async (req, res) => {
       }
 
       const existing = await query(
-        `SELECT id, phone, pin_hash, activated_at FROM vendors WHERE phone = $1 LIMIT 1`,
+        `SELECT id, phone, pin_hash, activated_at, deactivated_at FROM vendors WHERE phone = $1 LIMIT 1`,
         [phone]
       );
       if (!existing.rows[0]) {
@@ -4120,6 +4146,12 @@ router.post("/vendor/login", async (req, res) => {
           needs_otp: true,
           can_register: true,
           phone,
+        });
+      }
+      if (existing.rows[0].deactivated_at) {
+        return res.status(403).json({
+          error: "This account has been deactivated. Contact Queueless.",
+          deactivated: true,
         });
       }
       if (!existing.rows[0].pin_hash) {
@@ -4771,7 +4803,7 @@ async function closeVendorQueueEntry(req, res, status) {
         UPDATE queue_entries
         SET status = $1, left_at = NOW()
         WHERE id = $2 AND status = 'waiting'
-        RETURNING id, business_id, branch_id, source, status, left_at
+        RETURNING id, business_id, branch_id, customer_id, source, status, left_at
       `,
       [status, entryId]
     );
@@ -4779,6 +4811,9 @@ async function closeVendorQueueEntry(req, res, status) {
       return res.status(409).json({ error: "That customer is no longer waiting." });
     }
     clearCustomerBusinessesCache();
+    if (status === "no_show" && updated.rows[0].source !== "walk_in" && updated.rows[0].customer_id) {
+      void notifyCustomerNoShow(updated.rows[0].id);
+    }
     return res.json({ ok: true, ...updated.rows[0] });
   } catch (error) {
     console.error(`Vendor queue ${status} failed:`, error);
@@ -4793,6 +4828,35 @@ router.post("/vendor/queue/:id/serve", requireVendor, (req, res) =>
 router.post("/vendor/queue/:id/no-show", requireVendor, (req, res) =>
   closeVendorQueueEntry(req, res, "no_show")
 );
+
+/** Text the app customer that a vendor removed them. Walk-ins have no account. */
+async function notifyCustomerNoShow(entryId) {
+  try {
+    if (!(await getBoolSetting(SMS_ENABLED, false)) || !smsProviderConfigured()) return;
+    const row = (
+      await query(
+        `
+          SELECT c.phone, c.first_name, b.name AS business_name, br.name AS branch_name
+          FROM queue_entries qe
+          INNER JOIN customers c ON c.id = qe.customer_id
+          INNER JOIN businesses b ON b.id = qe.business_id
+          LEFT JOIN business_branches br ON br.id = qe.branch_id
+          WHERE qe.id = $1
+        `,
+        [entryId]
+      )
+    ).rows[0];
+    if (!row?.phone) return;
+    const place = row.branch_name ? `${row.business_name} (${row.branch_name})` : row.business_name;
+    const name = row.first_name ? `${row.first_name}, ` : "";
+    await sendSms({
+      phone: row.phone,
+      message: `Queueless: ${name}${place} marked you as a no-show. You've been removed from the queue.`,
+    });
+  } catch (error) {
+    console.error("No-show SMS failed:", error);
+  }
+}
 
 router.post("/vendor/businesses/:id/walk-ins", requireVendor, async (req, res) => {
   try {
@@ -5388,6 +5452,7 @@ function vendorActivatedNotifySummary(notify) {
 }
 
 function vendorAccountStatus(vendor) {
+  if (vendor?.deactivated_at) return "deactivated";
   if (vendor?.activated_at) return "active";
   if (vendor?.pin_hash) return "pending_activation";
   return "awaiting_pin";
@@ -5420,7 +5485,7 @@ router.get("/admins/vendors", requireAdmin, async (_req, res) => {
   try {
     const vendors = await query(
       `
-        SELECT id, username, email, phone, created_at, activated_at, trial_ends_at,
+        SELECT id, username, email, phone, created_at, activated_at, deactivated_at, trial_ends_at,
                otp_code, otp_expires_at, pin_hash, self_registered
         FROM vendors
         ORDER BY created_at DESC
@@ -5726,14 +5791,14 @@ router.post("/admins/vendors/:id/activate", requireAdmin, async (req, res) => {
 
     const existing = await query(
       `
-        SELECT id, phone, activated_at, trial_ends_at, pin_hash, self_registered
+        SELECT id, phone, activated_at, deactivated_at, trial_ends_at, pin_hash, self_registered
         FROM vendors
         WHERE id = $1
       `,
       [id]
     );
     if (!existing.rows[0]) return res.status(404).json({ error: "Vendor not found." });
-    if (existing.rows[0].activated_at) {
+    if (existing.rows[0].activated_at && !existing.rows[0].deactivated_at) {
       return res.status(409).json({ error: "This vendor is already active." });
     }
     if (!existing.rows[0].phone) {
@@ -5758,7 +5823,10 @@ router.post("/admins/vendors/:id/activate", requireAdmin, async (req, res) => {
       );
       clearCustomerBusinessesCache();
     }
-    await query(`UPDATE vendors SET activated_at = NOW() WHERE id = $1`, [id]);
+    await query(
+      `UPDATE vendors SET activated_at = COALESCE(activated_at, NOW()), deactivated_at = NULL WHERE id = $1`,
+      [id]
+    );
     const vendor = await vendorWithBusinesses(id);
     const notify = await notifyVendorActivated({
       phone: vendor.phone,
@@ -5779,6 +5847,33 @@ router.post("/admins/vendors/:id/activate", requireAdmin, async (req, res) => {
   } catch (error) {
     console.error("Vendor activate failed:", error);
     return res.status(500).json({ error: "Could not activate vendor." });
+  }
+});
+
+router.post("/admins/vendors/:id/deactivate", requireAdmin, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id < 1) {
+      return res.status(400).json({ error: "Invalid vendor." });
+    }
+    const existing = await query(
+      `SELECT id, activated_at, deactivated_at FROM vendors WHERE id = $1`,
+      [id]
+    );
+    if (!existing.rows[0]) return res.status(404).json({ error: "Vendor not found." });
+    if (!existing.rows[0].activated_at || existing.rows[0].deactivated_at) {
+      return res.status(409).json({ error: "Only an active vendor can be deactivated." });
+    }
+    await query(`UPDATE vendors SET deactivated_at = NOW() WHERE id = $1`, [id]);
+    const vendor = await vendorWithBusinesses(id);
+    return res.json({
+      ...vendor,
+      status: "deactivated",
+      message: "Vendor deactivated. Their businesses stay published.",
+    });
+  } catch (error) {
+    console.error("Vendor deactivate failed:", error);
+    return res.status(500).json({ error: "Could not deactivate vendor." });
   }
 });
 

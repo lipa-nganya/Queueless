@@ -349,3 +349,18 @@ fun formatWaitMinutes(minutes: Double): String {
 }
 
 fun peopleLabel(count: Int): String = if (count == 1) "1 person" else "$count people"
+
+/** Same stand-in photos the customer website uses when a business has no upload. */
+fun placeholderBusinessImage(businessId: Int): String {
+    val images = listOf(
+        "https://images.unsplash.com/photo-1585747863301-d0cb0cf594bb?auto=format&fit=crop&w=600&q=70",
+        "https://images.unsplash.com/photo-1622286342621-4bd786c2447c?auto=format&fit=crop&w=600&q=70",
+        "https://images.unsplash.com/photo-1503951914873-5be48ee5f888?auto=format&fit=crop&w=600&q=70",
+        "https://images.unsplash.com/photo-1599350712515-84975f7c2fe0?auto=format&fit=crop&w=600&q=70",
+        "https://images.unsplash.com/photo-1600948836101-f9ffda59d250?auto=format&fit=crop&w=600&q=70",
+        "https://images.unsplash.com/photo-1560066984-138daaa4e993?auto=format&fit=crop&w=600&q=70",
+        "https://images.unsplash.com/photo-1519494026892-80bbd2d6fd0d?auto=format&fit=crop&w=600&q=70",
+        "https://images.unsplash.com/photo-1556742049-0cfed4f6a45d?auto=format&fit=crop&w=600&q=70",
+    )
+    return images[(businessId.coerceAtLeast(0)) % images.size]
+}

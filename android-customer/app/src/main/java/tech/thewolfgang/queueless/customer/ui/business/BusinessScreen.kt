@@ -60,6 +60,7 @@ import tech.thewolfgang.queueless.customer.ui.components.StatusBanner
 import tech.thewolfgang.queueless.customer.ui.components.TopBar
 import tech.thewolfgang.queueless.customer.ui.components.formatWaitMinutes
 import tech.thewolfgang.queueless.customer.ui.components.peopleLabel
+import tech.thewolfgang.queueless.customer.ui.components.placeholderBusinessImage
 import tech.thewolfgang.queueless.customer.ui.theme.CardShape
 import tech.thewolfgang.queueless.customer.ui.theme.ChipShape
 import tech.thewolfgang.queueless.customer.ui.theme.LimeInk
@@ -126,9 +127,8 @@ fun BusinessScreen(
                 .padding(horizontal = 16.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            viewModel.imageUrl(business.imageUrl)?.let { url ->
-                AsyncImage(
-                    model = url,
+            AsyncImage(
+                    model = viewModel.imageUrl(business.imageUrl) ?: placeholderBusinessImage(business.id),
                     contentDescription = null,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier
@@ -137,7 +137,6 @@ fun BusinessScreen(
                         .clip(CardShape)
                         .background(SurfaceMuted),
                 )
-            }
             ScreenTitle(
                 title = business.name,
                 subtitle = listOfNotNull(business.businessGroupName, business.description).joinToString(" · "),

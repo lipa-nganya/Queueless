@@ -33,8 +33,10 @@ class ApiClient(
     /** Uploads are served from the API origin, outside `/api`. */
     fun absoluteUrl(path: String?): String? {
         if (path.isNullOrBlank()) return null
-        if (path.startsWith("http")) return path
-        return baseUrl.trimEnd('/').removeSuffix("/api") + path
+        if (path.startsWith("http://") || path.startsWith("https://")) return path
+        val origin = baseUrl.trimEnd('/').removeSuffix("/api")
+        val relative = if (path.startsWith("/")) path else "/$path"
+        return origin + relative
     }
 
     // Revalidates with the server's ETags, so unchanged lists and polls come back as empty 304s.

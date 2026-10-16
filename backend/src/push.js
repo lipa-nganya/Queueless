@@ -279,6 +279,10 @@ export async function sendVendorPush({
       data: stringData,
       webpush: {
         headers: { Urgency: "high", TTL: "86400" },
+        // A visible notification, not data alone. Chrome drops data-only pushes
+        // when the vendor site is in the background, which is how joins from
+        // the customer app were reaching the vendor app and not the browser.
+        notification: { title, body },
       },
     },
   };

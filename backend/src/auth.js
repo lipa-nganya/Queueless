@@ -195,7 +195,16 @@ export function requireVendor(req, res, next) {
       return res.status(401).json({ error: "Unauthorized" });
     }
     req.vendor = payload;
-    return next();
+    query(`SELECT deactivated_at FROM vendors WHERE id = $1`, [payload.sub])
+      .then((result) => {
+        if (result.rows[0]?.deactivated_at) {
+          return res.status(403).json({
+            error: "This account has been deactivated. Contact Queueless.",
+          });
+        }
+        return next();
+      })
+      .catch(() => res.status(500).json({ error: "Could not check this account." }));
   } catch {
     return res.status(401).json({ error: "Unauthorized" });
   }

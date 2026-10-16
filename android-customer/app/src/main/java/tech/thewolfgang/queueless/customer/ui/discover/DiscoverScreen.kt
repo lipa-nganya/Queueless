@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Storefront
@@ -58,6 +59,7 @@ import tech.thewolfgang.queueless.customer.ui.components.StatusBanner
 import tech.thewolfgang.queueless.customer.ui.components.TopBar
 import tech.thewolfgang.queueless.customer.ui.components.formatWaitMinutes
 import tech.thewolfgang.queueless.customer.ui.components.peopleLabel
+import tech.thewolfgang.queueless.customer.ui.components.placeholderBusinessImage
 import tech.thewolfgang.queueless.customer.ui.theme.CardShape
 import tech.thewolfgang.queueless.customer.ui.theme.ChipShape
 import tech.thewolfgang.queueless.customer.ui.theme.FieldShape
@@ -191,10 +193,11 @@ fun DiscoverScreen(
                     )
                 }
             }
-            items(visible, key = { it.id }) { business ->
+            itemsIndexed(visible, key = { _, business -> business.id }) { _, business ->
                 BusinessCard(
                     business = business,
-                    imageUrl = viewModel.imageUrl(business.imageUrl),
+                    imageUrl = viewModel.imageUrl(business.imageUrl)
+                        ?: placeholderBusinessImage(business.id),
                     onClick = { onOpenBusiness(business.id) },
                 )
             }
