@@ -8,6 +8,11 @@ const API_ORIGIN =
     ? "http://localhost:4000"
     : location.origin);
 const API_BASE = `${API_ORIGIN}/api`;
+const LANDING_ORIGIN = ["localhost", "127.0.0.1"].includes(location.hostname)
+  ? "http://localhost:8080"
+  : location.hostname.endsWith("queueless.co.ke")
+    ? "https://queueless.co.ke"
+    : "https://queueless.thewolfgang.tech";
 const UPLOADS_BASE = API_ORIGIN;
 const TOKEN_KEY = "queueless_customer_token";
 const PENDING_PHONE_KEY = "queueless_pending_phone";
@@ -832,7 +837,7 @@ function tabbar(active) {
 
 function appVersion() {
   return (
-    String(window.QUEUELESS_CUSTOMER_APP_VERSION || "1.3.0").trim() || "1.3.0"
+    String(window.QUEUELESS_CUSTOMER_APP_VERSION || "1.4.0").trim() || "1.4.0"
   );
 }
 
@@ -870,6 +875,12 @@ function renderSignup() {
         ${phoneFieldHtml({ selectedCode: parts.code, localValue: parts.local })}
         ${pinFieldHtml({ id: "pin", label: "Create PIN" })}
         ${pinFieldHtml({ id: "confirm_pin", label: "Confirm PIN" })}
+        <p class="disclaimer">
+          By signing up, you agree to our
+          <a href="${LANDING_ORIGIN}/legal/customers/terms" target="_blank" rel="noopener noreferrer">terms of service</a>
+          and
+          <a href="${LANDING_ORIGIN}/legal/customers/privacy" target="_blank" rel="noopener noreferrer">privacy policy</a>.
+        </p>
         <button class="btn" type="submit">Continue</button>
         <button class="btn-link" type="button" id="to-login">Already have an account? Log in</button>
         <p class="message" id="message" role="status" aria-live="polite"></p>

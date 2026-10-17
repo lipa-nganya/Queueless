@@ -1,13 +1,12 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Queueless">
-  <style>
-    /* Brand dark green on light tab strips, brighter lime on dark ones. */
-    .q { stroke: #7eb000; }
-    @media (prefers-color-scheme: dark) {
-      .q { stroke: #a6e600; }
-    }
-  </style>
-  <g class="q" fill="none" stroke-width="5.5" stroke-linecap="round">
-    <circle cx="15.5" cy="15.5" r="9" />
-    <path d="M19 19 25 25" />
-  </g>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="86 6 280 280" role="img" aria-label="Queueless">
+  <defs>
+    <linearGradient id="q" x1="260" y1="29" x2="110" y2="250" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#C6DB46"/>
+      <stop offset="0.5" stop-color="#9AC542"/>
+      <stop offset="1" stop-color="#5EAA48"/>
+    </linearGradient>
+  </defs>
+  <path fill="#06172C" d="M195.13,129.71L293.39,240.39L266.47,264.29L168.21,153.61Z"/>
+  <path fill="url(#q)" d="M296.31,193.09L348.40,236.80L331.69,256.71L279.60,213.00Z"/>
+  <path fill="url(#q)" d="M225.50,248.40 A110,110 0 1 1 312.87,187.22 L279.61,171.00 A73,73 0 1 0 221.63,211.60Z"/>
 </svg>

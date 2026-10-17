@@ -19,14 +19,21 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.text.LinkAnnotation
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLinkStyles
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.withLink
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import tech.thewolfgang.queueless.customer.BuildConfig
 import tech.thewolfgang.queueless.customer.ui.components.AppVersionLabel
 import tech.thewolfgang.queueless.customer.ui.components.PrimaryButton
 import tech.thewolfgang.queueless.customer.ui.components.ScreenTitle
@@ -128,6 +135,7 @@ fun LoginScreen(
                         secret = true,
                         onDone = ::submit,
                     )
+                    SignupDisclaimer()
                 }
                 LoginStep.Otp -> Field(
                     value = state.otp,
@@ -201,5 +209,27 @@ private fun Field(
         ),
         keyboardActions = KeyboardActions(onDone = { onDone() }),
         colors = queuelessFieldColors(),
+    )
+}
+
+@Composable
+private fun SignupDisclaimer() {
+    val linkStyle = TextLinkStyles(SpanStyle(color = LimeInk, fontWeight = FontWeight.SemiBold))
+    val base = BuildConfig.LANDING_BASE_URL.trimEnd('/')
+    Text(
+        text = buildAnnotatedString {
+            append("By signing up, you agree to our ")
+            withLink(LinkAnnotation.Url("$base/legal/customers/terms", linkStyle)) {
+                append("terms of service")
+            }
+            append(" and ")
+            withLink(LinkAnnotation.Url("$base/legal/customers/privacy", linkStyle)) {
+                append("privacy policy")
+            }
+            append(".")
+        },
+        color = TextMuted,
+        fontSize = 13.sp,
+        lineHeight = 18.sp,
     )
 }

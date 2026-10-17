@@ -202,6 +202,19 @@ select {
   line-height: 1.55;
 }
 
+.disclaimer {
+  margin-top: 1.15rem;
+  color: var(--text-dim);
+  font-size: 0.82rem;
+  line-height: 1.5;
+  text-align: center;
+}
+
+.disclaimer a {
+  color: var(--lime-ink);
+  font-weight: 600;
+}
+
 .field {
   display: grid;
   gap: 0.45rem;

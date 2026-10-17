@@ -25,8 +25,8 @@ android {
         applicationId = "tech.thewolfgang.queueless.customer"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.3.0"
+        versionCode = 2
+        versionName = "1.4.0"
     }
 
     flavorDimensions += "environment"
@@ -38,6 +38,7 @@ android {
             versionNameSuffix = "-local"
             resValue("string", "app_name", "Queueless (Local)")
             buildConfigField("String", "ENV_NAME", "\"local\"")
+            buildConfigField("String", "LANDING_BASE_URL", "\"https://queueless.thewolfgang.tech\"")
             buildConfigField(
                 "String",
                 "API_BASE_URL",
@@ -50,6 +51,7 @@ android {
             versionNameSuffix = "-dev"
             resValue("string", "app_name", "Queueless (Dev)")
             buildConfigField("String", "ENV_NAME", "\"dev\"")
+            buildConfigField("String", "LANDING_BASE_URL", "\"https://queueless.thewolfgang.tech\"")
             buildConfigField(
                 "String",
                 "API_BASE_URL",
@@ -60,6 +62,7 @@ android {
             dimension = "environment"
             resValue("string", "app_name", "Queueless")
             buildConfigField("String", "ENV_NAME", "\"production\"")
+            buildConfigField("String", "LANDING_BASE_URL", "\"https://queueless.co.ke\"")
             buildConfigField(
                 "String",
                 "API_BASE_URL",

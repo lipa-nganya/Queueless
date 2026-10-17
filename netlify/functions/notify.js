@@ -2,6 +2,14 @@ const nodemailer = require("nodemailer");
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
 function json(statusCode, body) {
   return {
     statusCode,
@@ -47,9 +55,16 @@ exports.handler = async (event) => {
   const email = String(payload.email || "")
     .trim()
     .toLowerCase();
+  const businessName = String(payload.businessName || "")
+    .trim()
+    .slice(0, 120);
+  const hasEmail = email.length > 0;
 
-  if (!EMAIL_RE.test(email)) {
+  if (hasEmail && !EMAIL_RE.test(email)) {
     return json(400, { error: "Please enter a valid email." });
+  }
+  if (!hasEmail && !businessName) {
+    return json(400, { error: "Enter your business name." });
   }
 
   const transporter = nodemailer.createTransport({
@@ -64,25 +79,45 @@ exports.handler = async (event) => {
 
   const submittedAt = new Date().toISOString();
   const site = event.headers.host || "queueless";
+  const safeName = escapeHtml(businessName);
+  const safeEmail = escapeHtml(email);
+  const safeSite = escapeHtml(site);
+  const subject = businessName
+    ? `Free testing request: ${businessName}`
+    : `New waitlist signup: ${email}`;
 
   try {
     await transporter.sendMail({
       from: `"Queueless Notify" <${gmailUser}>`,
       to: notifyTo,
-      replyTo: email,
-      subject: `New waitlist signup: ${email}`,
+      replyTo: hasEmail ? email : undefined,
+      subject,
       text: [
-        "Someone joined the Queueless waitlist.",
+        businessName
+          ? "A business asked for free testing access."
+          : "Someone joined the Queueless waitlist.",
         "",
-        `Email: ${email}`,
+        businessName ? `Business: ${businessName}` : null,
+        hasEmail ? `Email: ${email}` : null,
         `Site: ${site}`,
         `Time: ${submittedAt}`,
-      ].join("\n"),
+      ]
+        .filter(Boolean)
+        .join("\n"),
       html: `
-        <p>Someone joined the <strong>Queueless</strong> waitlist.</p>
-        <p><strong>Email:</strong> <a href="mailto:${email}">${email}</a></p>
-        <p><strong>Site:</strong> ${site}<br/>
-        <strong>Time:</strong> ${submittedAt}</p>
+        <p>${
+          businessName
+            ? "A business asked for <strong>Queueless</strong> free testing."
+            : "Someone joined the <strong>Queueless</strong> waitlist."
+        }</p>
+        ${businessName ? `<p><strong>Business:</strong> ${safeName}</p>` : ""}
+        ${
+          hasEmail
+            ? `<p><strong>Email:</strong> <a href="mailto:${safeEmail}">${safeEmail}</a></p>`
+            : ""
+        }
+        <p><strong>Site:</strong> ${safeSite}<br/>
+        <strong>Time:</strong> ${escapeHtml(submittedAt)}</p>
       `,
     });
   } catch (error) {

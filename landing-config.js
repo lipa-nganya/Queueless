@@ -11,11 +11,15 @@
     vendorWebUrl: isLocal
       ? "http://localhost:3500/"
       : "https://vendor.queueless.thewolfgang.tech",
-    // Set when the Play Store listing (or hosted APK) is public.
-    vendorAppUrl: "",
+    // Play Store listing for the customer app. Leave blank until the listing is public.
+    customerPlayUrl: "",
+    customerAppUrl:
+      "https://play.google.com/store/apps/details?id=tech.thewolfgang.queueless.customer",
+    vendorAppUrl:
+      "https://play.google.com/store/apps/details?id=tech.thewolfgang.queueless.vendor",
     // Keep in sync with customer/config.js, vendor/config.js, android-vendor versionName.
-    customerAppVersion: "1.3.0",
-    vendorWebVersion: "1.3.0",
-    vendorAppVersion: "1.3.0",
+    customerAppVersion: "1.4.0",
+    vendorWebVersion: "1.4.0",
+    vendorAppVersion: "1.4.0",
   };
 })();

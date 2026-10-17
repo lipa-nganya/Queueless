@@ -31,6 +31,7 @@ app.get("/landing-config.js", (_req, res) => {
   res.sendFile(path.join(__dirname, "landing-config.js"), noCache);
 });
 app.use("/assets", express.static(path.join(__dirname, "assets"), staticOpts));
+app.use("/legal", express.static(path.join(__dirname, "legal"), staticOpts));
 
 app.get("/app", (_req, res) => {
   res.redirect(302, process.env.CUSTOMER_PUBLIC_URL || "http://localhost:3000/");

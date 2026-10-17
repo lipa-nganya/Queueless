@@ -688,7 +688,7 @@ function pinFieldHtml({ id, label }) {
 }
 
 function appVersion() {
-  return String(window.QUEUELESS_VENDOR_APP_VERSION || "1.3.0").trim() || "1.3.0";
+  return String(window.QUEUELESS_VENDOR_APP_VERSION || "1.4.0").trim() || "1.4.0";
 }
 
 function appVersionHtml({ onDark = false } = {}) {
