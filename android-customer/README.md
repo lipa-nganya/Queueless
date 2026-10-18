@@ -13,7 +13,7 @@ Product flavors (pick one in Android Studio’s build variant dropdown):
 | --- | --- | --- | --- | --- |
 | **local** | `.local` | Queueless (Local) | `https://homiest-psychopharmacologic-anaya.ngrok-free.dev/api` | Host API via ngrok |
 | **dev** | `.dev` | Queueless (Dev) | `https://queueless-staging.up.railway.app/api` | Develop / Railway staging |
-| **production** | _(none)_ | Queueless | `https://queueless.up.railway.app/api` | Live API |
+| **production** | _(none)_ | Queueless | `https://queueless-prod.up.railway.app/api` | Live API |
 
 All three install side by side, and each keeps its own login. Local and dev builds show the API host next to the version on the login and profile screens.
 
@@ -24,7 +24,7 @@ In `android-customer/local.properties` (gitignored):
 ```properties
 queueless.api.local=https://homiest-psychopharmacologic-anaya.ngrok-free.dev/api
 queueless.api.dev=https://queueless-staging.up.railway.app/api
-queueless.api.production=https://queueless.up.railway.app/api
+queueless.api.production=https://queueless-prod.up.railway.app/api
 ```
 
 For a local API without ngrok, use `adb reverse tcp:4000 tcp:4000` and `queueless.api.local=http://127.0.0.1:4000/api`. Cleartext HTTP is allowed for the **local** flavor only.
