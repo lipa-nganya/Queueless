@@ -9,14 +9,14 @@
       content="Queueless turns a blind wait into a visible journey. Join a live queue or book ahead, and businesses run the line from one place."
     />
     <meta name="theme-color" content="#ffffff" />
-    <link rel="icon" href="assets/favicon.svg" type="image/svg+xml" />
+    <link rel="icon" href="assets/queueless-mark.svg" type="image/svg+xml" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
       href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="./landing.css?v=20261017ac" />
+    <link rel="stylesheet" href="./landing.css?v=20261018d" />
   </head>
   <body>
     <a class="skip-link" href="#main-content">Skip to main content</a>
@@ -33,7 +33,7 @@
     <header class="topbar">
       <div class="wrap topbar-inner">
         <a class="brand" href="#main-content">
-          <img src="assets/queueless-wordmark.svg" alt="Queueless. Smart service. Zero wait." width="699" height="129" />
+          <img src="assets/queueless-logo-icon.svg" alt="Queueless. Smart service. Zero wait." width="2018" height="482" />
         </a>
         <nav class="topnav" aria-label="On this page">
           <a href="#cost">Discover Your Time</a>
@@ -181,7 +181,14 @@
                 <li>Plan your arrival with the information shown</li>
               </ul>
               <div class="customer-actions">
-                <a class="btn" id="cta-customer" href="">Download the app</a>
+                <a class="play-badge" id="cta-customer" href="">
+                  <img
+                    src="assets/google-play-badge.png?v=20261017"
+                    alt="Get it on Google Play"
+                    width="646"
+                    height="250"
+                  />
+                </a>
                 <a class="web-link" id="cta-customer-web" href="/customer/">
                   Explore on web
                   <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h11M11 5l5 5-5 5"/></svg>
@@ -396,10 +403,43 @@
           if (customerPlayUrl) {
             customerDownload.href = customerPlayUrl;
           } else {
+            customerDownload.setAttribute("aria-disabled", "true");
+            customerDownload.title = "Coming soon to Google Play";
             customerDownload.addEventListener("click", (event) => event.preventDefault());
           }
         }
         setHref("cta-join", `${vendorWebUrl.replace(/\/?$/, "/")}#login`);
+
+        const topbar = document.querySelector(".topbar");
+        const markScrolled = () => topbar.classList.toggle("is-scrolled", window.scrollY > 8);
+        window.addEventListener("scroll", markScrolled, { passive: true });
+        markScrolled();
+
+        // Underline the menu link for the section crossing the middle of the screen.
+        const navLinks = [...document.querySelectorAll(".topnav a[href^='#']")];
+        const navSections = navLinks
+          .map((link) => document.querySelector(link.getAttribute("href")))
+          .filter(Boolean);
+        const setActive = (id) => {
+          navLinks.forEach((link) => {
+            const active = link.getAttribute("href") === `#${id}`;
+            link.classList.toggle("is-active", active);
+            if (active) link.setAttribute("aria-current", "location");
+            else link.removeAttribute("aria-current");
+          });
+        };
+        if ("IntersectionObserver" in window && navSections.length) {
+          const visible = new Set();
+          const spy = new IntersectionObserver((entries) => {
+            entries.forEach((entry) => {
+              if (entry.isIntersecting) visible.add(entry.target);
+              else visible.delete(entry.target);
+            });
+            const current = navSections.find((section) => visible.has(section));
+            setActive(current ? current.id : "");
+          }, { rootMargin: "-45% 0px -54% 0px" });
+          navSections.forEach((section) => spy.observe(section));
+        }
 
         const year = document.getElementById("year");
         if (year) year.textContent = String(new Date().getFullYear());

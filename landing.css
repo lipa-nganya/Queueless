@@ -168,7 +168,27 @@ input {
   z-index: 20;
   background: rgba(255, 255, 255, 0.94);
   backdrop-filter: blur(14px);
+  transition: box-shadow 0.3s ease;
 }
+
+.topbar.is-scrolled {
+  box-shadow: 0 8px 24px rgba(10, 15, 26, 0.06);
+}
+
+/* Header settles in with the same soft rise as the place cards. */
+.brand,
+.topnav a,
+.topbar .btn-pill {
+  opacity: 0;
+  transform: translateY(-10px);
+  animation: place-rise 0.55s ease forwards;
+}
+
+.topnav a:nth-child(1) { animation-delay: 0.08s; }
+.topnav a:nth-child(2) { animation-delay: 0.14s; }
+.topnav a:nth-child(3) { animation-delay: 0.2s; }
+.topnav a:nth-child(4) { animation-delay: 0.26s; }
+.topbar .btn-pill { animation-delay: 0.32s; }
 
 .topbar-inner {
   display: flex;
@@ -186,8 +206,11 @@ input {
 
 .brand img {
   display: block;
-  width: min(13.4rem, 54vw);
-  height: auto;
+  width: auto;
+  height: 2.5rem;
+  max-width: 54vw;
+  object-fit: contain;
+  object-position: left center;
 }
 
 .topnav {
@@ -197,14 +220,37 @@ input {
 }
 
 .topnav a {
+  position: relative;
+  padding: 0.35rem 0;
   color: var(--text-dim);
   font-size: 0.82rem;
   font-weight: 500;
   white-space: nowrap;
+  transition: color 0.2s ease;
 }
 
-.topnav a:hover {
+.topnav a::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--lime);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 0.3s ease;
+}
+
+.topnav a:hover,
+.topnav a.is-active {
   color: var(--text);
+}
+
+.topnav a:hover::after,
+.topnav a.is-active::after {
+  transform: scaleX(1);
 }
 
 .kicker {
@@ -816,7 +862,7 @@ input[type="range"]::-moz-range-thumb {
 .legal {
   width: min(100%, 42rem);
   margin: 0 auto;
-  padding: 2.25rem 0 3.5rem;
+  padding: 2.25rem clamp(1.15rem, 3vw, 2.5rem) 3.5rem;
 }
 
 .legal h1 {
@@ -897,6 +943,30 @@ input[type="range"]::-moz-range-thumb {
 
 .customer-actions .btn {
   margin-top: 0;
+}
+
+/* Official badge art ships with its own transparent clear space. */
+.play-badge {
+  display: inline-flex;
+  margin-left: -0.6rem;
+  line-height: 0;
+}
+
+.play-badge img {
+  width: 10.5rem;
+  height: auto;
+}
+
+.play-badge:hover {
+  filter: brightness(1.08);
+}
+
+.play-badge:active {
+  transform: scale(0.985);
+}
+
+.play-badge[aria-disabled="true"] {
+  cursor: default;
 }
 
 .web-link {
@@ -1262,7 +1332,7 @@ input[type="range"]::-moz-range-thumb {
   }
 
   .brand img {
-    width: 17.75rem;
+    height: 3.15rem;
   }
 
   h1 {
@@ -1453,6 +1523,14 @@ input[type="range"]::-moz-range-thumb {
     scroll-behavior: auto;
   }
 
+  .topnav a::after {
+    transition: none;
+  }
+
+  .brand,
+  .topnav a,
+  .topbar,
+  .topbar .btn-pill,
   .places li,
   .places.js-ready li,
   .places.js-ready li.is-in,
