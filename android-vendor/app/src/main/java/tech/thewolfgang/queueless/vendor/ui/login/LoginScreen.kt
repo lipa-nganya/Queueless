@@ -73,6 +73,18 @@ import tech.thewolfgang.queueless.vendor.ui.theme.TextPrimary
 import tech.thewolfgang.queueless.vendor.ui.theme.queuelessFieldColors
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Visibility
+import androidx.compose.material.icons.rounded.VisibilityOff
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.text.LinkAnnotation
+import androidx.compose.ui.text.TextLinkStyles
+import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.withLink
+import tech.thewolfgang.queueless.vendor.BuildConfig
 
 @Composable
 fun LoginScreen(
@@ -215,29 +227,20 @@ fun LoginScreen(
                             viewModel.continueWithPhone()
                         },
                     )
+                    LoginLegalNotice()
                 }
 
                 LoginStep.Pin -> {
                     Text(text = "+${state.phone}", color = TextPrimary, fontWeight = FontWeight.SemiBold)
-                    TextField(
-                        shape = FieldShape,
+                    PinField(
                         value = state.pin,
                         onValueChange = viewModel::onPinChange,
-                        modifier = Modifier.fillMaxWidth(),
-                        label = { Text("PIN") },
-                        singleLine = true,
-                        visualTransformation = PasswordVisualTransformation(),
-                        keyboardOptions = KeyboardOptions(
-                            keyboardType = KeyboardType.NumberPassword,
-                            imeAction = ImeAction.Done,
-                        ),
-                        keyboardActions = KeyboardActions(
-                            onDone = {
-                                focusManager.clearFocus()
-                                viewModel.loginWithPin()
-                            },
-                        ),
-                        colors = fieldColors(),
+                        label = "PIN",
+                        imeAction = ImeAction.Done,
+                        onDone = {
+                            focusManager.clearFocus()
+                            viewModel.loginWithPin()
+                        },
                     )
                     PrimaryButton(
                         label = "Sign in",
@@ -253,6 +256,7 @@ fun LoginScreen(
                     TextButton(onClick = viewModel::backToPhone, enabled = !state.loading) {
                         Text("Use a different number", color = TextMuted)
                     }
+                    LoginLegalNotice()
                 }
 
                 LoginStep.Otp -> {
@@ -294,39 +298,21 @@ fun LoginScreen(
 
                 LoginStep.SetPin -> {
                     Text(text = "+${state.phone}", color = TextPrimary, fontWeight = FontWeight.SemiBold)
-                    TextField(
-                        shape = FieldShape,
+                    PinField(
                         value = state.pin,
                         onValueChange = viewModel::onPinChange,
-                        modifier = Modifier.fillMaxWidth(),
-                        label = { Text("New PIN") },
-                        singleLine = true,
-                        visualTransformation = PasswordVisualTransformation(),
-                        keyboardOptions = KeyboardOptions(
-                            keyboardType = KeyboardType.NumberPassword,
-                            imeAction = ImeAction.Next,
-                        ),
-                        colors = fieldColors(),
+                        label = "New PIN",
+                        imeAction = ImeAction.Next,
                     )
-                    TextField(
-                        shape = FieldShape,
+                    PinField(
                         value = state.confirmPin,
                         onValueChange = viewModel::onConfirmPinChange,
-                        modifier = Modifier.fillMaxWidth(),
-                        label = { Text("Confirm PIN") },
-                        singleLine = true,
-                        visualTransformation = PasswordVisualTransformation(),
-                        keyboardOptions = KeyboardOptions(
-                            keyboardType = KeyboardType.NumberPassword,
-                            imeAction = ImeAction.Done,
-                        ),
-                        keyboardActions = KeyboardActions(
-                            onDone = {
-                                focusManager.clearFocus()
-                                viewModel.savePin()
-                            },
-                        ),
-                        colors = fieldColors(),
+                        label = "Confirm PIN",
+                        imeAction = ImeAction.Done,
+                        onDone = {
+                            focusManager.clearFocus()
+                            viewModel.savePin()
+                        },
                     )
                     PrimaryButton(
                         label = "Save PIN",
@@ -566,6 +552,67 @@ private fun OnboardingFields(
         enabled = !loading,
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
         colors = fieldColors(),
+    )
+}
+
+@Composable
+private fun PinField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    label: String,
+    imeAction: ImeAction,
+    onDone: (() -> Unit)? = null,
+) {
+    var visible by rememberSaveable { mutableStateOf(false) }
+    TextField(
+        shape = FieldShape,
+        value = value,
+        onValueChange = onValueChange,
+        modifier = Modifier.fillMaxWidth(),
+        label = { Text(label) },
+        singleLine = true,
+        visualTransformation = if (visible) VisualTransformation.None else PasswordVisualTransformation(),
+        trailingIcon = {
+            IconButton(onClick = { visible = !visible }) {
+                Icon(
+                    imageVector = if (visible) Icons.Rounded.VisibilityOff else Icons.Rounded.Visibility,
+                    contentDescription = if (visible) "Hide $label" else "Show $label",
+                    tint = TextMuted,
+                )
+            }
+        },
+        keyboardOptions = KeyboardOptions(
+            keyboardType = KeyboardType.NumberPassword,
+            imeAction = imeAction,
+        ),
+        keyboardActions = KeyboardActions(onDone = { onDone?.invoke() }),
+        colors = fieldColors(),
+    )
+}
+
+@Composable
+private fun LoginLegalNotice() {
+    val linkStyle = TextLinkStyles(SpanStyle(color = LimeInk, fontWeight = FontWeight.SemiBold))
+    val base = BuildConfig.LANDING_BASE_URL.trimEnd('/')
+    Text(
+        text = buildAnnotatedString {
+            append("By logging in you are agreeing to our ")
+            withLink(LinkAnnotation.Url("$base/legal/vendors/terms", linkStyle)) {
+                append("Terms of Use")
+            }
+            append(" and ")
+            withLink(LinkAnnotation.Url("$base/legal/vendors/privacy", linkStyle)) {
+                append("Privacy Policy")
+            }
+            append(".")
+        },
+        color = TextMuted,
+        fontSize = 13.sp,
+        lineHeight = 18.sp,
+        textAlign = TextAlign.Center,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 4.dp),
     )
 }
 

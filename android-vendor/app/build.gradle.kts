@@ -42,6 +42,7 @@ android {
             versionNameSuffix = "-local"
             resValue("string", "app_name", "Queueless Vendor (Local)")
             buildConfigField("String", "ENV_NAME", "\"local\"")
+            buildConfigField("String", "LANDING_BASE_URL", "\"https://queueless.thewolfgang.tech\"")
             buildConfigField(
                 "String",
                 "API_BASE_URL",
@@ -54,6 +55,7 @@ android {
             versionNameSuffix = "-dev"
             resValue("string", "app_name", "Queueless Vendor (Dev)")
             buildConfigField("String", "ENV_NAME", "\"dev\"")
+            buildConfigField("String", "LANDING_BASE_URL", "\"https://queueless.thewolfgang.tech\"")
             buildConfigField(
                 "String",
                 "API_BASE_URL",
@@ -64,6 +66,7 @@ android {
             dimension = "environment"
             resValue("string", "app_name", "Queueless Vendor")
             buildConfigField("String", "ENV_NAME", "\"production\"")
+            buildConfigField("String", "LANDING_BASE_URL", "\"https://queueless.co.ke\"")
             buildConfigField(
                 "String",
                 "API_BASE_URL",
