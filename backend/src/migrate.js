@@ -432,7 +432,14 @@ export async function migrate() {
   `);
 }
 
+// Railway's production environment must never boot with demo logins.
+const IS_PRODUCTION_ENV = process.env.RAILWAY_ENVIRONMENT_NAME === "production";
+
 export async function seedAdmin() {
+  if (IS_PRODUCTION_ENV && !process.env.ADMIN_PASSWORD) {
+    console.warn("ADMIN_PASSWORD is not set; skipping admin seed in production.");
+    return;
+  }
   const username = process.env.ADMIN_USERNAME || "admin";
   const password = process.env.ADMIN_PASSWORD || "admin123";
   const email = (process.env.ADMIN_EMAIL || "admin@queueless.co.ke").toLowerCase();
@@ -493,6 +500,8 @@ export async function seedBusinessGroups() {
   await query(`UPDATE business_groups SET icon = 'entertainment' WHERE icon = 'fitness'`);
 }
 export async function seedVendor() {
+  // The demo vendor has a well-known PIN, so it only exists outside production.
+  if (IS_PRODUCTION_ENV) return;
   const username = process.env.VENDOR_USERNAME || "vendor";
   const password = process.env.VENDOR_PASSWORD || "vendor123";
   const pin = String(process.env.VENDOR_PIN || "1234").trim();

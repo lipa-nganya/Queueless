@@ -18,6 +18,48 @@
 
 # Keep /app and /customer working on the landing host by sending people to the
 # dedicated customer develop subdomain.
+# Production landing (main) sends app paths to the production customer app.
+[[redirects]]
+  from = "https://queueless.co.ke/app"
+  to = "https://customer.queueless.co.ke/"
+  status = 302
+
+[[redirects]]
+  from = "https://queueless.co.ke/app/*"
+  to = "https://customer.queueless.co.ke/:splat"
+  status = 302
+
+[[redirects]]
+  from = "https://queueless.co.ke/customer"
+  to = "https://customer.queueless.co.ke/"
+  status = 302
+
+[[redirects]]
+  from = "https://queueless.co.ke/customer/*"
+  to = "https://customer.queueless.co.ke/:splat"
+  status = 302
+
+[[redirects]]
+  from = "https://www.queueless.co.ke/app"
+  to = "https://customer.queueless.co.ke/"
+  status = 302
+
+[[redirects]]
+  from = "https://www.queueless.co.ke/app/*"
+  to = "https://customer.queueless.co.ke/:splat"
+  status = 302
+
+[[redirects]]
+  from = "https://www.queueless.co.ke/customer"
+  to = "https://customer.queueless.co.ke/"
+  status = 302
+
+[[redirects]]
+  from = "https://www.queueless.co.ke/customer/*"
+  to = "https://customer.queueless.co.ke/:splat"
+  status = 302
+
+# Develop landing.
 [[redirects]]
   from = "/app"
   to = "https://customer.thewolfgang.tech/"

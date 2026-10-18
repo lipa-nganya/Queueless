@@ -27,6 +27,11 @@ const defaultOrigins = [
   "https://customer.thewolfgang.tech",
   "https://admin.queueless.thewolfgang.tech",
   "https://vendor.queueless.thewolfgang.tech",
+  "https://queueless.co.ke",
+  "https://www.queueless.co.ke",
+  "https://customer.queueless.co.ke",
+  "https://admin.queueless.co.ke",
+  "https://vendor.queueless.co.ke",
 ];
 const allowedOrigins = new Set(
   (process.env.CORS_ORIGINS || "")

@@ -1,8 +1,11 @@
 // Origin of the Queueless API. Local development talks to the local backend;
 // deployed builds use the Railway service.
+// *.queueless.co.ke is production; everything else deployed is develop/staging.
 window.QUEUELESS_API_ORIGIN = ["localhost", "127.0.0.1"].includes(location.hostname)
   ? "http://localhost:4000"
-  : "https://queueless-staging.up.railway.app";
+  : location.hostname.endsWith("queueless.co.ke")
+    ? "https://queueless.up.railway.app"
+    : "https://queueless-staging.up.railway.app";
 
 // Keep in sync with android-vendor versionName (app/build.gradle.kts).
 window.QUEUELESS_VENDOR_APP_VERSION = "1.4.0";

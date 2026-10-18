@@ -585,6 +585,8 @@ async function shrinkImageForUpload(file) {
 }
 
 function renderLogin() {
+  // The seeded dev login is only a convenience on a local machine.
+  const devLoginHint = ["localhost", "127.0.0.1"].includes(location.hostname);
   app.innerHTML = `
     <div class="login-shell">
       ${authAsideHtml()}
@@ -600,11 +602,11 @@ function renderLogin() {
         <div class="auth-body">
         <div class="field">
           <label for="username">Username or email</label>
-          <input id="username" name="username" autocomplete="username" value="admin" required />
+          <input id="username" name="username" autocomplete="username" value="${devLoginHint ? "admin" : ""}" required />
         </div>
         <div class="field">
           <label for="password">Password</label>
-          <input id="password" name="password" type="password" autocomplete="current-password" value="admin123" required />
+          <input id="password" name="password" type="password" autocomplete="current-password" value="${devLoginHint ? "admin123" : ""}" required />
         </div>
         <button class="btn btn-primary btn-block auth-submit" type="submit">Sign in</button>
         <p class="message" id="login-message" role="status"></p>
