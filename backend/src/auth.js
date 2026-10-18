@@ -188,6 +188,29 @@ export function optionalCustomer(req, _res, next) {
   return next();
 }
 
+// Every vendor request checks deactivation; the queue screen polls, so remember
+// the answer briefly. Admin (de)activation clears the entry at once, so the
+// 30s window only matters if the API ever runs as more than one instance.
+const VENDOR_STATUS_TTL_MS = 30000;
+const vendorStatusCache = new Map();
+
+export function invalidateVendorStatus(vendorId) {
+  vendorStatusCache.delete(Number(vendorId));
+}
+
+async function vendorIsDeactivated(vendorId) {
+  const id = Number(vendorId);
+  const hit = vendorStatusCache.get(id);
+  if (hit && Date.now() - hit.at < VENDOR_STATUS_TTL_MS) return hit.deactivated;
+  const result = await query(`SELECT deactivated_at FROM vendors WHERE id = $1`, [id]);
+  const deactivated = Boolean(result.rows[0]?.deactivated_at);
+  vendorStatusCache.set(id, { at: Date.now(), deactivated });
+  if (vendorStatusCache.size > 5000) {
+    vendorStatusCache.delete(vendorStatusCache.keys().next().value);
+  }
+  return deactivated;
+}
+
 export function requireVendor(req, res, next) {
   try {
     const payload = readToken(req);
@@ -195,9 +218,9 @@ export function requireVendor(req, res, next) {
       return res.status(401).json({ error: "Unauthorized" });
     }
     req.vendor = payload;
-    query(`SELECT deactivated_at FROM vendors WHERE id = $1`, [payload.sub])
-      .then((result) => {
-        if (result.rows[0]?.deactivated_at) {
+    vendorIsDeactivated(payload.sub)
+      .then((deactivated) => {
+        if (deactivated) {
           return res.status(403).json({
             error: "This account has been deactivated. Contact Queueless.",
           });

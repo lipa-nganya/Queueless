@@ -14,6 +14,7 @@ import {
   requireCustomer,
   optionalCustomer,
   requireVendor,
+  invalidateVendorStatus,
   signCustomerToken,
   signVendorToken,
   signVendorOnboardingToken,
@@ -5827,6 +5828,7 @@ router.post("/admins/vendors/:id/activate", requireAdmin, async (req, res) => {
       `UPDATE vendors SET activated_at = COALESCE(activated_at, NOW()), deactivated_at = NULL WHERE id = $1`,
       [id]
     );
+    invalidateVendorStatus(id);
     const vendor = await vendorWithBusinesses(id);
     const notify = await notifyVendorActivated({
       phone: vendor.phone,
@@ -5865,6 +5867,7 @@ router.post("/admins/vendors/:id/deactivate", requireAdmin, async (req, res) => 
       return res.status(409).json({ error: "Only an active vendor can be deactivated." });
     }
     await query(`UPDATE vendors SET deactivated_at = NOW() WHERE id = $1`, [id]);
+    invalidateVendorStatus(id);
     const vendor = await vendorWithBusinesses(id);
     return res.json({
       ...vendor,

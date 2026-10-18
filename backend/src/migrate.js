@@ -275,6 +275,11 @@ export async function migrate() {
       ON queue_entries (branch_id, joined_at)
       WHERE status = 'waiting';
 
+    -- The customer's own queue poll looks entries up by customer.
+    CREATE INDEX IF NOT EXISTS queue_entries_customer_waiting
+      ON queue_entries (customer_id)
+      WHERE status = 'waiting';
+
     -- Customer accessibility needs: saved preference + snapshot shared with staff per visit.
     ALTER TABLE customers
       ADD COLUMN IF NOT EXISTS accessibility_needs TEXT NOT NULL DEFAULT '[]';

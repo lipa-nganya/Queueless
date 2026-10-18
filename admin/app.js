@@ -550,6 +550,40 @@ setInterval(() => {
   list.classList.add("is-feeding");
 }, 3200);
 
+// Business photos are served to every customer who browses, so a 4 MB phone
+// photo costs egress on each view. Shrink in the browser before upload: the
+// largest display is a full-width hero at ~3x density, which 1280px covers.
+const UPLOAD_MAX_EDGE = 1280;
+const UPLOAD_KEEP_BYTES = 400 * 1024;
+
+async function shrinkImageForUpload(file) {
+  // Vector and animated formats would lose something in a canvas round-trip.
+  if (!/^image\/(jpeg|png|webp|avif|heic|heif)$/i.test(file.type)) return file;
+  let bitmap;
+  try {
+    bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
+  } catch {
+    return file;
+  }
+  const scale = Math.min(1, UPLOAD_MAX_EDGE / Math.max(bitmap.width, bitmap.height));
+  if (scale === 1 && file.size <= UPLOAD_KEEP_BYTES) {
+    bitmap.close();
+    return file;
+  }
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(bitmap.width * scale);
+  canvas.height = Math.round(bitmap.height * scale);
+  canvas.getContext("2d").drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  bitmap.close();
+  const encode = (type, quality) => new Promise((resolve) => canvas.toBlob(resolve, type, quality));
+  let blob = await encode("image/webp", 0.82);
+  // Browsers without a WebP encoder quietly hand back PNG; JPEG is smaller then.
+  if (!blob || blob.type !== "image/webp") blob = await encode("image/jpeg", 0.85);
+  if (!blob || blob.size >= file.size) return file;
+  const ext = blob.type === "image/webp" ? "webp" : "jpg";
+  return new File([blob], `photo.${ext}`, { type: blob.type });
+}
+
 function renderLogin() {
   app.innerHTML = `
     <div class="login-shell">
@@ -2035,7 +2069,8 @@ async function renderEditBusiness(businessId) {
     editImageMessage.textContent = "";
     editImageMessage.classList.remove("success");
     const formData = new FormData();
-    formData.append("image", file);
+    const upload = await shrinkImageForUpload(file);
+    formData.append("image", upload, upload.name);
     const token = getToken();
     try {
       const response = await fetch(`${API_BASE}/businesses/${businessId}/image`, {
