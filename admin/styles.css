@@ -98,6 +98,16 @@ textarea {
   letter-spacing: inherit;
 }
 
+/* Form controls default to a ~20-character intrinsic width that grid and
+   flex tracks will not shrink below; on narrow phones or with large system
+   text that pushes the whole page sideways. Let them shrink to their track. */
+input,
+select,
+textarea {
+  min-width: 0;
+  max-width: 100%;
+}
+
 a {
   color: var(--lime-ink);
 }

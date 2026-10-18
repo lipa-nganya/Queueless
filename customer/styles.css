@@ -81,6 +81,16 @@ select {
   font: inherit;
 }
 
+/* Form controls default to a ~20-character intrinsic width that grid and
+   flex tracks will not shrink below; on narrow phones or with large system
+   text that pushes the whole page sideways. Let them shrink to their track. */
+input,
+select,
+textarea {
+  min-width: 0;
+  max-width: 100%;
+}
+
 :focus-visible {
   outline: 3px solid var(--lime-ink);
   outline-offset: 2px;
@@ -253,8 +263,20 @@ select {
 
 .phone-row {
   display: grid;
-  grid-template-columns: 7.5rem 1fr;
+  grid-template-columns: 7.5rem minmax(0, 1fr);
   gap: 0.55rem;
+}
+
+@media (max-width: 340px) {
+  .phone-row {
+    grid-template-columns: 7rem minmax(0, 1fr);
+    gap: 0.45rem;
+  }
+
+  .field .phone-row select,
+  .field .phone-row input {
+    padding: 0 0.7rem;
+  }
 }
 
 .resend-row {
