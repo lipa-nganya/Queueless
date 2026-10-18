@@ -15,6 +15,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -59,9 +62,6 @@ class MainActivity : ComponentActivity() {
             navigationBarStyle = SystemBarStyle.light(Color.WHITE, Color.WHITE),
         )
         val app = application as QueuelessVendorApp
-        PushRegistrar.ensureNotificationChannel(this)
-        maybeRequestNotificationPermission()
-        if (app.repository.hasSession()) {
         pendingQueueId.value = intent.queueBranchId()
         PushRegistrar.ensureNotificationChannel(this)
         maybeRequestNotificationPermission()
@@ -383,3 +383,7 @@ private fun VendorNav(repository: VendorRepository, pendingQueueId: MutableState
                 onOpenProfile = { goProfile(businessId) },
                 onSignOut = ::signOut,
                 onUnauthorized = ::onUnauthorized,
+            )
+        }
+    }
+}
