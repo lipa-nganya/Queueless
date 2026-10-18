@@ -486,9 +486,74 @@ function appVersionHtml({ onDark = false } = {}) {
   return `<p class="app-version${onDark ? " app-version-on-dark" : ""}">v${escapeHtml(appVersion())}</p>`;
 }
 
+// Sign-in brand panel: a sample activity feed from across the network.
+const QUEUE_DEMO_EVENTS = [
+  ["Mama Njeri Salon", "Westlands", "Joined queue"],
+  ["Glow Spa", "Kilimani", "Booking confirmed"],
+  ["Kariuki Motors", "Industrial Area", "Now serving"],
+  ["Sunrise Clinic", "Ngong Road", "Joined queue"],
+  ["Fresh Cuts", "CBD", "Walk-in added"],
+  ["Mwangaza Bank", "Thika Road", "Now serving"],
+  ["Lavington Dental", "Lavington", "Booking confirmed"],
+];
+const QUEUE_DEMO_AGES = ["now", "1m", "3m", "6m"];
+let queueDemoTick = 0;
+
+function queueDemoCount() {
+  return 118 + ((queueDemoTick * 7) % 13);
+}
+
+function queueDemoRowsHtml() {
+  const total = QUEUE_DEMO_EVENTS.length;
+  return [0, 1, 2, 3]
+    .map((i) => {
+      const [name, branch, state] = QUEUE_DEMO_EVENTS[(((queueDemoTick - i) % total) + total) % total];
+      return `<li${i === 0 ? ' class="is-now"' : ""}><span class="queue-demo-ticket">${QUEUE_DEMO_AGES[i]}</span><span class="queue-demo-name">${name} · ${branch}</span><span class="queue-demo-state">${state}</span></li>`;
+    })
+    .join("");
+}
+
+function authAsideHtml() {
+  return `
+    <aside class="auth-aside">
+      <span class="auth-orb auth-orb-lime" aria-hidden="true"></span>
+      <span class="auth-orb auth-orb-teal" aria-hidden="true"></span>
+      <span class="auth-orb auth-orb-navy" aria-hidden="true"></span>
+      <img class="auth-logo" src="./brand/queueless-logo-icon-on-dark.svg" alt="Queueless. Smart service. Zero wait." width="2018" height="482" />
+      <div class="auth-pitch">
+        <p class="auth-kicker">Queueless control room</p>
+        <p class="auth-headline">Every queue, one calm view.</p>
+        <p class="auth-sub">Approve vendors, shape categories and keep services moving across the network.</p>
+      </div>
+      <div class="queue-demo" aria-hidden="true">
+        <div class="queue-demo-head">
+          <span class="queue-demo-live">Live across Queueless</span>
+          <span class="queue-demo-count">Waiting now <strong data-queue-demo-count>${queueDemoCount()}</strong></span>
+        </div>
+        <ol class="queue-demo-list">${queueDemoRowsHtml()}</ol>
+      </div>
+    </aside>
+  `;
+}
+
+// Advance the brand-panel vignette while a sign-in screen is showing (desktop only).
+setInterval(() => {
+  const list = document.querySelector(".queue-demo-list");
+  if (!list || document.hidden || !list.offsetParent) return;
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  queueDemoTick += 1;
+  list.innerHTML = queueDemoRowsHtml();
+  const count = document.querySelector("[data-queue-demo-count]");
+  if (count) count.textContent = String(queueDemoCount());
+  list.classList.remove("is-feeding");
+  void list.offsetWidth;
+  list.classList.add("is-feeding");
+}, 3200);
+
 function renderLogin() {
   app.innerHTML = `
     <div class="login-shell">
+      ${authAsideHtml()}
       <form class="login-card" id="login-form">
         <div class="auth-header">
           <div class="auth-brand">
@@ -593,7 +658,7 @@ function shell(active, content, { crumb = "" } = {}) {
     <div class="shell">
       <aside class="sidebar" id="sidebar" aria-label="Main navigation">
         <div class="sidebar-brand">
-          <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="5.5" stroke-linecap="round"><circle cx="15.5" cy="15.5" r="9"/><path d="M19 19 25 25"/></g></svg>
+          <img class="brand-mark" src="./brand/queueless-mark-on-dark.svg" alt="" width="262" height="233" />
           <div class="brand">Queue<span>less</span></div>
           <span class="brand-tag">Admin</span>
           <button type="button" class="sidebar-close" id="sidebar-close" aria-label="Close menu">${materialIcon("close")}</button>
@@ -2891,6 +2956,7 @@ async function renderAcceptInvite(view) {
   const token = inviteTokenFromHash(view);
   app.innerHTML = `
     <div class="login-shell">
+      ${authAsideHtml()}
       <form class="login-card" id="accept-form">
         <div class="auth-header">
           <div class="auth-brand">

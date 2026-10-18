@@ -323,9 +323,8 @@ h4 {
 
 .brand-mark {
   width: 1.75rem;
-  height: 1.75rem;
+  height: auto;
   flex-shrink: 0;
-  color: var(--lime-flow);
 }
 
 .sidebar .brand {
@@ -2689,5 +2688,467 @@ tbody tr:hover {
 @media (max-width: 720px) {
   #contact-form .form-row {
     grid-template-columns: 1fr;
+  }
+}
+
+/* ------------------------------------------------------------- sign in: split layout */
+/* Brand panel on the left (a header band on phones), calm form on the right.
+   Shared by the admin and vendor apps; keep the two copies in sync. */
+
+.login-shell {
+  display: block;
+  place-items: initial;
+  padding: 0;
+  background: var(--bg);
+}
+
+.auth-aside {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  padding: 1.6rem 1.5rem 4.75rem;
+  background:
+    radial-gradient(circle at 80% 0%, rgba(166, 230, 0, 0.16), transparent 45%),
+    linear-gradient(195deg, #1c2434, var(--deep-navy));
+  color: #fff;
+}
+
+/* Same corner circles as the landing page and the Android apps. */
+.auth-orb {
+  position: absolute;
+  z-index: -1;
+  border-radius: 50%;
+  animation: auth-float 9s ease-in-out infinite;
+}
+
+.auth-orb-lime {
+  top: -3.5rem;
+  right: -2.75rem;
+  width: 9.5rem;
+  height: 9.5rem;
+  background: var(--lime-flow);
+}
+
+.auth-orb-teal {
+  bottom: 3.85rem;
+  right: 1.75rem;
+  width: 2.2rem;
+  height: 2.2rem;
+  background: var(--ocean-teal);
+  animation-delay: -3s;
+}
+
+.auth-orb-navy {
+  bottom: -4rem;
+  left: -3rem;
+  width: 10rem;
+  height: 10rem;
+  background: var(--navy-soft);
+  animation-delay: -6s;
+}
+
+.auth-logo {
+  display: block;
+  width: 12.5rem;
+  max-width: 70%;
+  height: auto;
+}
+
+.auth-pitch {
+  max-width: 26rem;
+  margin-top: 1.6rem;
+}
+
+.auth-kicker {
+  color: var(--lime-flow);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.auth-headline {
+  margin-top: 0.5rem;
+  font-size: 1.45rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+
+.auth-sub {
+  display: none;
+  margin-top: 0.85rem;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 0.95rem;
+  font-weight: 300;
+  line-height: 1.6;
+}
+
+.queue-demo {
+  display: none;
+}
+
+/* The form floats up over the bottom of the brand band on phones. */
+.login-shell > :not(.auth-aside) {
+  position: relative;
+  z-index: 1;
+  width: min(calc(100% - 2rem), 26rem);
+  margin: -3.25rem auto 2rem;
+}
+
+.login-shell .login-stack {
+  gap: 1rem;
+}
+
+.login-shell .onboarding-stack {
+  width: min(calc(100% - 2rem), 32rem);
+}
+
+.login-shell .login-stack > .login-card {
+  width: 100%;
+}
+
+.login-shell .login-stack > .login-card,
+.login-shell > .login-card {
+  padding: 1.75rem 1.5rem 1.5rem;
+  border: 1px solid rgba(10, 15, 26, 0.04);
+  border-radius: 1.25rem;
+  background: var(--panel);
+  box-shadow: 0 24px 48px -24px rgba(10, 15, 26, 0.28), 0 2px 6px rgba(10, 15, 26, 0.04);
+  animation: auth-rise 0.55s ease both;
+}
+
+.login-shell .login-stack > .app-version {
+  color: var(--text-dim);
+}
+
+.login-shell .auth-header {
+  margin: 0 0 1.5rem;
+  padding: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  text-align: left;
+}
+
+.login-shell .auth-brand {
+  justify-content: flex-start;
+  margin-bottom: 1rem;
+}
+
+/* The wordmark lives in the brand panel, so the card keeps only the role chip. */
+.login-shell .auth-brand .brand {
+  display: none;
+}
+
+.login-shell .auth-badge {
+  gap: 0.4rem;
+  padding: 0.35rem 0.7rem;
+  border-radius: 999px;
+  background: rgba(166, 230, 0, 0.16);
+  color: var(--lime-ink);
+  letter-spacing: 0.1em;
+}
+
+.login-shell .auth-badge::before {
+  content: "";
+  width: 0.4rem;
+  height: 0.4rem;
+  border-radius: 50%;
+  background: var(--lime-deep);
+}
+
+.login-shell .auth-title {
+  font-size: 1.75rem;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+
+.login-shell .auth-lead {
+  margin-top: 0.45rem;
+  color: var(--text-dim);
+}
+
+.login-shell .auth-lead strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.login-shell .auth-body {
+  padding: 0;
+}
+
+.login-shell .auth-submit {
+  height: 3rem;
+  min-height: 3rem;
+  border-radius: 0.75rem;
+  font-size: 0.8rem;
+  letter-spacing: 0.06em;
+}
+
+.login-shell .login-card .app-version {
+  margin-top: 1.5rem;
+}
+
+@media (min-width: 960px) {
+  .login-shell {
+    display: grid;
+    grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+    min-height: 100dvh;
+  }
+
+  .auth-aside {
+    position: sticky;
+    top: 0;
+    display: flex;
+    flex-direction: column;
+    height: 100dvh;
+    padding: 2.75rem clamp(2.5rem, 5vw, 4.5rem);
+  }
+
+  .auth-orb-lime {
+    top: -5.5rem;
+    right: -4.5rem;
+    width: 15rem;
+    height: 15rem;
+  }
+
+  .auth-orb-teal {
+    top: 13.5rem;
+    bottom: auto;
+    right: 2.25rem;
+    width: 3.6rem;
+    height: 3.6rem;
+  }
+
+  .auth-orb-navy {
+    bottom: -7rem;
+    left: -6rem;
+    width: 18rem;
+    height: 18rem;
+  }
+
+  .auth-pitch {
+    margin-top: auto;
+  }
+
+  .auth-headline {
+    font-size: clamp(2.1rem, 3vw, 2.75rem);
+    line-height: 1.12;
+  }
+
+  .auth-sub {
+    display: block;
+  }
+
+  .queue-demo {
+    display: block;
+    width: min(100%, 23rem);
+    margin: 2.25rem 0 auto;
+    padding: 1rem 1rem 0.5rem;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 1.1rem;
+    background: rgba(255, 255, 255, 0.06);
+    backdrop-filter: blur(10px);
+    box-shadow: 0 24px 48px -20px rgba(0, 0, 0, 0.5);
+  }
+
+  .auth-logo {
+    width: 16rem;
+  }
+
+  .login-shell > :not(.auth-aside) {
+    align-self: center;
+    margin: 0 auto;
+    padding: 3rem 0;
+  }
+
+  .login-shell .login-stack > .login-card,
+  .login-shell > .login-card {
+    padding: 2.5rem 2.25rem 2rem;
+  }
+
+  .login-shell > .login-card {
+    padding-top: 2.5rem;
+    margin: 3rem auto;
+  }
+
+  .login-shell .auth-title {
+    font-size: 2rem;
+  }
+}
+
+/* Live queue vignette in the brand panel. */
+.queue-demo-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0 0.15rem 0.75rem;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+.queue-demo-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.queue-demo-live::before {
+  content: "";
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--lime-flow);
+  box-shadow: 0 0 0 0 rgba(166, 230, 0, 0.6);
+  animation: auth-pulse 2s ease-out infinite;
+}
+
+.queue-demo-count strong {
+  color: #fff;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.queue-demo-list {
+  display: grid;
+  gap: 0.4rem;
+  margin: 0;
+  padding: 0 0 0.5rem;
+  list-style: none;
+  overflow: hidden;
+}
+
+.queue-demo-list li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.75rem;
+  min-height: 2.75rem;
+  padding: 0 0.75rem;
+  border-radius: 0.75rem;
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 0.82rem;
+}
+
+.queue-demo-list li.is-now {
+  background: var(--lime-flow);
+  color: var(--deep-navy);
+}
+
+.queue-demo-ticket {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+
+.queue-demo-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.queue-demo-state {
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 0.72rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.queue-demo-list li.is-now .queue-demo-state {
+  color: var(--deep-navy);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 0.65rem;
+}
+
+.queue-demo-list.is-advancing li {
+  animation: queue-advance 0.6s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+.queue-demo-list.is-feeding li {
+  animation: queue-feed 0.6s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+.queue-demo-list.is-advancing li.is-now,
+.queue-demo-list.is-feeding li.is-now {
+  animation-name: queue-advance, queue-glow;
+  animation-duration: 0.6s, 1.2s;
+}
+
+.queue-demo-list.is-feeding li.is-now {
+  animation-name: queue-feed, queue-glow;
+}
+
+@keyframes auth-rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes auth-float {
+  0%,
+  100% {
+    transform: translate(0, 0);
+  }
+  50% {
+    transform: translate(0, -10px);
+  }
+}
+
+@keyframes auth-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(166, 230, 0, 0.55);
+  }
+  100% {
+    box-shadow: 0 0 0 0.55rem rgba(166, 230, 0, 0);
+  }
+}
+
+@keyframes queue-advance {
+  from {
+    transform: translateY(3.15rem);
+  }
+  to {
+    transform: none;
+  }
+}
+
+@keyframes queue-feed {
+  from {
+    transform: translateY(-3.15rem);
+    opacity: 0.4;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+
+@keyframes queue-glow {
+  0% {
+    box-shadow: 0 0 0 0 rgba(166, 230, 0, 0.5);
+  }
+  100% {
+    box-shadow: 0 0 0 0.6rem rgba(166, 230, 0, 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .auth-orb,
+  .queue-demo-live::before,
+  .queue-demo-list li,
+  .login-shell .login-stack > .login-card,
+  .login-shell > .login-card {
+    animation: none !important;
   }
 }

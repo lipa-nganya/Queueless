@@ -80,6 +80,12 @@ function switchableBranches(branches, selectedId) {
   );
 }
 
+const LANDING_ORIGIN = ["localhost", "127.0.0.1"].includes(location.hostname)
+  ? "http://localhost:8080"
+  : location.hostname.endsWith("queueless.co.ke")
+    ? "https://queueless.co.ke"
+    : "https://queueless.thewolfgang.tech";
+
 const PIN_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 21s6-5.2 6-10a6 6 0 1 0-12 0c0 4.8 6 10 6 10Z"/><circle cx="12" cy="11" r="2.2"/></svg>`;
 
 /**
@@ -678,12 +684,43 @@ function normalizeLocalPhone(value) {
   return String(value || "").replace(/\D/g, "");
 }
 
+const EYE_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg>`;
+const EYE_OFF_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.6 5.1A10.4 10.4 0 0 1 12 5c6.5 0 10 7 10 7a17.6 17.6 0 0 1-2.4 3.4M6.6 6.6C3.7 8.5 2 12 2 12s3.5 7 10 7a9.7 9.7 0 0 0 5.4-1.6M9.9 9.9a3 3 0 0 0 4.2 4.2M3 3l18 18"/></svg>`;
+
 function pinFieldHtml({ id, label }) {
   return `
     <div class="field">
       <label for="${id}">${label}</label>
-      <input id="${id}" name="${id}" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" autocomplete="one-time-code" required />
+      <div class="pin-input-wrap">
+        <input id="${id}" name="${id}" type="password" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" autocomplete="one-time-code" required />
+        <button class="pin-toggle" type="button" aria-controls="${id}" aria-label="Show ${label}" aria-pressed="false">${EYE_ICON}</button>
+      </div>
     </div>
+  `;
+}
+
+// Views re-render with innerHTML, so the PIN eye toggle is delegated once.
+document.addEventListener("click", (event) => {
+  const toggle = event.target.closest(".pin-toggle");
+  if (!toggle) return;
+  const input = document.getElementById(toggle.getAttribute("aria-controls"));
+  if (!input) return;
+  const show = input.type === "password";
+  const label = toggle.getAttribute("aria-label").replace(/^(Show|Hide) /, "");
+  input.type = show ? "text" : "password";
+  toggle.setAttribute("aria-pressed", String(show));
+  toggle.setAttribute("aria-label", `${show ? "Hide" : "Show"} ${label}`);
+  toggle.innerHTML = show ? EYE_OFF_ICON : EYE_ICON;
+});
+
+function authLegalHtml() {
+  return `
+    <p class="auth-legal">
+      By logging in you are agreeing to our
+      <a href="${LANDING_ORIGIN}/legal/vendors/terms" target="_blank" rel="noopener noreferrer">Terms of Use</a>
+      and
+      <a href="${LANDING_ORIGIN}/legal/vendors/privacy" target="_blank" rel="noopener noreferrer">Privacy Policy</a>.
+    </p>
   `;
 }
 
@@ -694,6 +731,61 @@ function appVersion() {
 function appVersionHtml({ onDark = false } = {}) {
   return `<p class="app-version${onDark ? " app-version-on-dark" : ""}">v${escapeHtml(appVersion())}</p>`;
 }
+
+// Sign-in brand panel: a sample live queue that moves along, like the real desk.
+const QUEUE_DEMO_NAMES = ["Wanjiru K.", "Otieno M.", "Achieng O.", "Kamau J.", "Njeri W.", "Mutua P.", "Chebet L.", "Omondi D."];
+let queueDemoTick = 0;
+
+function queueDemoCount() {
+  return 36 + queueDemoTick;
+}
+
+function queueDemoRowsHtml() {
+  return [0, 1, 2, 3]
+    .map((i) => {
+      const n = 41 + queueDemoTick + i;
+      const state = i === 0 ? "Now serving" : `~${i * 4} min`;
+      return `<li${i === 0 ? ' class="is-now"' : ""}><span class="queue-demo-ticket">A-${String(n).padStart(3, "0")}</span><span class="queue-demo-name">${QUEUE_DEMO_NAMES[n % QUEUE_DEMO_NAMES.length]}</span><span class="queue-demo-state">${state}</span></li>`;
+    })
+    .join("");
+}
+
+function authAsideHtml() {
+  return `
+    <aside class="auth-aside">
+      <span class="auth-orb auth-orb-lime" aria-hidden="true"></span>
+      <span class="auth-orb auth-orb-teal" aria-hidden="true"></span>
+      <span class="auth-orb auth-orb-navy" aria-hidden="true"></span>
+      <img class="auth-logo" src="./brand/queueless-logo-icon-on-dark.svg" alt="Queueless. Smart service. Zero wait." width="2018" height="482" />
+      <div class="auth-pitch">
+        <p class="auth-kicker">Queueless for business</p>
+        <p class="auth-headline">Your line, finally under control.</p>
+        <p class="auth-sub">Run live queues, bookings and walk-ins from one calm desk, and keep every customer in the loop.</p>
+      </div>
+      <div class="queue-demo" aria-hidden="true">
+        <div class="queue-demo-head">
+          <span class="queue-demo-live">Live queue · Westlands</span>
+          <span class="queue-demo-count">Served today <strong data-queue-demo-count>${queueDemoCount()}</strong></span>
+        </div>
+        <ol class="queue-demo-list">${queueDemoRowsHtml()}</ol>
+      </div>
+    </aside>
+  `;
+}
+
+// Advance the brand-panel vignette while a sign-in screen is showing (desktop only).
+setInterval(() => {
+  const list = document.querySelector(".queue-demo-list");
+  if (!list || document.hidden || !list.offsetParent) return;
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  queueDemoTick += 1;
+  list.innerHTML = queueDemoRowsHtml();
+  const count = document.querySelector("[data-queue-demo-count]");
+  if (count) count.textContent = String(queueDemoCount());
+  list.classList.remove("is-advancing");
+  void list.offsetWidth;
+  list.classList.add("is-advancing");
+}, 3200);
 
 function authBrandHtml({ title, lead }) {
   return `
@@ -730,6 +822,7 @@ function renderOnboarding(phone, token) {
   const fetchJson = onboardingFetch(token);
   app.innerHTML = `
     <div class="login-shell">
+      ${authAsideHtml()}
       <main id="main-content" class="login-stack onboarding-stack" tabindex="-1">
         <form class="login-card onboarding-card" id="onboarding-form" novalidate>
           ${authBrandHtml({
@@ -851,6 +944,7 @@ function renderPendingActivation(phone = "", { notice = "" } = {}) {
   stopPolling();
   app.innerHTML = `
     <div class="login-shell">
+      ${authAsideHtml()}
       <main id="main-content" class="login-stack" tabindex="-1">
         <div class="login-card">
           ${authBrandHtml({
@@ -919,6 +1013,7 @@ function renderLogin() {
   stopPolling();
   app.innerHTML = `
     <div class="login-shell">
+      ${authAsideHtml()}
       <main id="main-content" class="login-stack" tabindex="-1">
         <form class="login-card" id="phone-form">
           ${authBrandHtml({
@@ -931,6 +1026,7 @@ function renderLogin() {
           </div>
           <button class="btn btn-primary btn-block auth-submit" type="submit">Continue</button>
           <p class="message" id="login-message" role="status"></p>
+          ${authLegalHtml()}
         </form>
         ${appVersionHtml()}
       </main>
@@ -978,6 +1074,7 @@ function renderPinLogin() {
   const phone = localStorage.getItem(PENDING_VENDOR_PHONE_KEY) || "";
   app.innerHTML = `
     <div class="login-shell">
+      ${authAsideHtml()}
       <main id="main-content" class="login-stack" tabindex="-1">
         <form class="login-card" id="pin-form">
           ${authBrandHtml({
@@ -989,6 +1086,7 @@ function renderPinLogin() {
           <button class="btn-link" type="button" id="forgot-pin">Forgot PIN?</button>
           <button class="btn-link" type="button" id="back-phone">Use a different number</button>
           <p class="message" id="login-message" role="status"></p>
+          ${authLegalHtml()}
         </form>
         ${appVersionHtml()}
       </main>
@@ -1067,6 +1165,7 @@ function renderOtp() {
   const purpose = localStorage.getItem(PENDING_VENDOR_PURPOSE_KEY) || "setup";
   app.innerHTML = `
     <div class="login-shell">
+      ${authAsideHtml()}
       <main id="main-content" class="login-stack" tabindex="-1">
         <form class="login-card" id="otp-form">
           ${authBrandHtml({
@@ -1132,6 +1231,7 @@ function renderSetPin() {
   const phone = localStorage.getItem(PENDING_VENDOR_PHONE_KEY) || "";
   app.innerHTML = `
     <div class="login-shell">
+      ${authAsideHtml()}
       <main id="main-content" class="login-stack" tabindex="-1">
         <form class="login-card" id="set-pin-form">
           ${authBrandHtml({
@@ -1246,7 +1346,7 @@ function frame({
     <div class="shell">
       <aside class="sidebar" id="sidebar" aria-label="Main navigation">
         <div class="sidebar-brand">
-          <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="5.5" stroke-linecap="round"><circle cx="15.5" cy="15.5" r="9"/><path d="M19 19 25 25"/></g></svg>
+          <img class="brand-mark" src="./brand/queueless-mark-on-dark.svg" alt="" width="262" height="233" />
           <div class="brand">Queue<span>less</span></div>
           <span class="brand-tag">Vendor</span>
           <button type="button" class="sidebar-close" id="sidebar-close" aria-label="Close menu">${materialIcon("close")}</button>
