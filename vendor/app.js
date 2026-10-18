@@ -725,7 +725,7 @@ function authLegalHtml() {
 }
 
 function appVersion() {
-  return String(window.QUEUELESS_VENDOR_APP_VERSION || "1.4.0").trim() || "1.4.0";
+  return String(window.QUEUELESS_VENDOR_APP_VERSION || "2.0.0").trim() || "2.0.0";
 }
 
 function appVersionHtml({ onDark = false } = {}) {
