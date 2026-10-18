@@ -861,7 +861,7 @@ function renderSignup() {
     <div class="auth-shell">
       <main id="main-content" tabindex="-1">
       <form class="card" id="signup-form" aria-labelledby="signup-heading">
-        <p class="brand">Queue<span>less</span></p>
+        <img class="brand-logo" src="./brand/queueless-logo-icon.svg" alt="Queueless" width="2018" height="482" />
         <h1 id="signup-heading" class="card-heading">Create account</h1>
         <p class="lead">
           ${carried
@@ -937,7 +937,7 @@ function renderVerify() {
     <div class="auth-shell">
       <main id="main-content" tabindex="-1">
       <form class="card" id="verify-form" aria-labelledby="verify-heading">
-        <p class="brand">Queue<span>less</span></p>
+        <img class="brand-logo" src="./brand/queueless-logo-icon.svg" alt="Queueless" width="2018" height="482" />
         <h1 id="verify-heading" class="card-heading">Enter OTP</h1>
         <p class="lead">
           Web-only mode: open Admin → Customers to see the OTP for
@@ -1094,7 +1094,7 @@ function renderLogin() {
       <div class="auth-shell">
         <main id="main-content" tabindex="-1">
         <form class="card" id="login-form" aria-labelledby="login-heading">
-          <p class="brand">Queue<span>less</span></p>
+          <img class="brand-logo" src="./brand/queueless-logo-icon.svg" alt="Queueless" width="2018" height="482" />
           <h1 id="login-heading" class="card-heading">${onPin ? `Welcome back${greeting ? `, ${escapeHtml(greeting)}` : ""}` : "Log in"}</h1>
           <p class="lead">
             ${onPin
@@ -1707,7 +1707,7 @@ async function renderHome() {
     app.innerHTML = `
       <div class="auth-shell">
         <div class="card">
-          <div class="brand">Queue<span>less</span></div>
+          <img class="brand-logo" src="./brand/queueless-logo-icon.svg" alt="Queueless" width="2018" height="482" />
           <h2>${authFailed ? "Session expired" : "Something went wrong"}</h2>
           <p class="lead">${escapeHtml(error.message)}</p>
           <button class="btn" type="button" id="home-error-action">

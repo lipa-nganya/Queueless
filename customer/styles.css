@@ -178,6 +178,14 @@ textarea {
   color: var(--lime-ink);
 }
 
+.brand-logo {
+  display: block;
+  width: auto;
+  height: 2.6rem;
+  max-width: 100%;
+  margin-bottom: 0.4rem;
+}
+
 .app-version {
   margin: 0.85rem 0 0;
   color: var(--text-dim);
