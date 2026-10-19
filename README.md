@@ -44,18 +44,15 @@ npm start
 
 ### Admin login
 
-| Field | Value |
-| --- | --- |
-| Username | `admin` |
-| Password | `admin123` |
+Sign in with the `ADMIN_USERNAME` and `ADMIN_PASSWORD` set in `backend/.env`.
 
 ### pgAdmin
 
 | Field | Value |
 | --- | --- |
 | URL | http://localhost:5050 |
-| Email | `admin@queueless.co.ke` |
-| Password | `admin123` |
+| Email | `PGADMIN_DEFAULT_EMAIL` in `docker-compose.yml` |
+| Password | `PGADMIN_DEFAULT_PASSWORD` in `docker-compose.yml` |
 
 Register the Postgres server in pgAdmin:
 
