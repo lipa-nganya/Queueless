@@ -210,7 +210,15 @@ private fun CustomerNav(repository: CustomerRepository) {
                                 else -> navController.navigate(returnTo)
                             }
                         },
-                        onBrowse = { navController.goToTab(Routes.Discover) },
+                        // Not goToTab: its saveState would stash this login screen under
+                        // Discover and restoreState would bring it straight back.
+                        onBrowse = {
+                            if (!navController.popBackStack(Routes.Discover, inclusive = false)) {
+                                navController.navigate(Routes.Discover) {
+                                    popUpTo(navController.graph.id) { inclusive = true }
+                                }
+                            }
+                        },
                     )
                 }
             }
