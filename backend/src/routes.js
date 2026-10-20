@@ -5958,11 +5958,13 @@ router.post("/customer/account/delete", async (req, res) => {
 });
 
 router.post("/vendor/account/delete", async (req, res) => {
-  const client = await pool.connect();
+  let client = null;
   try {
+    // Check the PIN before taking a pooled connection; bcrypt is slow on purpose.
     const vendor = await verifyAccountForDeletion(req, res, "vendors");
     if (!vendor) return undefined;
 
+    client = await pool.connect();
     await client.query("BEGIN");
     // Businesses only this vendor manages go with the account (branches, services,
     // bookings and queues cascade). A business shared with another vendor stays theirs.
@@ -5986,7 +5988,7 @@ router.post("/vendor/account/delete", async (req, res) => {
     await client.query("COMMIT");
 
     invalidateVendorStatus(vendor.id);
-    clearCustomerBusinessesCache();
+    if (removed.rowCount > 0) clearCustomerBusinessesCache();
     await removeUploadedImages(removed.rows.map((row) => row.image_url));
     console.log(
       `[account-delete] vendor ${vendor.id} deleted with ${removed.rowCount} business(es)`
@@ -5994,14 +5996,17 @@ router.post("/vendor/account/delete", async (req, res) => {
     return res.json({
       ok: true,
       deleted_businesses: removed.rowCount,
-      message: "Your vendor account, businesses and queues have been deleted.",
+      message:
+        removed.rowCount > 0
+          ? "Your vendor account, businesses and queues have been deleted."
+          : "Your vendor account has been deleted.",
     });
   } catch (error) {
-    await client.query("ROLLBACK").catch(() => {});
+    await client?.query("ROLLBACK").catch(() => {});
     console.error("Vendor account delete failed:", error);
     return res.status(500).json({ error: "Could not delete your account. Try again or contact us." });
   } finally {
-    client.release();
+    client?.release();
   }
 });
 
