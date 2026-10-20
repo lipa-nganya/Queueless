@@ -203,7 +203,8 @@ async function vendorIsDeactivated(vendorId) {
   const hit = vendorStatusCache.get(id);
   if (hit && Date.now() - hit.at < VENDOR_STATUS_TTL_MS) return hit.deactivated;
   const result = await query(`SELECT deactivated_at FROM vendors WHERE id = $1`, [id]);
-  const deactivated = Boolean(result.rows[0]?.deactivated_at);
+  // A deleted account has no row; its leftover tokens must stop working too.
+  const deactivated = !result.rows[0] || Boolean(result.rows[0].deactivated_at);
   vendorStatusCache.set(id, { at: Date.now(), deactivated });
   if (vendorStatusCache.size > 5000) {
     vendorStatusCache.delete(vendorStatusCache.keys().next().value);

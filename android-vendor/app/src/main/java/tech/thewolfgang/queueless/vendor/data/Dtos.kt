@@ -69,6 +69,18 @@ data class LoginRequest(
 )
 
 @Serializable
+data class VendorMe(
+    val id: Int = 0,
+    val phone: String? = null,
+)
+
+@Serializable
+data class DeleteAccountResponse(
+    val ok: Boolean = false,
+    val message: String? = null,
+)
+
+@Serializable
 data class PushTokenRequest(
     val token: String,
     val platform: String = "android",

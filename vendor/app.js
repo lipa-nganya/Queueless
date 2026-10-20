@@ -1367,6 +1367,7 @@ function frame({
         </nav>
         <div class="sidebar-foot">
           <button class="btn btn-primary btn-block" type="button" id="logout-btn">${materialIcon("logout")}Sign out</button>
+          <a class="sidebar-delete-link" href="${LANDING_ORIGIN}/delete-account" target="_blank" rel="noopener noreferrer">Delete account</a>
           ${appVersionHtml({ onDark: true })}
         </div>
       </aside>

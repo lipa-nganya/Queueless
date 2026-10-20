@@ -32,6 +32,7 @@ app.get("/landing-config.js", (_req, res) => {
 });
 app.use("/assets", express.static(path.join(__dirname, "assets"), staticOpts));
 app.use("/legal", express.static(path.join(__dirname, "legal"), staticOpts));
+app.use("/delete-account", express.static(path.join(__dirname, "delete-account"), staticOpts));
 
 app.get("/app", (_req, res) => {
   res.redirect(302, process.env.CUSTOMER_PUBLIC_URL || "http://localhost:3000/");

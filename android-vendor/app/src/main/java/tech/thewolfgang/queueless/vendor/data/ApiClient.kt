@@ -99,6 +99,17 @@ class ApiClient(
             authenticated = false,
         )
 
+    suspend fun me(): VendorMe = request(method = "GET", path = "/vendor/me")
+
+    // PIN-checked rather than token-checked, so pending vendors can use it too.
+    suspend fun deleteAccount(phone: String, pin: String): DeleteAccountResponse =
+        request(
+            method = "POST",
+            path = "/vendor/account/delete",
+            bodyJson = json.encodeToString(LoginRequest(phone = phone, pin = pin)),
+            authenticated = false,
+        )
+
     suspend fun registerPushToken(token: String, deviceLabel: String? = null): PushTokenResponse =
         request(
             method = "POST",

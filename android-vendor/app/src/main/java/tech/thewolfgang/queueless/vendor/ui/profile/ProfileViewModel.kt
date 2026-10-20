@@ -32,6 +32,9 @@ data class ProfileUiState(
     val error: String? = null,
     val savedMessage: String? = null,
     val unauthorized: Boolean = false,
+    val deleting: Boolean = false,
+    val deleteError: String? = null,
+    val deleted: Boolean = false,
 ) {
     val branchMeta: String?
         get() = listOfNotNull(businessName, location)
@@ -221,6 +224,26 @@ class ProfileViewModel(
             } catch (e: Exception) {
                 _uiState.update {
                     it.copy(saving = false, error = e.message ?: "Could not save profile.")
+                }
+            }
+        }
+    }
+
+    fun clearDeleteError() = _uiState.update { it.copy(deleteError = null) }
+
+    fun deleteAccount(pin: String) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(deleting = true, deleteError = null) }
+            try {
+                repository.deleteAccount(pin)
+                _uiState.update { it.copy(deleting = false, deleted = true) }
+            } catch (e: ApiException) {
+                _uiState.update {
+                    it.copy(deleting = false, deleteError = e.message, unauthorized = e.statusCode == 401)
+                }
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(deleting = false, deleteError = e.message ?: "Could not delete your account.")
                 }
             }
         }

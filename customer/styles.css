@@ -1229,6 +1229,15 @@ textarea {
   box-shadow: none;
 }
 
+.profile-delete-link {
+  display: block;
+  margin-top: 1rem;
+  color: var(--danger);
+  font-size: 0.9rem;
+  font-weight: 600;
+  text-align: center;
+}
+
 .profile-page > main > .app-version {
   margin-top: 1rem;
   text-align: center;

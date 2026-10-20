@@ -4,7 +4,8 @@ import { fileURLToPath } from "node:url";
 import { Router } from "express";
 import bcrypt from "bcryptjs";
 import multer from "multer";
-import { query } from "./db.js";
+import fs from "node:fs/promises";
+import { pool, query } from "./db.js";
 import {
   login,
   vendorLogin,
@@ -5877,6 +5878,130 @@ router.post("/admins/vendors/:id/deactivate", requireAdmin, async (req, res) => 
   } catch (error) {
     console.error("Vendor deactivate failed:", error);
     return res.status(500).json({ error: "Could not deactivate vendor." });
+  }
+});
+
+// Account deletion (Google Play requires in-app and web deletion). Callers prove
+// ownership with phone + PIN rather than a session, so pending and deactivated
+// vendors can delete too, and the public web page needs no sign-in.
+const DELETE_ACCOUNT_MAX_FAILURES = 5;
+const DELETE_ACCOUNT_WINDOW_MS = 15 * 60 * 1000;
+const deleteAccountFailures = new Map();
+
+function deleteAccountLocked(key) {
+  const hit = deleteAccountFailures.get(key);
+  if (!hit) return false;
+  if (Date.now() - hit.at > DELETE_ACCOUNT_WINDOW_MS) {
+    deleteAccountFailures.delete(key);
+    return false;
+  }
+  return hit.count >= DELETE_ACCOUNT_MAX_FAILURES;
+}
+
+function recordDeleteAccountFailure(key) {
+  const hit = deleteAccountFailures.get(key);
+  if (hit && Date.now() - hit.at <= DELETE_ACCOUNT_WINDOW_MS) {
+    hit.count += 1;
+  } else {
+    deleteAccountFailures.set(key, { at: Date.now(), count: 1 });
+  }
+  if (deleteAccountFailures.size > 5000) {
+    deleteAccountFailures.delete(deleteAccountFailures.keys().next().value);
+  }
+}
+
+/** Resolves the account row when phone + PIN match, else sends the error and returns null. */
+async function verifyAccountForDeletion(req, res, table) {
+  const phone = resolvePhone(req.body);
+  const pin = String(req.body?.pin || "");
+  if (!phone || !PIN_RE.test(pin)) {
+    res.status(400).json({ error: "Phone and 4-digit PIN are required." });
+    return null;
+  }
+  const key = `${table}:${phone}`;
+  if (deleteAccountLocked(key)) {
+    res.status(429).json({ error: "Too many wrong PINs. Try again in 15 minutes." });
+    return null;
+  }
+  const result = await query(`SELECT id, pin_hash FROM ${table} WHERE phone = $1 LIMIT 1`, [phone]);
+  const account = result.rows[0];
+  if (!account?.pin_hash || !(await bcrypt.compare(pin, account.pin_hash))) {
+    recordDeleteAccountFailure(key);
+    // 403, not 401: the apps treat 401 as an expired session and sign the user out.
+    res.status(403).json({ error: "Invalid phone number or PIN." });
+    return null;
+  }
+  deleteAccountFailures.delete(key);
+  return account;
+}
+
+async function removeUploadedImages(imageUrls) {
+  for (const imageUrl of imageUrls) {
+    if (!imageUrl?.startsWith("/uploads/")) continue;
+    const file = path.join(uploadsDir, path.basename(imageUrl));
+    await fs.unlink(file).catch(() => {});
+  }
+}
+
+router.post("/customer/account/delete", async (req, res) => {
+  try {
+    const customer = await verifyAccountForDeletion(req, res, "customers");
+    if (!customer) return undefined;
+    // Bookings and queue entries cascade with the customer row.
+    await query(`DELETE FROM customers WHERE id = $1`, [customer.id]);
+    console.log(`[account-delete] customer ${customer.id} deleted`);
+    return res.json({ ok: true, message: "Your Queueless account and its data have been deleted." });
+  } catch (error) {
+    console.error("Customer account delete failed:", error);
+    return res.status(500).json({ error: "Could not delete your account. Try again or contact us." });
+  }
+});
+
+router.post("/vendor/account/delete", async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const vendor = await verifyAccountForDeletion(req, res, "vendors");
+    if (!vendor) return undefined;
+
+    await client.query("BEGIN");
+    // Businesses only this vendor manages go with the account (branches, services,
+    // bookings and queues cascade). A business shared with another vendor stays theirs.
+    const removed = await client.query(
+      `
+        DELETE FROM businesses
+        WHERE id IN (
+          SELECT vb.business_id FROM vendor_businesses vb
+          WHERE vb.vendor_id = $1
+            AND NOT EXISTS (
+              SELECT 1 FROM vendor_businesses other
+              WHERE other.business_id = vb.business_id AND other.vendor_id <> $1
+            )
+        )
+        RETURNING id, image_url
+      `,
+      [vendor.id]
+    );
+    // Push tokens and remaining business links cascade with the vendor row.
+    await client.query(`DELETE FROM vendors WHERE id = $1`, [vendor.id]);
+    await client.query("COMMIT");
+
+    invalidateVendorStatus(vendor.id);
+    clearCustomerBusinessesCache();
+    await removeUploadedImages(removed.rows.map((row) => row.image_url));
+    console.log(
+      `[account-delete] vendor ${vendor.id} deleted with ${removed.rowCount} business(es)`
+    );
+    return res.json({
+      ok: true,
+      deleted_businesses: removed.rowCount,
+      message: "Your vendor account, businesses and queues have been deleted.",
+    });
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    console.error("Vendor account delete failed:", error);
+    return res.status(500).json({ error: "Could not delete your account. Try again or contact us." });
+  } finally {
+    client.release();
   }
 });
 

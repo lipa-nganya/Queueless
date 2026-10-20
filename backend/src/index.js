@@ -23,6 +23,8 @@ const defaultOrigins = [
   "http://127.0.0.1:3000",
   "http://127.0.0.1:4000",
   "http://127.0.0.1:3500",
+  "http://localhost:8080",
+  "http://127.0.0.1:8080",
   "https://queueless.thewolfgang.tech",
   "https://customer.thewolfgang.tech",
   "https://admin.queueless.thewolfgang.tech",

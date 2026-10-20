@@ -1827,6 +1827,7 @@ async function renderProfile() {
         </section>
 
         <button class="btn profile-logout" type="button" id="logout">Sign out</button>
+        <a class="profile-delete-link" href="${LANDING_ORIGIN}/delete-account" target="_blank" rel="noopener noreferrer">Delete account</a>
         ${appVersionHtml()}
         </main>
         ${tabbar("profile")}
@@ -1984,7 +1985,7 @@ function renderPrivacy() {
       <p>We do not sell your personal data.</p>
 
       <h2>4. Retention</h2>
-      <p>We keep account and service records for as long as your account remains active and for a reasonable period afterwards to resolve disputes, meet legal requirements, and maintain security logs. You may ask us to delete your account through Contact us on Profile.</p>
+      <p>We keep account and service records for as long as your account remains active and for a reasonable period afterwards to resolve disputes, meet legal requirements, and maintain security logs. You can delete your account at any time with Delete account on Profile, or ask us through Contact us on Profile.</p>
 
       <h2>5. Security</h2>
       <p>We use industry-standard measures to protect your data, including hashing PINs and restricting access to personal information. No method of transmission or storage is completely secure, so we cannot guarantee absolute security.</p>

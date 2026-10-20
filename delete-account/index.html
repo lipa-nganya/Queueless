@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Delete your account — Queueless</title>
+    <meta name="description" content="Permanently delete your Queueless customer or vendor account and its data." />
+    <meta name="theme-color" content="#ffffff" />
+    <meta name="robots" content="noindex" />
+    <link rel="icon" href="/assets/queueless-mark.svg" type="image/svg+xml" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/landing.css?v=20261018d" />
+    <style>
+      .delete-form {
+        display: grid;
+        gap: 0.9rem;
+        margin-top: 1.4rem;
+        padding: 1.25rem;
+        border-radius: var(--radius);
+        background: var(--bg-soft);
+      }
+      .delete-form fieldset {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        margin: 0;
+        padding: 0;
+        border: 0;
+      }
+      .delete-form legend,
+      .delete-form label {
+        color: var(--text);
+        font-size: 0.9rem;
+        font-weight: 600;
+      }
+      .delete-form legend {
+        margin-bottom: 0.5rem;
+      }
+      .account-type {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+        padding: 0.5rem 0.9rem;
+        border: 1px solid #d5d9e0;
+        border-radius: 999px;
+        background: var(--bg);
+        cursor: pointer;
+      }
+      .account-type:has(input:checked) {
+        border-color: var(--deep-navy);
+        background: var(--deep-navy);
+        color: #fff;
+      }
+      .delete-form .field {
+        display: grid;
+        gap: 0.35rem;
+      }
+      .delete-form input[type="tel"],
+      .delete-form input[type="password"] {
+        width: 100%;
+        height: 3.25rem;
+        padding: 0 1rem;
+        border: 1px solid #d5d9e0;
+        border-radius: 16px;
+        background: var(--bg);
+        color: var(--text);
+      }
+      .delete-form input:focus {
+        border-color: var(--lime-ink);
+        outline: none;
+        box-shadow: 0 0 0 3px var(--lime-soft);
+      }
+      .delete-form .confirm {
+        display: flex;
+        gap: 0.6rem;
+        align-items: flex-start;
+        color: var(--text-dim);
+        font-weight: 500;
+        line-height: 1.5;
+      }
+      .delete-form .confirm input {
+        flex: none;
+        width: 1.1rem;
+        height: 1.1rem;
+        margin-top: 0.2rem;
+        accent-color: var(--danger);
+      }
+      .btn-danger {
+        width: 100%;
+        margin-top: 0.25rem;
+        background: var(--danger);
+        color: #fff;
+        box-shadow: none;
+      }
+      .delete-form .form-status {
+        text-align: left;
+      }
+    </style>
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content">Skip to main content</a>
+    <header class="topbar">
+      <div class="wrap topbar-inner">
+        <a class="brand" href="/">
+          <img src="/assets/queueless-logo-icon.svg" alt="Queueless. Smart service. Zero wait." width="2018" height="482" />
+        </a>
+        <a class="text-link" href="/">Back to home</a>
+      </div>
+    </header>
+    <main id="main-content">
+      <article class="wrap legal">
+        <p class="kicker">Customers and vendors</p>
+        <h1>Delete your account</h1>
+        <p>You can permanently delete your Queueless account here or in the app. Deletion takes effect immediately and can't be undone.</p>
+
+        <h2>In the app</h2>
+        <ul>
+          <li><strong>Queueless (customers):</strong> Profile → Delete account.</li>
+          <li><strong>Queueless Vendor:</strong> Settings → Delete vendor account.</li>
+        </ul>
+
+        <h2>What gets deleted</h2>
+        <ul>
+          <li><strong>Customer accounts:</strong> your name, phone number, PIN, saved accessibility needs, queue places and bookings.</li>
+          <li><strong>Vendor accounts:</strong> your account, phone number, PIN and notification devices, plus every business you manage with its branches, services, photos, bookings and queues. A business you share with another vendor stays with them.</li>
+        </ul>
+        <p>Deletion removes this data from our live systems straight away.</p>
+
+        <h2>Delete here</h2>
+        <form class="delete-form" id="delete-form" novalidate>
+          <fieldset>
+            <legend>Account type</legend>
+            <label class="account-type"><input type="radio" name="type" value="customer" checked /> Customer</label>
+            <label class="account-type"><input type="radio" name="type" value="vendor" /> Vendor</label>
+          </fieldset>
+          <div class="field">
+            <label for="phone">Phone number</label>
+            <input id="phone" name="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="07XXXXXXXX" required />
+          </div>
+          <div class="field">
+            <label for="pin">4-digit PIN</label>
+            <input id="pin" name="pin" type="password" inputmode="numeric" autocomplete="current-password" maxlength="4" pattern="\d{4}" required />
+          </div>
+          <label class="confirm">
+            <input type="checkbox" id="confirm" required />
+            <span id="confirm-text">I understand this permanently deletes my account and its data.</span>
+          </label>
+          <button class="btn btn-danger" type="submit" id="submit">Delete my account</button>
+          <p class="form-status" id="status" role="status" aria-live="polite"></p>
+        </form>
+
+        <h2>Forgot your PIN?</h2>
+        <p>Email <a href="mailto:hello@queueless.co.ke?subject=Delete%20my%20Queueless%20account">hello@queueless.co.ke</a> with the phone number on the account, and we'll delete it once we've confirmed it's yours.</p>
+      </article>
+    </main>
+    <footer class="site-footer">
+      <div class="wrap footer-inner">
+        <div class="footer-contact">
+          <p class="footer-contact-title">Contact Us</p>
+          <a href="mailto:hello@queueless.co.ke">hello@queueless.co.ke</a>
+          <a href="tel:+254706487567">+254706487567</a>
+        </div>
+        <div class="footer-start">
+          <p>© <span id="year"></span> Queueless · Kenya</p>
+          <nav class="footer-legal" aria-label="Legal">
+            <a class="btn" href="/legal/terms">Terms of Use</a>
+            <a class="btn" href="/legal/privacy">Privacy Policy</a>
+          </nav>
+        </div>
+      </div>
+    </footer>
+    <script>
+      document.getElementById("year").textContent = String(new Date().getFullYear());
+
+      (function () {
+        const host = location.hostname;
+        // Same API split as the customer and vendor web apps.
+        const apiOrigin = ["localhost", "127.0.0.1"].includes(host)
+          ? "http://localhost:4000"
+          : host.endsWith("queueless.co.ke")
+            ? "https://queueless-prod.up.railway.app"
+            : "https://queueless-staging.up.railway.app";
+
+        const form = document.getElementById("delete-form");
+        const status = document.getElementById("status");
+        const submit = document.getElementById("submit");
+        const confirmText = document.getElementById("confirm-text");
+
+        function accountType() {
+          return form.querySelector('input[name="type"]:checked').value;
+        }
+
+        function showStatus(text, isError) {
+          status.textContent = text;
+          status.classList.toggle("error", Boolean(isError));
+        }
+
+        form.querySelectorAll('input[name="type"]').forEach((input) => {
+          input.addEventListener("change", () => {
+            confirmText.textContent =
+              accountType() === "vendor"
+                ? "I understand this permanently deletes my vendor account and every business, branch, service and queue I manage."
+                : "I understand this permanently deletes my account and its data.";
+          });
+        });
+
+        form.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          const phone = form.phone.value.trim();
+          const pin = form.pin.value.trim();
+          if (!phone) return showStatus("Enter the phone number on your account.", true);
+          if (!/^\d{4}$/.test(pin)) return showStatus("Enter your 4-digit PIN.", true);
+          if (!document.getElementById("confirm").checked) {
+            return showStatus("Tick the box to confirm you want to delete your account.", true);
+          }
+
+          const type = accountType();
+          submit.disabled = true;
+          showStatus("Deleting…", false);
+          try {
+            const response = await fetch(`${apiOrigin}/api/${type}/account/delete`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", Accept: "application/json" },
+              body: JSON.stringify({ phone, pin }),
+            });
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok) throw new Error(data.error || "Could not delete your account.");
+            form.reset();
+            showStatus(data.message || "Your account has been deleted.", false);
+          } catch (error) {
+            showStatus(error.message || "Could not reach Queueless. Try again.", true);
+          } finally {
+            submit.disabled = false;
+          }
+        });
+      })();
+    </script>
+  </body>
+</html>

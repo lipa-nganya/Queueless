@@ -11,16 +11,24 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModel
@@ -44,11 +52,14 @@ import tech.thewolfgang.queueless.customer.ui.components.SectionTitle
 import tech.thewolfgang.queueless.customer.ui.components.StatusBanner
 import tech.thewolfgang.queueless.customer.ui.components.TopBar
 import tech.thewolfgang.queueless.customer.ui.theme.CardShape
+import tech.thewolfgang.queueless.customer.ui.theme.Danger
+import tech.thewolfgang.queueless.customer.ui.theme.FieldShape
 import tech.thewolfgang.queueless.customer.ui.theme.GhostButton
 import tech.thewolfgang.queueless.customer.ui.theme.LimeInk
 import tech.thewolfgang.queueless.customer.ui.theme.SurfaceCard
 import tech.thewolfgang.queueless.customer.ui.theme.TextMuted
 import tech.thewolfgang.queueless.customer.ui.theme.TextPrimary
+import tech.thewolfgang.queueless.customer.ui.theme.queuelessFieldColors
 
 data class ProfileUiState(
     val loading: Boolean = true,
@@ -60,6 +71,9 @@ data class ProfileUiState(
     val error: String? = null,
     val message: String? = null,
     val unauthorized: Boolean = false,
+    val deleting: Boolean = false,
+    val deleteError: String? = null,
+    val deleted: Boolean = false,
 )
 
 class ProfileViewModel(private val repository: CustomerRepository) : ViewModel() {
@@ -108,6 +122,21 @@ class ProfileViewModel(private val repository: CustomerRepository) : ViewModel()
     }
 
     fun signOut() = repository.signOut()
+
+    fun clearDeleteError() = _uiState.update { it.copy(deleteError = null) }
+
+    fun deleteAccount(pin: String) {
+        val phone = _uiState.value.me?.phone ?: return
+        viewModelScope.launch {
+            _uiState.update { it.copy(deleting = true, deleteError = null) }
+            try {
+                repository.deleteAccount(phone, pin)
+                _uiState.update { it.copy(deleting = false, deleted = true) }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(deleting = false, deleteError = e.message ?: "Could not delete your account.") }
+            }
+        }
+    }
 }
 
 @Composable
@@ -117,9 +146,11 @@ fun ProfileScreen(
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    var confirmDelete by remember { mutableStateOf(false) }
+    var deletePin by remember { mutableStateOf("") }
 
-    LaunchedEffect(state.unauthorized) {
-        if (state.unauthorized) onSignedOut()
+    LaunchedEffect(state.unauthorized, state.deleted) {
+        if (state.unauthorized || state.deleted) onSignedOut()
     }
 
     Column(Modifier.fillMaxSize()) {
@@ -189,8 +220,58 @@ fun ProfileScreen(
                     .fillMaxWidth()
                     .height(52.dp),
             ) { Text("Log out") }
+            TextButton(
+                onClick = {
+                    deletePin = ""
+                    viewModel.clearDeleteError()
+                    confirmDelete = true
+                },
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("Delete account", color = Danger) }
             AppVersionLabel(Modifier.fillMaxWidth())
             Spacer(Modifier.height(12.dp))
         }
+    }
+
+    if (confirmDelete) {
+        AlertDialog(
+            onDismissRequest = { if (!state.deleting) confirmDelete = false },
+            title = { Text("Delete your account?") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(
+                        "This permanently deletes your account, queue places, bookings and saved needs. " +
+                            "It can't be undone. Enter your PIN to confirm.",
+                    )
+                    TextField(
+                        value = deletePin,
+                        onValueChange = { value ->
+                            deletePin = value.filter(Char::isDigit).take(4)
+                            viewModel.clearDeleteError()
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = FieldShape,
+                        colors = queuelessFieldColors(),
+                        singleLine = true,
+                        label = { Text("PIN") },
+                        visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                        enabled = !state.deleting,
+                    )
+                    state.deleteError?.let { Text(it, color = Danger) }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = { viewModel.deleteAccount(deletePin) },
+                    enabled = deletePin.length == 4 && !state.deleting,
+                ) { Text(if (state.deleting) "Deleting…" else "Delete account", color = Danger) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmDelete = false }, enabled = !state.deleting) {
+                    Text("Cancel", color = LimeInk)
+                }
+            },
+        )
     }
 }

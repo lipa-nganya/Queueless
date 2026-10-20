@@ -82,5 +82,12 @@ class CustomerRepository(
         api.postEmpty("/customer/bookings/$bookingId/cancel")
     }
 
+    /** Permanently deletes the account; the PIN re-confirms it's really the owner. */
+    suspend fun deleteAccount(phone: String, pin: String): MessageResponse {
+        val result: MessageResponse = api.post("/customer/account/delete", LoginRequest(phone, pin))
+        signOut()
+        return result
+    }
+
     fun imageUrl(path: String?): String? = api.absoluteUrl(path)
 }

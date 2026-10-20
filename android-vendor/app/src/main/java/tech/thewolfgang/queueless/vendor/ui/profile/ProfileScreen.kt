@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -50,6 +51,8 @@ import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -97,9 +100,12 @@ fun ProfileScreen(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     var timePickerTarget by remember { mutableStateOf<TimePickerTarget?>(null) }
     var selectedTab by remember { mutableIntStateOf(ProfileTabRetainer.index) }
+    var confirmDelete by remember { mutableStateOf(false) }
+    var deletePin by remember { mutableStateOf("") }
 
-    LaunchedEffect(state.unauthorized) {
-        if (state.unauthorized) onUnauthorized()
+    LaunchedEffect(state.unauthorized, state.deleted) {
+        // Deleting already cleared the session; signing out just returns to login.
+        if (state.unauthorized || state.deleted) onUnauthorized()
     }
 
     Column(
@@ -253,6 +259,17 @@ fun ProfileScreen(
                             }
                         }
 
+                        TextButton(
+                            onClick = {
+                                deletePin = ""
+                                viewModel.clearDeleteError()
+                                confirmDelete = true
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text("Delete vendor account", color = Danger, fontWeight = FontWeight.SemiBold)
+                        }
+
                         Spacer(Modifier.height(24.dp))
                     }
                 }
@@ -265,6 +282,49 @@ fun ProfileScreen(
             onServices = onOpenServices,
             onProfile = {},
             onSignOut = onSignOut,
+        )
+    }
+
+    if (confirmDelete) {
+        AlertDialog(
+            onDismissRequest = { if (!state.deleting) confirmDelete = false },
+            title = { Text("Delete your vendor account?") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(
+                        "This permanently deletes your account and every business you manage, " +
+                            "with their branches, services, bookings and queues. It can't be undone. " +
+                            "Enter your PIN to confirm.",
+                    )
+                    TextField(
+                        value = deletePin,
+                        onValueChange = { value ->
+                            deletePin = value.filter(Char::isDigit).take(4)
+                            viewModel.clearDeleteError()
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = FieldShape,
+                        colors = fieldColors(),
+                        singleLine = true,
+                        label = { Text("PIN") },
+                        visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                        enabled = !state.deleting,
+                    )
+                    state.deleteError?.let { Text(it, color = Danger) }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = { viewModel.deleteAccount(deletePin) },
+                    enabled = deletePin.length == 4 && !state.deleting,
+                ) { Text(if (state.deleting) "Deleting…" else "Delete account", color = Danger) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmDelete = false }, enabled = !state.deleting) {
+                    Text("Cancel", color = LimeInk)
+                }
+            },
         )
     }
 

@@ -35,6 +35,14 @@ class VendorRepository(
         return session
     }
 
+    /** Permanently deletes the signed-in vendor with their businesses and queues. */
+    suspend fun deleteAccount(pin: String): DeleteAccountResponse {
+        val phone = api.me().phone ?: throw ApiException("This account has no phone number. Contact Queueless.")
+        val result = api.deleteAccount(phone, pin)
+        clearSession()
+        return result
+    }
+
     suspend fun registerPushToken(token: String) = api.registerPushToken(token)
 
     suspend fun registerPendingPushToken(phone: String, token: String) =
