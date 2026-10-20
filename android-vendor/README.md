@@ -3,7 +3,7 @@
 Native Kotlin + Jetpack Compose app for day-to-day vendor queue management. Calls the same `/api/vendor/*` endpoints as the web vendor SPA.
 
 - **Application id:** `tech.thewolfgang.queueless.vendor` (+ `.local` / `.dev` suffixes)
-- **Min SDK 26 · Target SDK 35**
+- **Min SDK 26 · Target SDK 36**
 
 ## Environments
 
@@ -67,6 +67,33 @@ Install example:
 ```bash
 adb install -r app/build/outputs/apk/local/debug/app-local-debug.apk
 ```
+
+## Release to Google Play
+
+Play takes an Android App Bundle (`.aab`) signed with your **upload key**. Play App Signing holds the real app-signing key.
+
+1. Create an upload key once, keep it **outside the repo**, and back it up with its passwords:
+
+   ```bash
+   mkdir -p ~/queueless-keys
+   keytool -genkeypair -v -keystore ~/queueless-keys/queueless-upload.jks \
+     -alias queueless-upload -keyalg RSA -keysize 2048 -validity 10000
+   ```
+
+2. `cp keystore.properties.example keystore.properties` (gitignored) and fill in the path and passwords.
+   Also make sure `app/google-services.json` is in place (see Push notifications), or the Play build ships with push turned off.
+3. Bump `versionCode` (and `versionName` if needed) in `app/build.gradle.kts`. Play rejects a `versionCode` it has already seen.
+4. Build the bundle:
+
+   ```bash
+   ./gradlew :app:bundleProductionRelease
+   ```
+
+   Output: `app/build/outputs/bundle/productionRelease/app-production-release.aab`
+
+5. Upload it in Play Console for `tech.thewolfgang.queueless.vendor`.
+
+Without `keystore.properties`, release builds are unsigned and Play will not accept them.
 
 ## Local API from a physical device
 

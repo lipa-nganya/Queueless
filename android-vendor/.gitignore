@@ -16,3 +16,8 @@
 
 # Firebase — keep the example; never commit real client configs.
 /app/google-services.json
+
+# Play upload signing (never commit)
+/keystore.properties
+*.jks
+*.keystore

@@ -17,3 +17,8 @@ node_modules/
 backend/secrets/
 android-vendor/app/google-services.json
 firebase-debug.log
+
+# Play upload keys (never commit)
+*.jks
+*.keystore
+keystore.properties

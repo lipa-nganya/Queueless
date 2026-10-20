@@ -15,3 +15,8 @@
 *.dex
 *.class
 
+
+# Play upload signing (never commit)
+/keystore.properties
+*.jks
+*.keystore

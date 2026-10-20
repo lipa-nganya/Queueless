@@ -3,7 +3,7 @@
 Native Kotlin + Jetpack Compose customer app. Calls the same `/api/customer/*` endpoints as the customer web app.
 
 - **Application id:** `tech.thewolfgang.queueless.customer` (+ `.local` / `.dev` suffixes)
-- **Min SDK 26 · Target SDK 35**
+- **Min SDK 26 · Target SDK 36**
 
 ## Environments
 
@@ -53,4 +53,31 @@ app/build/outputs/apk/dev/debug/app-dev-debug.apk
 app/build/outputs/apk/production/release/app-production-release-unsigned.apk
 ```
 
-The production release APK is unsigned until a release signing config is added.
+The production release APK is unsigned unless `keystore.properties` is set up (see below).
+
+## Release to Google Play
+
+Play takes an Android App Bundle (`.aab`) signed with your **upload key**. Play App Signing holds the real app-signing key.
+
+1. Create an upload key once, keep it **outside the repo**, and back it up with its passwords:
+
+   ```bash
+   mkdir -p ~/queueless-keys
+   keytool -genkeypair -v -keystore ~/queueless-keys/queueless-upload.jks \
+     -alias queueless-upload -keyalg RSA -keysize 2048 -validity 10000
+   ```
+
+2. `cp keystore.properties.example keystore.properties` (gitignored) and fill in the path and passwords.
+3. Bump `versionCode` (and `versionName` if needed) in `app/build.gradle.kts`. Play rejects a `versionCode` it has already seen.
+4. Build the bundle:
+
+   ```bash
+   ./gradlew :app:bundleProductionRelease
+   ```
+
+   Output: `app/build/outputs/bundle/productionRelease/app-production-release.aab`
+
+5. Upload it in Play Console for `tech.thewolfgang.queueless.customer`.
+
+Without `keystore.properties`, release builds are unsigned and Play will not accept them.
+
