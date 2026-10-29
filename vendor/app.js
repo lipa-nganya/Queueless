@@ -725,7 +725,7 @@ function authLegalHtml() {
 }
 
 function appVersion() {
-  return String(window.QUEUELESS_VENDOR_APP_VERSION || "2.1.0").trim() || "2.1.0";
+  return String(window.QUEUELESS_VENDOR_APP_VERSION || "2.1.1").trim() || "2.1.1";
 }
 
 function appVersionHtml({ onDark = false } = {}) {
@@ -1311,6 +1311,175 @@ function navIcon(name) {
   return materialIcon(icons[name] || icons.businesses);
 }
 
+function notificationsSheetHtml() {
+  return `
+    <div id="notif-sheet" class="sheet-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="notif-title">
+      <div class="sheet notif-sheet">
+        <div class="sheet-header">
+          <h2 id="notif-title">Notifications</h2>
+          <div class="notif-header-actions">
+            <button type="button" class="btn btn-secondary btn-sm notif-read-all" id="notif-read-all" hidden>Mark all read</button>
+            <button type="button" class="sheet-close" id="notif-close" aria-label="Close">${materialIcon("close")}</button>
+          </div>
+        </div>
+        <div id="notif-list" class="notif-list" role="list" aria-live="polite"></div>
+      </div>
+    </div>
+  `;
+}
+
+function setNotificationBadge(count) {
+  const unread = Math.max(Number(count) || 0, 0);
+  const badge = document.getElementById("notif-badge");
+  const button = document.getElementById("notif-btn");
+  if (badge) {
+    badge.hidden = unread === 0;
+    badge.textContent = unread > 9 ? "9+" : String(unread);
+  }
+  button?.setAttribute(
+    "aria-label",
+    unread ? `Notifications, ${unread} unread` : "Notifications"
+  );
+  const readAll = document.getElementById("notif-read-all");
+  if (readAll) readAll.hidden = unread === 0;
+}
+
+async function refreshNotificationBadge() {
+  if (!getToken() || !document.getElementById("notif-btn")) return;
+  try {
+    const data = await api("/vendor/notifications?limit=1");
+    setNotificationBadge(data.unread_count);
+  } catch {
+    /* the badge just stays as it was */
+  }
+}
+
+function notificationTimeLabel(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const minutes = Math.round((Date.now() - date.getTime()) / 60000);
+  if (minutes < 1) return "Just now";
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours} h ago`;
+  return date.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+}
+
+function notificationIcon(type) {
+  const icons = {
+    vendor_activated: "verified",
+    vendor_trial: "event",
+    queue_join: "person_add",
+    queue_leave: "person_remove",
+  };
+  return icons[type] || "notifications";
+}
+
+/** Where a notification leads when tapped: its queue for queue alerts, else nowhere. */
+function notificationTarget(item) {
+  const data = item.data || {};
+  const queueId = Number(data.business_id);
+  if ((item.type === "queue_join" || item.type === "queue_leave") && queueId) {
+    return `queue-${queueId}`;
+  }
+  return null;
+}
+
+function notificationItemHtml(item) {
+  const target = notificationTarget(item);
+  const time = notificationTimeLabel(item.created_at);
+  return `
+    <button type="button" class="notif-item${item.read ? "" : " is-unread"}" role="listitem" data-id="${item.id}" ${target ? `data-target="${escapeHtml(target)}"` : ""}>
+      <span class="notif-icon">${materialIcon(notificationIcon(item.type))}</span>
+      <span class="notif-text">
+        <span class="notif-item-title">${escapeHtml(item.title)}${item.read ? "" : '<span class="sr-only"> (unread)</span>'}</span>
+        <span class="notif-item-body">${escapeHtml(item.body)}</span>
+        <time class="notif-item-time" datetime="${escapeHtml(item.created_at)}">${escapeHtml(time)}</time>
+      </span>
+    </button>
+  `;
+}
+
+function bindNotifications() {
+  const button = document.getElementById("notif-btn");
+  const sheet = document.getElementById("notif-sheet");
+  const list = document.getElementById("notif-list");
+  if (!button || !sheet || !list) return;
+
+  const close = () => {
+    sheet.classList.add("hidden");
+    document.removeEventListener("keydown", onKey);
+    button.focus();
+  };
+  const onKey = (event) => {
+    if (event.key === "Escape") close();
+  };
+
+  const load = async () => {
+    list.innerHTML = '<p class="empty" role="status">Loading…</p>';
+    try {
+      const data = await api("/vendor/notifications?limit=50");
+      setNotificationBadge(data.unread_count);
+      list.innerHTML = data.notifications.length
+        ? data.notifications.map(notificationItemHtml).join("")
+        : '<p class="empty" role="status">No notifications yet. Activation, trial and queue updates will show up here.</p>';
+    } catch (error) {
+      list.innerHTML = `<p class="empty" role="alert">${escapeHtml(error.message || "Could not load notifications.")}</p>`;
+    }
+  };
+
+  button.addEventListener("click", () => {
+    sheet.classList.remove("hidden");
+    document.addEventListener("keydown", onKey);
+    document.getElementById("notif-close")?.focus();
+    void load();
+  });
+  document.getElementById("notif-close")?.addEventListener("click", close);
+  sheet.addEventListener("click", (event) => {
+    if (event.target === sheet) close();
+  });
+
+  document.getElementById("notif-read-all")?.addEventListener("click", async () => {
+    try {
+      await api("/vendor/notifications/read", { method: "POST", body: JSON.stringify({}) });
+      list.querySelectorAll(".notif-item.is-unread").forEach((item) => {
+        item.classList.remove("is-unread");
+        item.querySelector(".sr-only")?.remove();
+      });
+      setNotificationBadge(0);
+      document.getElementById("notif-close")?.focus();
+    } catch {
+      /* leave them unread; the vendor can try again */
+    }
+  });
+
+  list.addEventListener("click", async (event) => {
+    const item = event.target.closest(".notif-item");
+    if (!item) return;
+    if (item.classList.contains("is-unread")) {
+      item.classList.remove("is-unread");
+      item.querySelector(".sr-only")?.remove();
+      try {
+        await api("/vendor/notifications/read", {
+          method: "POST",
+          body: JSON.stringify({ ids: [Number(item.dataset.id)] }),
+        });
+      } catch {
+        /* the badge refresh below shows the real count */
+      }
+      void refreshNotificationBadge();
+    }
+    const target = item.dataset.target;
+    if (target) {
+      close();
+      stopPolling();
+      go(target);
+    }
+  });
+
+  void refreshNotificationBadge();
+}
+
 const SECTION_LABELS = {
   queue: "Live queue",
   hours: "Branch settings",
@@ -1389,6 +1558,7 @@ function frame({
             <h1 class="page-title navbar-title">${escapeHtml(title || "Queueless Vendor")}</h1>
           </div>
           <div class="navbar-actions">
+            <button type="button" class="navbar-icon-btn notif-btn" id="notif-btn" aria-label="Notifications" aria-haspopup="dialog" aria-controls="notif-sheet">${materialIcon("notifications")}<span class="notif-badge" id="notif-badge" hidden></span></button>
             <button type="button" class="navbar-icon-btn" id="navbar-logout" aria-label="Sign out">${materialIcon("logout")}</button>
             <button type="button" class="navbar-icon-btn navbar-menu" id="sidebar-toggle" aria-label="Open menu" aria-controls="sidebar" aria-expanded="false">${materialIcon("menu")}</button>
           </div>
@@ -1401,6 +1571,7 @@ function frame({
         </footer>
       </div>
     </div>
+    ${notificationsSheetHtml()}
   `;
 }
 
@@ -1418,6 +1589,7 @@ function bindChrome({
   };
   document.getElementById("logout-btn")?.addEventListener("click", signOut);
   document.getElementById("navbar-logout")?.addEventListener("click", signOut);
+  bindNotifications();
   document.getElementById("crumb-home")?.addEventListener("click", () => {
     stopPolling();
     go("businesses");
@@ -2832,11 +3004,18 @@ async function render() {
   await renderBusinesses();
 }
 
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.addEventListener("message", (event) => {
+    if (event.data?.type === "queueless-push") void refreshNotificationBadge();
+  });
+}
+
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) {
     stopPolling();
     return;
   }
+  void refreshNotificationBadge();
   const view = viewFromHash();
   if (view.startsWith("queue-") && getToken()) {
     const id = Number(view.replace("queue-", ""));

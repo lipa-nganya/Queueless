@@ -97,6 +97,42 @@ data class PushTokenResponse(
 )
 
 @Serializable
+data class VendorNotification(
+    val id: Int,
+    val type: String = "",
+    val title: String = "",
+    val body: String = "",
+    val data: Map<String, String> = emptyMap(),
+    val read: Boolean = false,
+    @SerialName("created_at") val createdAt: String? = null,
+) {
+    /** The branch queue a queue alert is about, or null for other notifications. */
+    val queueId: Int?
+        get() = if (type == "queue_join" || type == "queue_leave") {
+            data["business_id"]?.toIntOrNull()?.takeIf { it > 0 }
+        } else {
+            null
+        }
+}
+
+@Serializable
+data class VendorNotificationsResponse(
+    val notifications: List<VendorNotification> = emptyList(),
+    @SerialName("unread_count") val unreadCount: Int = 0,
+)
+
+@Serializable
+data class MarkNotificationsReadRequest(
+    val ids: List<Int> = emptyList(),
+)
+
+@Serializable
+data class MarkNotificationsReadResponse(
+    val ok: Boolean = false,
+    val updated: Int = 0,
+)
+
+@Serializable
 data class LoginResponse(
     val token: String? = null,
     val username: String? = null,

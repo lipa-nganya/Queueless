@@ -181,6 +181,22 @@ export async function migrate() {
     CREATE INDEX IF NOT EXISTS vendor_push_tokens_vendor_id
       ON vendor_push_tokens (vendor_id);
 
+    -- Every vendor notification (activation, trial, queue alerts), kept so the
+    -- vendor apps can list them even when no device received the push.
+    CREATE TABLE IF NOT EXISTS vendor_notifications (
+      id SERIAL PRIMARY KEY,
+      vendor_id INTEGER NOT NULL REFERENCES vendors(id) ON DELETE CASCADE,
+      type TEXT NOT NULL DEFAULT '',
+      title TEXT NOT NULL,
+      body TEXT NOT NULL DEFAULT '',
+      data JSONB NOT NULL DEFAULT '{}'::jsonb,
+      read_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS vendor_notifications_vendor_created
+      ON vendor_notifications (vendor_id, created_at DESC);
+
     -- Branches are physical sites under a brand business. Existing businesses
     -- are backfilled as a single "Main" branch below.
     CREATE TABLE IF NOT EXISTS business_branches (

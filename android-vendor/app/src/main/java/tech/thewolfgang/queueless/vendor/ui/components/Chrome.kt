@@ -19,10 +19,12 @@ import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.AccountTree
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.MiscellaneousServices
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -52,6 +54,8 @@ import tech.thewolfgang.queueless.vendor.ui.theme.SurfaceCard
 import tech.thewolfgang.queueless.vendor.ui.theme.TextFaint
 import tech.thewolfgang.queueless.vendor.ui.theme.TextMuted
 import tech.thewolfgang.queueless.vendor.ui.theme.TextPrimary
+import tech.thewolfgang.queueless.vendor.ui.theme.Danger
+import tech.thewolfgang.queueless.vendor.ui.theme.OnDanger
 
 enum class VendorTab {
     Queue,
@@ -103,13 +107,23 @@ fun AppVersionLabel(
     )
 }
 
+/** The notifications bell every top bar shows: unread count and where tapping it goes. */
+data class NotificationsEntry(
+    val unread: Int,
+    val onOpen: () -> Unit,
+)
+
+val LocalNotificationsEntry = compositionLocalOf<NotificationsEntry?> { null }
+
 @Composable
 fun TopBar(
     title: String? = null,
     showBack: Boolean = false,
     showBrand: Boolean = true,
     onBack: (() -> Unit)? = null,
+    showNotifications: Boolean = true,
 ) {
+    val notifications = LocalNotificationsEntry.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -138,6 +152,52 @@ fun TopBar(
         }
         if (showBrand) {
             BrandMark(subtitle = title)
+        }
+        if (showNotifications && notifications != null) {
+            Spacer(Modifier.weight(1f))
+            NotificationsBell(entry = notifications)
+        }
+    }
+}
+
+@Composable
+private fun NotificationsBell(entry: NotificationsEntry) {
+    val label = if (entry.unread > 0) {
+        "Notifications, ${entry.unread} unread"
+    } else {
+        "Notifications"
+    }
+    Box(
+        modifier = Modifier
+            .size(44.dp)
+            .clip(FieldShape)
+            .background(SurfaceCard)
+            .semantics(mergeDescendants = true) {
+                role = Role.Button
+                contentDescription = label
+            }
+            .clickable(onClick = entry.onOpen),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = Icons.Filled.Notifications,
+            contentDescription = null,
+            tint = TextPrimary,
+            modifier = Modifier.size(22.dp),
+        )
+        if (entry.unread > 0) {
+            Text(
+                text = if (entry.unread > 9) "9+" else entry.unread.toString(),
+                color = OnDanger,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = 4.dp, end = 4.dp)
+                    .background(Danger, CircleShape)
+                    .padding(horizontal = 5.dp, vertical = 1.dp),
+            )
         }
     }
 }

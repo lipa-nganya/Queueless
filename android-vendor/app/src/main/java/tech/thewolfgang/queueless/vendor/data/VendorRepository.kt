@@ -1,12 +1,43 @@
 package tech.thewolfgang.queueless.vendor.data
 
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+
 class VendorRepository(
     private val api: ApiClient,
     private val tokenStore: TokenStore,
 ) {
     fun hasSession(): Boolean = !tokenStore.getToken().isNullOrBlank()
 
-    fun clearSession() = tokenStore.clear()
+    fun clearSession() {
+        tokenStore.clear()
+        _unreadNotifications.value = 0
+    }
+
+    private val _unreadNotifications = MutableStateFlow(0)
+
+    /** Unread saved notifications, shown as the badge on the top bar bell. */
+    val unreadNotifications: StateFlow<Int> = _unreadNotifications.asStateFlow()
+
+    suspend fun notifications(): VendorNotificationsResponse {
+        val result = api.getNotifications()
+        _unreadNotifications.value = result.unreadCount
+        return result
+    }
+
+    /** Marks the given notifications read, or all of them when [ids] is empty. */
+    suspend fun markNotificationsRead(ids: List<Int> = emptyList()) {
+        api.markNotificationsRead(ids)
+        refreshUnreadNotifications()
+    }
+
+    /** Refreshes the badge count. Failures keep the last count. */
+    suspend fun refreshUnreadNotifications() {
+        if (!hasSession()) return
+        runCatching { api.getNotifications(limit = 1).unreadCount }
+            .onSuccess { _unreadNotifications.value = it }
+    }
 
     suspend fun phoneStatus(phone: String) = api.phoneStatus(normalizePhone(phone))
 

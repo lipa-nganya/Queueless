@@ -58,6 +58,8 @@ import {
 import {
   deleteVendorPushToken,
   getFirebaseWebClientConfig,
+  listVendorNotifications,
+  markVendorNotificationsRead,
   notifyVendorsPushByIds,
   notifyVendorsPushByPhones,
   pushConfigured,
@@ -4323,6 +4325,35 @@ router.delete("/vendor/push-tokens", requireVendor, async (req, res) => {
   } catch (error) {
     console.error("Vendor push token delete failed:", error);
     return res.status(500).json({ error: "Could not remove push token." });
+  }
+});
+
+/** The signed-in vendor's saved notifications, newest first, with the unread count. */
+router.get("/vendor/notifications", requireVendor, async (req, res) => {
+  try {
+    const result = await listVendorNotifications({
+      vendorId: req.vendor.sub,
+      limit: req.query?.limit,
+    });
+    return res.json(result);
+  } catch (error) {
+    console.error("Vendor notifications list failed:", error);
+    return res.status(500).json({ error: "Could not load notifications." });
+  }
+});
+
+/**
+ * Mark notifications read.
+ * Body: { ids?: number[] } — leave out ids to mark them all read.
+ */
+router.post("/vendor/notifications/read", requireVendor, async (req, res) => {
+  try {
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids : [];
+    const updated = await markVendorNotificationsRead({ vendorId: req.vendor.sub, ids });
+    return res.json({ ok: true, updated });
+  } catch (error) {
+    console.error("Vendor notifications read failed:", error);
+    return res.status(500).json({ error: "Could not update notifications." });
   }
 });
 

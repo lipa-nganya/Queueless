@@ -328,12 +328,129 @@ export async function sendVendorPush({
   };
 }
 
+/** Most notifications a vendor keeps; older ones are dropped on the next save. */
+const VENDOR_NOTIFICATION_LIMIT = 200;
+
+/**
+ * Store a notification for each vendor so the vendor apps can list it later.
+ * Never throws: a failed save must not stop the push going out.
+ */
+export async function saveVendorNotifications({ vendorIds = [], title, body, data = {} }) {
+  const ids = [...new Set((vendorIds || []).map(Number).filter((id) => id > 0))];
+  if (!ids.length) return [];
+  // Strings only, like the push payload, so the apps can read data as a string map.
+  const stored = Object.fromEntries(
+    Object.entries(data || {}).map(([key, value]) => [key, String(value ?? "")])
+  );
+  try {
+    const result = await query(
+      `
+        INSERT INTO vendor_notifications (vendor_id, type, title, body, data)
+        SELECT unnest($1::int[]), $2, $3, $4, $5::jsonb
+        RETURNING id, vendor_id
+      `,
+      [ids, stored.type || "", String(title || ""), String(body || ""), JSON.stringify(stored)]
+    );
+    await query(
+      `
+        DELETE FROM vendor_notifications n
+        USING (
+          SELECT id, ROW_NUMBER() OVER (PARTITION BY vendor_id ORDER BY created_at DESC, id DESC) AS rank
+          FROM vendor_notifications
+          WHERE vendor_id = ANY($1::int[])
+        ) ranked
+        WHERE n.id = ranked.id AND ranked.rank > $2
+      `,
+      [ids, VENDOR_NOTIFICATION_LIMIT]
+    );
+    return result.rows;
+  } catch (error) {
+    console.error("[notifications] save failed:", error.message);
+    return [];
+  }
+}
+
+export async function listVendorNotifications({ vendorId, limit = 50 }) {
+  const size = Math.min(Math.max(Number(limit) || 50, 1), VENDOR_NOTIFICATION_LIMIT);
+  const [list, unread] = await Promise.all([
+    query(
+      `
+        SELECT id, type, title, body, data, read_at, created_at
+        FROM vendor_notifications
+        WHERE vendor_id = $1
+        ORDER BY created_at DESC, id DESC
+        LIMIT $2
+      `,
+      [vendorId, size]
+    ),
+    query(
+      `SELECT COUNT(*)::int AS count FROM vendor_notifications WHERE vendor_id = $1 AND read_at IS NULL`,
+      [vendorId]
+    ),
+  ]);
+  return {
+    notifications: list.rows.map((row) => ({
+      id: row.id,
+      type: row.type,
+      title: row.title,
+      body: row.body,
+      data: row.data || {},
+      read: Boolean(row.read_at),
+      created_at: row.created_at,
+    })),
+    unread_count: unread.rows[0]?.count || 0,
+  };
+}
+
+/** Mark the given notifications read, or all of them when `ids` is empty. */
+export async function markVendorNotificationsRead({ vendorId, ids = [] }) {
+  const list = [...new Set((ids || []).map(Number).filter((id) => id > 0))];
+  const result = list.length
+    ? await query(
+        `
+          UPDATE vendor_notifications SET read_at = NOW()
+          WHERE vendor_id = $1 AND id = ANY($2::int[]) AND read_at IS NULL
+        `,
+        [vendorId, list]
+      )
+    : await query(
+        `UPDATE vendor_notifications SET read_at = NOW() WHERE vendor_id = $1 AND read_at IS NULL`,
+        [vendorId]
+      );
+  return result.rowCount || 0;
+}
+
+async function vendorIdsForPhones(phones = []) {
+  const normalized = [
+    ...new Set(
+      (phones || [])
+        .map((phone) => String(phone || "").replace(/\D/g, ""))
+        .filter((phone) => phone.length >= 10)
+    ),
+  ];
+  if (!normalized.length) return [];
+  const result = await query(
+    `
+      SELECT id FROM vendors
+      WHERE regexp_replace(COALESCE(phone, ''), '\\D', '', 'g') = ANY($1::text[])
+    `,
+    [normalized]
+  );
+  return result.rows.map((row) => row.id);
+}
+
 export async function notifyVendorsPushByPhones({
   phones,
   title,
   body,
   data = {},
 }) {
+  await saveVendorNotifications({
+    vendorIds: await vendorIdsForPhones(phones).catch(() => []),
+    title,
+    body,
+    data,
+  });
   const { tokens } = await listPushTokensForVendorPhones(phones);
   if (!tokens.length) {
     return { sent: false, reason: "no_tokens", results: [] };
@@ -352,6 +469,7 @@ export async function notifyVendorsPushByIds({
   body,
   data = {},
 }) {
+  await saveVendorNotifications({ vendorIds, title, body, data });
   const tokens = await listPushTokensForVendorIds(vendorIds);
   if (!tokens.length) {
     return { sent: false, reason: "no_tokens", results: [] };

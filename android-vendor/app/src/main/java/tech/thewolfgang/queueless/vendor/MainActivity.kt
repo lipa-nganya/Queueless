@@ -15,6 +15,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.mutableStateOf
@@ -22,11 +24,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import kotlinx.coroutines.launch
@@ -37,8 +41,12 @@ import tech.thewolfgang.queueless.vendor.ui.branches.BranchesScreen
 import tech.thewolfgang.queueless.vendor.ui.branches.BranchesViewModel
 import tech.thewolfgang.queueless.vendor.ui.businesses.BusinessesScreen
 import tech.thewolfgang.queueless.vendor.ui.businesses.BusinessesViewModel
+import tech.thewolfgang.queueless.vendor.ui.components.LocalNotificationsEntry
+import tech.thewolfgang.queueless.vendor.ui.components.NotificationsEntry
 import tech.thewolfgang.queueless.vendor.ui.login.LoginScreen
 import tech.thewolfgang.queueless.vendor.ui.login.LoginViewModel
+import tech.thewolfgang.queueless.vendor.ui.notifications.NotificationsScreen
+import tech.thewolfgang.queueless.vendor.ui.notifications.NotificationsViewModel
 import tech.thewolfgang.queueless.vendor.ui.profile.ProfilePickerScreen
 import tech.thewolfgang.queueless.vendor.ui.profile.ProfileScreen
 import tech.thewolfgang.queueless.vendor.ui.profile.ProfileViewModel
@@ -55,6 +63,7 @@ class MainActivity : ComponentActivity() {
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { /* no-op */ }
 
     private val pendingQueueId = mutableStateOf<Int?>(null)
+    private val pendingOpenNotifications = mutableStateOf(false)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge(
@@ -63,6 +72,7 @@ class MainActivity : ComponentActivity() {
         )
         val app = application as QueuelessVendorApp
         pendingQueueId.value = intent.queueBranchId()
+        pendingOpenNotifications.value = intent.opensNotifications()
         PushRegistrar.ensureNotificationChannel(this)
         maybeRequestNotificationPermission()
         if (app.repository.hasSession()) {
@@ -78,7 +88,11 @@ class MainActivity : ComponentActivity() {
                         .safeDrawingPadding(),
                     color = PageBackground,
                 ) {
-                    VendorNav(repository = app.repository, pendingQueueId = pendingQueueId)
+                    VendorNav(
+                        repository = app.repository,
+                        pendingQueueId = pendingQueueId,
+                        pendingOpenNotifications = pendingOpenNotifications,
+                    )
                 }
             }
         }
@@ -88,6 +102,13 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         pendingQueueId.value = intent.queueBranchId()
+        pendingOpenNotifications.value = intent.opensNotifications()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        val app = application as QueuelessVendorApp
+        lifecycleScope.launch { app.repository.refreshUnreadNotifications() }
     }
 
     private fun maybeRequestNotificationPermission() {
@@ -107,6 +128,12 @@ private fun Intent.queueBranchId(): Int? {
     return raw?.toIntOrNull()?.takeIf { it > 0 }
 }
 
+/** Account notices (activation, trial) open the notifications list; queue alerts open their queue. */
+private fun Intent.opensNotifications(): Boolean {
+    val type = getStringExtra("push_type") ?: getStringExtra("type")
+    return type == "vendor_activated" || type == "vendor_trial"
+}
+
 private object Routes {
     const val Login = "login"
     const val Businesses = "businesses"
@@ -117,6 +144,7 @@ private object Routes {
     const val Services = "services/{businessId}"
     const val BranchesPicker = "branches"
     const val Branches = "branches/{businessId}"
+    const val Notifications = "notifications"
 
     fun queue(businessId: Int) = "queue/$businessId"
     fun profile(businessId: Int) = "profile/$businessId"
@@ -125,7 +153,11 @@ private object Routes {
 }
 
 @Composable
-private fun VendorNav(repository: VendorRepository, pendingQueueId: MutableState<Int?>) {
+private fun VendorNav(
+    repository: VendorRepository,
+    pendingQueueId: MutableState<Int?>,
+    pendingOpenNotifications: MutableState<Boolean>,
+) {
     val navController = rememberNavController()
     val queueId = pendingQueueId.value
     LaunchedEffect(queueId) {
@@ -134,6 +166,18 @@ private fun VendorNav(repository: VendorRepository, pendingQueueId: MutableState
         navController.navigate(Routes.queue(id)) { launchSingleTop = true }
         pendingQueueId.value = null
     }
+    val openNotifications = pendingOpenNotifications.value
+    LaunchedEffect(openNotifications) {
+        if (!openNotifications || !repository.hasSession()) return@LaunchedEffect
+        navController.navigate(Routes.Notifications) { launchSingleTop = true }
+        pendingOpenNotifications.value = false
+    }
+    // Refresh the bell's unread count whenever the screen changes.
+    val currentRoute = navController.currentBackStackEntryAsState().value?.destination?.route
+    LaunchedEffect(currentRoute) {
+        repository.refreshUnreadNotifications()
+    }
+    val unreadNotifications by repository.unreadNotifications.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val startDestination = remember {
         if (repository.hasSession()) Routes.Businesses else Routes.Login
@@ -191,199 +235,220 @@ private fun VendorNav(repository: VendorRepository, pendingQueueId: MutableState
         }
     }
 
-    NavHost(navController = navController, startDestination = startDestination) {
-        composable(Routes.Login) {
-            val vm: LoginViewModel = viewModel(factory = LoginViewModel.factory(repository))
-            LoginScreen(
-                viewModel = vm,
-                onLoggedIn = {
-                    navController.navigate(Routes.Businesses) {
-                        popUpTo(Routes.Login) { inclusive = true }
-                    }
-                },
-                onRegisterPush = { phoneForPending ->
-                    PushRegistrar.register(
-                        context = context,
-                        repository = repository,
-                        phoneForPending = phoneForPending,
-                    )
-                },
-            )
-        }
+    val notificationsEntry = NotificationsEntry(unread = unreadNotifications) {
+        navController.navigate(Routes.Notifications) { launchSingleTop = true }
+    }
 
-        composable(Routes.Businesses) {
-            val vm: BusinessesViewModel = viewModel(
-                factory = BusinessesViewModel.factory(repository),
-            )
-            BusinessesScreen(
-                viewModel = vm,
-                onOpenQueue = { id -> navController.navigate(Routes.queue(id)) },
-                onOpenBranches = { goBranches() },
-                onOpenServices = { goServices() },
-                onOpenProfile = { goProfile() },
-                onSignOut = ::signOut,
-                onUnauthorized = ::onUnauthorized,
-            )
-        }
+    CompositionLocalProvider(LocalNotificationsEntry provides notificationsEntry) {
+        NavHost(navController = navController, startDestination = startDestination) {
+            composable(Routes.Login) {
+                val vm: LoginViewModel = viewModel(factory = LoginViewModel.factory(repository))
+                LoginScreen(
+                    viewModel = vm,
+                    onLoggedIn = {
+                        navController.navigate(Routes.Businesses) {
+                            popUpTo(Routes.Login) { inclusive = true }
+                        }
+                    },
+                    onRegisterPush = { phoneForPending ->
+                        PushRegistrar.register(
+                            context = context,
+                            repository = repository,
+                            phoneForPending = phoneForPending,
+                        )
+                    },
+                )
+            }
 
-        composable(
-            route = Routes.Queue,
-            arguments = listOf(navArgument("businessId") { type = NavType.IntType }),
-        ) { entry ->
-            val businessId = entry.arguments?.getInt("businessId") ?: return@composable
-            val vm: QueueViewModel = viewModel(
-                factory = QueueViewModel.factory(businessId, repository),
-            )
-            QueueScreen(
-                viewModel = vm,
-                onBack = { navController.popBackStack() },
-                onOpenBranches = { goBranches(businessId) },
-                onOpenServices = { goServices(businessId) },
-                onOpenProfile = { goProfile(businessId) },
-                onSignOut = ::signOut,
-                onUnauthorized = ::onUnauthorized,
-            )
-        }
+            composable(Routes.Businesses) {
+                val vm: BusinessesViewModel = viewModel(
+                    factory = BusinessesViewModel.factory(repository),
+                )
+                BusinessesScreen(
+                    viewModel = vm,
+                    onOpenQueue = { id -> navController.navigate(Routes.queue(id)) },
+                    onOpenBranches = { goBranches() },
+                    onOpenServices = { goServices() },
+                    onOpenProfile = { goProfile() },
+                    onSignOut = ::signOut,
+                    onUnauthorized = ::onUnauthorized,
+                )
+            }
 
-        composable(Routes.Profiles) {
-            val vm: BusinessesViewModel = viewModel(
-                key = "profile-picker",
-                factory = BusinessesViewModel.factory(repository),
-            )
-            ProfilePickerScreen(
-                viewModel = vm,
-                onOpenProfile = { id ->
-                    navController.navigate(Routes.profile(id)) {
-                        popUpTo(Routes.Profiles) { inclusive = true }
-                    }
-                },
-                onOpenQueue = ::goQueueHome,
-                onOpenBranches = { goBranches() },
-                onOpenServices = { goServices() },
-                onSignOut = ::signOut,
-                onUnauthorized = ::onUnauthorized,
-            )
-        }
+            composable(
+                route = Routes.Queue,
+                arguments = listOf(navArgument("businessId") { type = NavType.IntType }),
+            ) { entry ->
+                val businessId = entry.arguments?.getInt("businessId") ?: return@composable
+                val vm: QueueViewModel = viewModel(
+                    factory = QueueViewModel.factory(businessId, repository),
+                )
+                QueueScreen(
+                    viewModel = vm,
+                    onBack = { navController.popBackStack() },
+                    onOpenBranches = { goBranches(businessId) },
+                    onOpenServices = { goServices(businessId) },
+                    onOpenProfile = { goProfile(businessId) },
+                    onSignOut = ::signOut,
+                    onUnauthorized = ::onUnauthorized,
+                )
+            }
 
-        composable(
-            route = Routes.Profile,
-            arguments = listOf(navArgument("businessId") { type = NavType.IntType }),
-        ) { entry ->
-            val businessId = entry.arguments?.getInt("businessId") ?: return@composable
-            val vm: ProfileViewModel = viewModel(
-                key = "profile-$businessId",
-                factory = ProfileViewModel.factory(businessId, repository),
-            )
-            ProfileScreen(
-                viewModel = vm,
-                onOpenQueue = {
-                    navController.navigate(Routes.queue(businessId)) {
-                        launchSingleTop = true
-                    }
-                },
-                onOpenBranches = { goBranches(businessId) },
-                onOpenServices = { goServices(businessId) },
-                onSwitchBranch = { id ->
-                    navController.navigate(Routes.profile(id)) {
-                        popUpTo(Routes.profile(businessId)) { inclusive = true }
-                        launchSingleTop = true
-                    }
-                },
-                onSignOut = ::signOut,
-                onUnauthorized = ::onUnauthorized,
-            )
-        }
+            composable(Routes.Profiles) {
+                val vm: BusinessesViewModel = viewModel(
+                    key = "profile-picker",
+                    factory = BusinessesViewModel.factory(repository),
+                )
+                ProfilePickerScreen(
+                    viewModel = vm,
+                    onOpenProfile = { id ->
+                        navController.navigate(Routes.profile(id)) {
+                            popUpTo(Routes.Profiles) { inclusive = true }
+                        }
+                    },
+                    onOpenQueue = ::goQueueHome,
+                    onOpenBranches = { goBranches() },
+                    onOpenServices = { goServices() },
+                    onSignOut = ::signOut,
+                    onUnauthorized = ::onUnauthorized,
+                )
+            }
 
-        composable(Routes.ServicesPicker) {
-            val vm: BusinessesViewModel = viewModel(
-                key = "services-picker",
-                factory = BusinessesViewModel.factory(repository),
-            )
-            ServicesPickerScreen(
-                viewModel = vm,
-                onOpenServices = { id ->
-                    navController.navigate(Routes.services(id)) {
-                        popUpTo(Routes.ServicesPicker) { inclusive = true }
-                    }
-                },
-                onOpenQueue = ::goQueueHome,
-                onOpenBranches = { goBranches() },
-                onOpenProfile = { goProfile() },
-                onSignOut = ::signOut,
-                onUnauthorized = ::onUnauthorized,
-            )
-        }
+            composable(
+                route = Routes.Profile,
+                arguments = listOf(navArgument("businessId") { type = NavType.IntType }),
+            ) { entry ->
+                val businessId = entry.arguments?.getInt("businessId") ?: return@composable
+                val vm: ProfileViewModel = viewModel(
+                    key = "profile-$businessId",
+                    factory = ProfileViewModel.factory(businessId, repository),
+                )
+                ProfileScreen(
+                    viewModel = vm,
+                    onOpenQueue = {
+                        navController.navigate(Routes.queue(businessId)) {
+                            launchSingleTop = true
+                        }
+                    },
+                    onOpenBranches = { goBranches(businessId) },
+                    onOpenServices = { goServices(businessId) },
+                    onSwitchBranch = { id ->
+                        navController.navigate(Routes.profile(id)) {
+                            popUpTo(Routes.profile(businessId)) { inclusive = true }
+                            launchSingleTop = true
+                        }
+                    },
+                    onSignOut = ::signOut,
+                    onUnauthorized = ::onUnauthorized,
+                )
+            }
 
-        composable(
-            route = Routes.Services,
-            arguments = listOf(navArgument("businessId") { type = NavType.IntType }),
-        ) { entry ->
-            val businessId = entry.arguments?.getInt("businessId") ?: return@composable
-            val vm: ServicesViewModel = viewModel(
-                key = "services-$businessId",
-                factory = ServicesViewModel.factory(businessId, repository),
-            )
-            ServicesScreen(
-                viewModel = vm,
-                onOpenQueue = {
-                    navController.navigate(Routes.queue(businessId)) {
-                        launchSingleTop = true
-                    }
-                },
-                onOpenBranches = { goBranches(businessId) },
-                onOpenProfile = { goProfile(businessId) },
-                onSwitchBranch = { id ->
-                    navController.navigate(Routes.services(id)) {
-                        popUpTo(Routes.services(businessId)) { inclusive = true }
-                        launchSingleTop = true
-                    }
-                },
-                onSignOut = ::signOut,
-                onUnauthorized = ::onUnauthorized,
-            )
-        }
+            composable(Routes.ServicesPicker) {
+                val vm: BusinessesViewModel = viewModel(
+                    key = "services-picker",
+                    factory = BusinessesViewModel.factory(repository),
+                )
+                ServicesPickerScreen(
+                    viewModel = vm,
+                    onOpenServices = { id ->
+                        navController.navigate(Routes.services(id)) {
+                            popUpTo(Routes.ServicesPicker) { inclusive = true }
+                        }
+                    },
+                    onOpenQueue = ::goQueueHome,
+                    onOpenBranches = { goBranches() },
+                    onOpenProfile = { goProfile() },
+                    onSignOut = ::signOut,
+                    onUnauthorized = ::onUnauthorized,
+                )
+            }
 
-        composable(Routes.BranchesPicker) {
-            val vm: BusinessesViewModel = viewModel(
-                key = "branches-picker",
-                factory = BusinessesViewModel.factory(repository),
-            )
-            BranchesPickerScreen(
-                viewModel = vm,
-                onOpenBranches = { id ->
-                    navController.navigate(Routes.branches(id)) {
-                        popUpTo(Routes.BranchesPicker) { inclusive = true }
-                    }
-                },
-                onOpenQueue = ::goQueueHome,
-                onOpenServices = { goServices() },
-                onOpenProfile = { goProfile() },
-                onSignOut = ::signOut,
-                onUnauthorized = ::onUnauthorized,
-            )
-        }
+            composable(
+                route = Routes.Services,
+                arguments = listOf(navArgument("businessId") { type = NavType.IntType }),
+            ) { entry ->
+                val businessId = entry.arguments?.getInt("businessId") ?: return@composable
+                val vm: ServicesViewModel = viewModel(
+                    key = "services-$businessId",
+                    factory = ServicesViewModel.factory(businessId, repository),
+                )
+                ServicesScreen(
+                    viewModel = vm,
+                    onOpenQueue = {
+                        navController.navigate(Routes.queue(businessId)) {
+                            launchSingleTop = true
+                        }
+                    },
+                    onOpenBranches = { goBranches(businessId) },
+                    onOpenProfile = { goProfile(businessId) },
+                    onSwitchBranch = { id ->
+                        navController.navigate(Routes.services(id)) {
+                            popUpTo(Routes.services(businessId)) { inclusive = true }
+                            launchSingleTop = true
+                        }
+                    },
+                    onSignOut = ::signOut,
+                    onUnauthorized = ::onUnauthorized,
+                )
+            }
 
-        composable(
-            route = Routes.Branches,
-            arguments = listOf(navArgument("businessId") { type = NavType.IntType }),
-        ) { entry ->
-            val businessId = entry.arguments?.getInt("businessId") ?: return@composable
-            val vm: BranchesViewModel = viewModel(
-                factory = BranchesViewModel.factory(businessId, repository),
-            )
-            BranchesScreen(
-                viewModel = vm,
-                onOpenQueue = {
-                    navController.navigate(Routes.queue(businessId)) {
-                        launchSingleTop = true
-                    }
-                },
-                onOpenServices = { goServices(businessId) },
-                onOpenHours = { id -> goProfile(id) },
-                onOpenProfile = { goProfile(businessId) },
-                onSignOut = ::signOut,
-                onUnauthorized = ::onUnauthorized,
-            )
+            composable(Routes.BranchesPicker) {
+                val vm: BusinessesViewModel = viewModel(
+                    key = "branches-picker",
+                    factory = BusinessesViewModel.factory(repository),
+                )
+                BranchesPickerScreen(
+                    viewModel = vm,
+                    onOpenBranches = { id ->
+                        navController.navigate(Routes.branches(id)) {
+                            popUpTo(Routes.BranchesPicker) { inclusive = true }
+                        }
+                    },
+                    onOpenQueue = ::goQueueHome,
+                    onOpenServices = { goServices() },
+                    onOpenProfile = { goProfile() },
+                    onSignOut = ::signOut,
+                    onUnauthorized = ::onUnauthorized,
+                )
+            }
+
+            composable(
+                route = Routes.Branches,
+                arguments = listOf(navArgument("businessId") { type = NavType.IntType }),
+            ) { entry ->
+                val businessId = entry.arguments?.getInt("businessId") ?: return@composable
+                val vm: BranchesViewModel = viewModel(
+                    factory = BranchesViewModel.factory(businessId, repository),
+                )
+                BranchesScreen(
+                    viewModel = vm,
+                    onOpenQueue = {
+                        navController.navigate(Routes.queue(businessId)) {
+                            launchSingleTop = true
+                        }
+                    },
+                    onOpenServices = { goServices(businessId) },
+                    onOpenHours = { id -> goProfile(id) },
+                    onOpenProfile = { goProfile(businessId) },
+                    onSignOut = ::signOut,
+                    onUnauthorized = ::onUnauthorized,
+                )
+            }
+            composable(Routes.Notifications) {
+                val vm: NotificationsViewModel = viewModel(
+                    factory = NotificationsViewModel.factory(repository),
+                )
+                NotificationsScreen(
+                    viewModel = vm,
+                    onBack = {
+                        if (!navController.popBackStack()) goQueueHome()
+                    },
+                    onOpenQueue = { id ->
+                        navController.navigate(Routes.queue(id)) { launchSingleTop = true }
+                    },
+                    onUnauthorized = ::onUnauthorized,
+                )
+            }
         }
     }
 }

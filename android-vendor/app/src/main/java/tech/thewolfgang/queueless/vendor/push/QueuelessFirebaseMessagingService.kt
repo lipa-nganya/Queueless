@@ -32,6 +32,9 @@ class QueuelessFirebaseMessagingService : FirebaseMessagingService() {
     override fun onMessageReceived(message: RemoteMessage) {
         super.onMessageReceived(message)
         PushRegistrar.ensureNotificationChannel(this)
+        (application as? QueuelessVendorApp)?.let { app ->
+            scope.launch { app.repository.refreshUnreadNotifications() }
+        }
 
         val title =
             message.notification?.title

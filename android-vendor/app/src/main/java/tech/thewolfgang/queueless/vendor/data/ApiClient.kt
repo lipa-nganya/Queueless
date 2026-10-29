@@ -120,6 +120,17 @@ class ApiClient(
             authenticated = true,
         )
 
+    suspend fun getNotifications(limit: Int = 50): VendorNotificationsResponse =
+        request(method = "GET", path = "/vendor/notifications?limit=$limit")
+
+    suspend fun markNotificationsRead(ids: List<Int> = emptyList()): MarkNotificationsReadResponse =
+        request(
+            method = "POST",
+            path = "/vendor/notifications/read",
+            bodyJson = json.encodeToString(MarkNotificationsReadRequest(ids = ids)),
+            authenticated = true,
+        )
+
     suspend fun registerPendingPushToken(
         phone: String,
         token: String,
