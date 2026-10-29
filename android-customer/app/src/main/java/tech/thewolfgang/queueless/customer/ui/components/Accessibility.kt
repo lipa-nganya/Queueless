@@ -21,6 +21,10 @@ import tech.thewolfgang.queueless.customer.ui.theme.LimeInk
 import tech.thewolfgang.queueless.customer.ui.theme.LimeSoft
 import tech.thewolfgang.queueless.customer.ui.theme.queuelessFieldColors
 
+/**
+ * [offered] limits the choices to what a branch supports (joining a queue); null shows
+ * every option (the customer's own profile). Saved needs that aren't shown stay selected.
+ */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun AccessibilityNeedsPicker(
@@ -29,13 +33,14 @@ fun AccessibilityNeedsPicker(
     onToggle: (String) -> Unit,
     onNoteChange: (String) -> Unit,
     enabled: Boolean = true,
+    offered: List<String>? = null,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         FlowRow(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            AccessibilityOptions.all.forEach { option ->
+            AccessibilityOptions.all.filter { offered == null || it.id in offered }.forEach { option ->
                 FilterChip(
                     selected = option.id in selected,
                     onClick = { onToggle(option.id) },

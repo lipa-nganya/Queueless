@@ -8,7 +8,7 @@ window.QUEUELESS_API_ORIGIN = ["localhost", "127.0.0.1"].includes(location.hostn
     : "https://queueless-staging.up.railway.app";
 
 // Keep in sync with android-vendor versionName (app/build.gradle.kts).
-window.QUEUELESS_VENDOR_APP_VERSION = "2.1.0";
+window.QUEUELESS_VENDOR_APP_VERSION = "2.1.1";
 
 // Public Firebase web push config (FCM). Also available from GET /api/vendor/push-config.
 window.QUEUELESS_FIREBASE_WEB = {

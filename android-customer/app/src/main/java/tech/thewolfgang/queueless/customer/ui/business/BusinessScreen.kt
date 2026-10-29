@@ -48,6 +48,9 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import tech.thewolfgang.queueless.customer.data.AccessibilityOptions
+import tech.thewolfgang.queueless.customer.data.Travel
+import tech.thewolfgang.queueless.customer.data.UserLocation
+import tech.thewolfgang.queueless.customer.data.travelFrom
 import tech.thewolfgang.queueless.customer.ui.components.AccessibilityNeedsPicker
 import tech.thewolfgang.queueless.customer.ui.components.ChoiceRow
 import tech.thewolfgang.queueless.customer.ui.components.InfoChip
@@ -80,6 +83,7 @@ private val TIME_FORMAT = DateTimeFormatter.ofPattern("h:mm a", Locale.ENGLISH)
 @Composable
 fun BusinessScreen(
     viewModel: BusinessViewModel,
+    userLocation: UserLocation,
     onBack: () -> Unit,
     onRequireLogin: (reason: String) -> Unit,
     onJoined: () -> Unit,
@@ -89,6 +93,12 @@ fun BusinessScreen(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val event by viewModel.events.collectAsStateWithLifecycle()
     val signedIn by viewModel.signedIn.collectAsStateWithLifecycle()
+    val origin by userLocation.current.collectAsStateWithLifecycle()
+
+    // Opened straight from a link: Discover hasn't located the customer yet.
+    LaunchedEffect(Unit) {
+        if (origin == null && userLocation.hasPermission) userLocation.refresh()
+    }
 
     LaunchedEffect(signedIn) {
         if (signedIn) viewModel.refreshProfile()
@@ -149,6 +159,7 @@ fun BusinessScreen(
                         selected = option.id == state.branchId,
                         title = option.name,
                         subtitle = listOfNotNull(
+                            option.travelFrom(origin)?.summary,
                             option.location,
                             if (option.queuePaused) "On a short break" else "${peopleLabel(option.queueSize)} waiting",
                         ).joinToString(" · "),
@@ -158,7 +169,7 @@ fun BusinessScreen(
             }
 
             if (branch != null) {
-                BranchSummary(branch)
+                BranchSummary(branch, branch.travelFrom(origin))
 
                 if (branch.services.isNotEmpty()) {
                     SectionTitle(if (branch.services.size > 1) "Choose a service" else "Service")
@@ -193,7 +204,8 @@ fun BusinessScreen(
 
                 if (state.mode == VisitMode.Join) {
                     PartySizeStepper(state.partySize, viewModel::changePartySize)
-                    if (signedIn) {
+                    // Only offer needs this branch says it supports; none selected means no section.
+                    if (signedIn && branch.accessibilityOptions.isNotEmpty()) {
                         SectionTitle("Accessibility needs")
                         Text(
                             "Optional. We share these with ${branch.name} so they can be ready for you.",
@@ -204,6 +216,7 @@ fun BusinessScreen(
                             note = state.note,
                             onToggle = viewModel::toggleNeed,
                             onNoteChange = viewModel::onNote,
+                            offered = branch.accessibilityOptions,
                         )
                         Row(
                             modifier = Modifier
@@ -295,7 +308,7 @@ private fun dayLabel(day: LocalDate): String {
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun BranchSummary(branch: tech.thewolfgang.queueless.customer.data.Branch) {
+private fun BranchSummary(branch: tech.thewolfgang.queueless.customer.data.Branch, travel: Travel?) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -305,6 +318,7 @@ private fun BranchSummary(branch: tech.thewolfgang.queueless.customer.data.Branc
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Text(branch.name, color = TextPrimary, fontWeight = FontWeight.SemiBold, fontSize = 17.sp)
+        travel?.let { Text(it.summary, color = TextPrimary, fontWeight = FontWeight.Medium) }
         listOfNotNull(branch.location, branch.landmark?.let { "Near $it" }, branch.phone).forEach {
             Text(it, color = TextMuted)
         }

@@ -22,9 +22,10 @@
       "https://play.google.com/store/apps/details?id=tech.thewolfgang.queueless.customer",
     vendorAppUrl:
       "https://play.google.com/store/apps/details?id=tech.thewolfgang.queueless.vendor",
-    // Keep in sync with customer/config.js, vendor/config.js, android-vendor versionName.
-    customerAppVersion: "2.1.0",
-    vendorWebVersion: "2.1.0",
-    vendorAppVersion: "2.1.0",
+    // Keep in sync with customer/config.js, vendor/config.js, admin/config.js and the Android versionNames.
+    landingVersion: "2.1.1",
+    customerAppVersion: "2.1.1",
+    vendorWebVersion: "2.1.1",
+    vendorAppVersion: "2.1.1",
   };
 })();

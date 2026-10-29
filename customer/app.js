@@ -67,7 +67,9 @@ function accessibilityNeedLabels(ids) {
 
 /**
  * Customer picks the needs that apply to them; staff see them on the queue.
- * `offered` marks options the selected branch says it supports.
+ * When `offered` is given (joining a branch), only the options that branch
+ * supports are shown, and the picker is hidden if it supports none. Saved
+ * needs it doesn't offer stay checked but hidden, so "Remember" never drops them.
  */
 function accessibilityNeedsPickerHtml({
   idPrefix,
@@ -80,24 +82,25 @@ function accessibilityNeedsPickerHtml({
 }) {
   const chosen = new Set(Array.isArray(selected) ? selected : []);
   const offeredSet = Array.isArray(offered) ? new Set(offered) : null;
+  const shown = (id) => !offeredSet || offeredSet.has(id);
+  const shownChosen = [...chosen].filter(shown).length;
   return `
-    <details class="a11y-needs" id="${idPrefix}-needs" ${open || chosen.size || note ? "open" : ""}>
+    <details class="a11y-needs" id="${idPrefix}-needs" ${open || shownChosen || note ? "open" : ""} ${
+      offeredSet && !offeredSet.size ? "hidden" : ""
+    }>
       <summary>
         <span>Accessibility needs <span class="optional-label">(optional)</span></span>
-        <span class="a11y-needs-count" data-needs-count>${chosen.size ? `${chosen.size} selected` : ""}</span>
+        <span class="a11y-needs-count" data-needs-count>${shownChosen ? `${shownChosen} selected` : ""}</span>
       </summary>
       <p class="a11y-needs-lead">${escapeHtml(lead)}</p>
       <div class="a11y-needs-grid" role="group" aria-label="Accessibility needs">
         ${ACCESSIBILITY_OPTIONS.map(
           (option) => `
-          <label class="a11y-need">
+          <label class="a11y-need" data-need-option="${option.id}" ${shown(option.id) ? "" : "hidden"}>
             <input type="checkbox" name="${idPrefix}_need" value="${option.id}" ${chosen.has(option.id) ? "checked" : ""} />
             <span class="a11y-need-icon" aria-hidden="true">${accessibilityIconSvg(option.id)}</span>
             <span class="a11y-need-text">
               <span>${escapeHtml(option.need)}</span>
-              <small class="a11y-need-offered" data-offered-for="${option.id}" ${
-                offeredSet?.has(option.id) ? "" : "hidden"
-              }>Offered here</small>
             </span>
           </label>`
         ).join("")}
@@ -129,11 +132,18 @@ function bindAccessibilityNeedsPicker(idPrefix) {
   if (!root) return;
   const count = root.querySelector("[data-needs-count]");
   root.querySelectorAll(`input[name="${idPrefix}_need"]`).forEach((input) => {
-    input.addEventListener("change", () => {
-      const total = root.querySelectorAll(`input[name="${idPrefix}_need"]:checked`).length;
-      if (count) count.textContent = total ? `${total} selected` : "";
-    });
+    input.addEventListener("change", () => updateNeedsCount(idPrefix));
   });
+}
+
+function updateNeedsCount(idPrefix) {
+  const root = document.getElementById(`${idPrefix}-needs`);
+  const count = root?.querySelector("[data-needs-count]");
+  if (!count) return;
+  const total = [...root.querySelectorAll(`input[name="${idPrefix}_need"]:checked`)].filter(
+    (input) => !input.closest("label")?.hidden
+  ).length;
+  count.textContent = total ? `${total} selected` : "";
 }
 
 function setAccessibilityNeedsSelection(idPrefix, { ids = [], note = "" } = {}) {
@@ -144,16 +154,21 @@ function setAccessibilityNeedsSelection(idPrefix, { ids = [], note = "" } = {}) 
   });
   const noteInput = document.getElementById(`${idPrefix}-need-note`);
   if (noteInput) noteInput.value = note || "";
-  const count = root.querySelector("[data-needs-count]");
-  if (count) count.textContent = ids.length ? `${ids.length} selected` : "";
-  if (ids.length || note) root.open = true;
+  updateNeedsCount(idPrefix);
+  const shownIds = ids.filter((id) => !root.querySelector(`[data-need-option="${id}"]`)?.hidden);
+  if (shownIds.length || note) root.open = true;
 }
 
+/** Shows only the options the selected branch offers; hides the picker if it offers none. */
 function markOfferedAccessibility(idPrefix, offered) {
+  const root = document.getElementById(`${idPrefix}-needs`);
+  if (!root) return;
   const offeredSet = new Set(Array.isArray(offered) ? offered : []);
-  document.querySelectorAll(`#${idPrefix}-needs [data-offered-for]`).forEach((tag) => {
-    tag.hidden = !offeredSet.has(tag.dataset.offeredFor);
+  root.querySelectorAll("[data-need-option]").forEach((label) => {
+    label.hidden = !offeredSet.has(label.dataset.needOption);
   });
+  root.hidden = offeredSet.size === 0;
+  updateNeedsCount(idPrefix);
 }
 
 function normalizeAccessibility(business) {
@@ -837,7 +852,7 @@ function tabbar(active) {
 
 function appVersion() {
   return (
-    String(window.QUEUELESS_CUSTOMER_APP_VERSION || "2.1.0").trim() || "2.1.0"
+    String(window.QUEUELESS_CUSTOMER_APP_VERSION || "2.1.1").trim() || "2.1.1"
   );
 }
 

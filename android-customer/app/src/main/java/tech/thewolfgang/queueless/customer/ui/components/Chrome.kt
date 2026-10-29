@@ -1,5 +1,6 @@
 package tech.thewolfgang.queueless.customer.ui.components
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -37,6 +38,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -46,14 +48,12 @@ import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import tech.thewolfgang.queueless.customer.BuildConfig
+import tech.thewolfgang.queueless.customer.R
 import tech.thewolfgang.queueless.customer.ui.theme.ButtonShape
 import tech.thewolfgang.queueless.customer.ui.theme.CardShape
 import tech.thewolfgang.queueless.customer.ui.theme.Danger
@@ -75,13 +75,10 @@ enum class CustomerTab { Discover, Queue, Bookings, Profile }
 
 @Composable
 fun BrandMark(modifier: Modifier = Modifier) {
-    Text(
-        text = buildAnnotatedString {
-            withStyle(SpanStyle(color = TextPrimary, fontWeight = FontWeight.Bold)) { append("Queue") }
-            withStyle(SpanStyle(color = LimeInk, fontWeight = FontWeight.Bold)) { append("less") }
-        },
-        fontSize = 22.sp,
-        modifier = modifier.semantics { contentDescription = "Queueless" },
+    Image(
+        painter = painterResource(R.drawable.queueless_logo),
+        contentDescription = "Queueless",
+        modifier = modifier.height(36.dp),
     )
 }
 

@@ -1,0 +1,21 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "landing",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "landing-server.js"
+      ],
+      "port": 8080
+    },
+    {
+      "name": "vendor-web",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "vendor/server.js"
+      ],
+      "port": 3500
+    }
+  ]
+}

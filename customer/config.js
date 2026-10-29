@@ -7,4 +7,4 @@ window.QUEUELESS_API_ORIGIN = ["localhost", "127.0.0.1"].includes(location.hostn
     ? "https://queueless-prod.up.railway.app"
     : "https://queueless-staging.up.railway.app";
 
-window.QUEUELESS_CUSTOMER_APP_VERSION = "2.1.0";
+window.QUEUELESS_CUSTOMER_APP_VERSION = "2.1.1";

@@ -1958,13 +1958,8 @@ textarea {
   gap: 0.2rem 0.5rem;
 }
 
-.a11y-need-offered {
-  font-size: 0.7rem;
-  font-weight: 600;
-  color: var(--teal-ink);
-}
-
-.a11y-need-offered[hidden] {
+.a11y-needs[hidden],
+.a11y-need[hidden] {
   display: none;
 }
 

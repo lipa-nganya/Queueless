@@ -28,6 +28,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import tech.thewolfgang.queueless.customer.data.CustomerRepository
+import tech.thewolfgang.queueless.customer.data.UserLocation
 import tech.thewolfgang.queueless.customer.ui.bookings.BookingsScreen
 import tech.thewolfgang.queueless.customer.ui.bookings.BookingsViewModel
 import tech.thewolfgang.queueless.customer.ui.business.BusinessScreen
@@ -53,6 +54,7 @@ class MainActivity : ComponentActivity() {
             navigationBarStyle = SystemBarStyle.light(Color.WHITE, Color.WHITE),
         )
         val repository = (application as QueuelessCustomerApp).repository
+        val userLocation = (application as QueuelessCustomerApp).userLocation
         setContent {
             QueuelessTheme {
                 Surface(
@@ -61,7 +63,7 @@ class MainActivity : ComponentActivity() {
                         .safeDrawingPadding(),
                     color = PageBackground,
                 ) {
-                    CustomerNav(repository)
+                    CustomerNav(repository, userLocation)
                 }
             }
         }
@@ -97,7 +99,7 @@ private fun NavHostController.goToTab(route: String) {
 }
 
 @Composable
-private fun CustomerNav(repository: CustomerRepository) {
+private fun CustomerNav(repository: CustomerRepository, userLocation: UserLocation) {
     val navController = rememberNavController()
     val signedIn by repository.signedIn.collectAsStateWithLifecycle()
     val backStack by navController.currentBackStackEntryAsState()
@@ -137,6 +139,7 @@ private fun CustomerNav(repository: CustomerRepository) {
                     })
                     DiscoverScreen(
                         viewModel = vm,
+                        userLocation = userLocation,
                         onOpenBusiness = { navController.navigate(Routes.business(it)) },
                     )
                 }
@@ -150,6 +153,7 @@ private fun CustomerNav(repository: CustomerRepository) {
                     })
                     BusinessScreen(
                         viewModel = vm,
+                        userLocation = userLocation,
                         onBack = { navController.popBackStack() },
                         onRequireLogin = { reason -> requireLogin(reason, Routes.business(businessId)) },
                         onJoined = { navController.goToTab(Routes.Queue) },

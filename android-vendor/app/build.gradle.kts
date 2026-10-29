@@ -37,8 +37,8 @@ android {
         applicationId = "tech.thewolfgang.queueless.vendor"
         minSdk = 26
         targetSdk = 36
-        versionCode = 8
-        versionName = "2.1.0"
+        versionCode = 9
+        versionName = "2.1.1"
         buildConfigField("boolean", "PUSH_ENABLED", hasGoogleServices.toString())
     }
 

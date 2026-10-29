@@ -11,6 +11,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import tech.thewolfgang.queueless.customer.BuildConfig
 import java.io.File
+import java.io.IOException
 import java.util.concurrent.TimeUnit
 
 class ApiException(
@@ -87,21 +88,26 @@ class ApiClient(
         builder.header("Accept", "application/json")
         tokenStore.getToken()?.let { builder.header("Authorization", "Bearer $it") }
 
-        client.newCall(builder.build()).execute().use { response ->
-            val text = response.body?.string().orEmpty()
-            if (!response.isSuccessful) {
-                val payload = runCatching { json.decodeFromString<ErrorResponse>(text) }.getOrNull()
-                if (response.code == 401 && tokenStore.getToken() != null && !path.startsWith("/customer/login")) {
-                    tokenStore.clear()
-                    clearCache()
+        try {
+            client.newCall(builder.build()).execute().use { response ->
+                val text = response.body?.string().orEmpty()
+                if (!response.isSuccessful) {
+                    val payload = runCatching { json.decodeFromString<ErrorResponse>(text) }.getOrNull()
+                    if (response.code == 401 && tokenStore.getToken() != null && !path.startsWith("/customer/login")) {
+                        tokenStore.clear()
+                        clearCache()
+                    }
+                    throw ApiException(
+                        payload?.error ?: "Request failed (${response.code}).",
+                        response.code,
+                        payload,
+                    )
                 }
-                throw ApiException(
-                    payload?.error ?: "Request failed (${response.code}).",
-                    response.code,
-                    payload,
-                )
+                text.ifBlank { "{}" }
             }
-            text.ifBlank { "{}" }
+        } catch (_: IOException) {
+            // No connection, timeouts and dropped connections: give screens a readable error.
+            throw ApiException("Can't reach Queueless. Check your connection and try again.")
         }
     }
 
