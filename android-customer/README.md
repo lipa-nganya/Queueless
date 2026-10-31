@@ -81,3 +81,29 @@ Play takes an Android App Bundle (`.aab`) signed with your **upload key**. Play 
 
 Without `keystore.properties`, release builds are unsigned and Play will not accept them.
 
+
+### Automated upload (customer and vendor)
+
+`scripts/publish-android.sh` builds `productionRelease` and uploads it with [Gradle Play Publisher](https://github.com/Triple-T/gradle-play-publisher). It sets the `versionCode` to Play's highest + 1, so you no longer bump it by hand. `versionName` still comes from `app/build.gradle.kts`.
+
+One-time setup:
+
+1. In [Google Cloud Console](https://console.cloud.google.com/), pick or create a project, enable the **Google Play Android Developer API**, create a service account, and download a JSON key into `~/queueless-keys/` (outside the repo).
+2. In Play Console, open **Users and permissions → Invite new users**, enter the service account's email, and give it access to both apps with **Release apps to testing tracks** and **Release to production** permissions.
+3. Add the key path to `keystore.properties` in both `android-customer/` and `android-vendor/`:
+
+   ```properties
+   playServiceAccountJson=/Users/you/queueless-keys/play-service-account.json
+   ```
+
+Each release, from the repo root:
+
+```bash
+./scripts/publish-android.sh customer            # internal testing track
+./scripts/publish-android.sh vendor beta         # open testing
+./scripts/publish-android.sh all production      # asks for confirmation first
+```
+
+Extra arguments go to Gradle, for example `--release-status draft` while an app has never been published. Release notes, if you want them, go in `app/src/production/play/release-notes/en-US/default.txt`.
+
+From Android Studio instead: Gradle panel → **app → Tasks → publishing → publishProductionReleaseBundle** (uploads to the internal track).

@@ -140,6 +140,10 @@ Without `google-services.json`, the app still builds; push registration is skipp
 
 Optional: `VENDOR_PUSH_SMS_FALLBACK=1` also sends queue alerts over WhatsApp/SMS to assigned vendor phones (default off — push only for vendors).
 
+## Release to Google Play
+
+Same setup as the customer app: see `android-customer/README.md` ("Release to Google Play" and "Automated upload"). Then run `./scripts/publish-android.sh vendor [track]` from the repo root.
+
 ## Out of scope (first slice)
 
-WhatsApp from the app, Play Store signing, removing the web `vendor/` site.
+WhatsApp from the app, removing the web `vendor/` site.

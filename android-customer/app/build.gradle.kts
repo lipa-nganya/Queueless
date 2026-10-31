@@ -1,3 +1,4 @@
+import com.github.triplet.gradle.androidpublisher.ResolutionStrategy
 import java.util.Properties
 
 plugins {
@@ -5,6 +6,7 @@ plugins {
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
     id("org.jetbrains.kotlin.plugin.serialization")
+    id("com.github.triplet.play")
 }
 
 val localProperties = Properties().apply {
@@ -22,6 +24,17 @@ val keystoreProperties = Properties().apply {
     }
 }
 val hasReleaseKeystore = keystoreProperties.getProperty("storeFile")?.isNotBlank() == true
+
+// Play upload: set playServiceAccountJson in keystore.properties; run ../scripts/publish-android.sh.
+play {
+    keystoreProperties.getProperty("playServiceAccountJson")?.takeIf { it.isNotBlank() }?.let {
+        serviceAccountCredentials.set(rootProject.file(it))
+    }
+    defaultToAppBundles.set(true)
+    track.set("internal")
+    // Uploads use Play's highest versionCode + 1, so versionCode below never needs a manual bump.
+    resolutionStrategy.set(ResolutionStrategy.AUTO)
+}
 
 fun apiUrl(propertyKey: String, default: String): String =
     localProperties.getProperty(propertyKey)?.trim()?.takeIf { it.isNotEmpty() } ?: default
