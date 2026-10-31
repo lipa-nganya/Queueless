@@ -38,7 +38,7 @@ The OkHttp client sends `ngrok-skip-browser-warning` automatically for ngrok hos
 ## Open in Android Studio
 
 1. Open Android Studio → **File → Open** → select this `android-vendor` folder (not the monorepo root).
-2. Let Gradle sync (JDK 17+; Android Studio’s bundled JBR works).
+2. Let Gradle sync. The project uses Gradle 9.8, which runs on Android Studio’s bundled JBR (Java 25), so leave **Settings → Build Tools → Gradle → Gradle JDK** on the default.
 3. **Build → Select Build Variant** → e.g. `localDebug`, `devDebug`, or `productionRelease`.
 4. Start an emulator or connect a device with USB debugging, then Run.
 

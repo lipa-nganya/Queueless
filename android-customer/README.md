@@ -32,7 +32,7 @@ For a local API without ngrok, use `adb reverse tcp:4000 tcp:4000` and `queueles
 ## Open in Android Studio
 
 1. **File → Open** → select this `android-customer` folder (not the monorepo root).
-2. Let Gradle sync (JDK 17+; Android Studio’s bundled JBR works).
+2. Let Gradle sync. The project uses Gradle 9.8, which runs on Android Studio’s bundled JBR (Java 25), so leave **Settings → Build Tools → Gradle → Gradle JDK** on the default.
 3. **Build → Select Build Variant** → `localDebug`, `devDebug`, or `productionRelease`.
 
 ## Build APKs
@@ -106,4 +106,4 @@ Each release, from the repo root:
 
 Extra arguments go to Gradle, for example `--release-status draft` while an app has never been published. Release notes, if you want them, go in `app/src/production/play/release-notes/en-US/default.txt`.
 
-From Android Studio instead: Gradle panel → **app → Tasks → publishing → publishProductionReleaseBundle** (uploads to the internal track).
+From Android Studio instead: Gradle panel → **app → Tasks → publishing → publishProductionReleaseBundle** (uploads to the internal track). Publishing needs `playServiceAccountJson`. Without it the Play plugin is switched off, and release builds still work.
