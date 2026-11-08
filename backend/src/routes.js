@@ -3665,6 +3665,29 @@ router.post("/vendor/phone-status", async (req, res) => {
   }
 });
 
+/**
+ * Texts a vendor their code. If the SMS fails, the code is kept so an admin can
+ * read it from Admin → Vendors, and the failed attempt doesn't count towards
+ * the vendor's resend limit.
+ */
+async function deliverVendorOtp(vendor, phone, otp) {
+  try {
+    return await deliverOtp({ phone, otp, firstName: vendor.username || "Vendor" });
+  } catch (error) {
+    console.error("Vendor OTP SMS failed; code kept for Admin → Vendors:", error.message);
+    await query(
+      `UPDATE vendors SET otp_resend_count = GREATEST(otp_resend_count - 1, 0) WHERE id = $1`,
+      [vendor.id]
+    );
+    return { mode: "web", sent: false, failed: true };
+  }
+}
+
+async function vendorSmsFailedText() {
+  const phone = await supportPhone();
+  return `We couldn't text your code. Contact Queueless on ${phone} and we'll give it to you.`;
+}
+
 router.post("/vendor/request-otp", async (req, res) => {
   try {
     const phone = resolvePhone(req.body);
@@ -3748,28 +3771,15 @@ router.post("/vendor/request-otp", async (req, res) => {
       [otp, otpExpiryDate(10), vendor.id]
     );
 
-    let delivery;
-    try {
-      delivery = await deliverOtp({ phone, otp, firstName: vendor.username || "Vendor" });
-    } catch (error) {
-      await query(
-        `
-          UPDATE vendors
-          SET otp_code = NULL, otp_expires_at = NULL,
-              otp_resend_count = GREATEST(otp_resend_count - 1, 0)
-          WHERE id = $1
-        `,
-        [vendor.id]
-      );
-      throw error;
-    }
+    const delivery = await deliverVendorOtp(vendor, phone, otp);
 
     return res.json({
       phone,
       purpose,
       otp_mode: delivery.mode,
-      message:
-        delivery.mode === "sms"
+      message: delivery.failed
+        ? await vendorSmsFailedText()
+        : delivery.mode === "sms"
           ? "We sent a verification code by SMS."
           : "Verification code created. Check Admin → Vendors while SMS is off.",
       ...(await vendorOtpResendState(updated.rows[0])),
@@ -3841,23 +3851,15 @@ router.post("/vendor/resend-otp", async (req, res) => {
       [otp, otpExpiryDate(10), vendor.id]
     );
 
-    let delivery;
-    try {
-      delivery = await deliverOtp({ phone, otp, firstName: vendor.username || "Vendor" });
-    } catch (error) {
-      await query(
-        `UPDATE vendors SET otp_resend_count = GREATEST(otp_resend_count - 1, 0) WHERE id = $1`,
-        [vendor.id]
-      );
-      throw error;
-    }
+    const delivery = await deliverVendorOtp(vendor, phone, otp);
 
     return res.json({
       phone,
       purpose,
       otp_mode: delivery.mode,
-      message:
-        delivery.mode === "sms"
+      message: delivery.failed
+        ? await vendorSmsFailedText()
+        : delivery.mode === "sms"
           ? "We sent a new verification code by SMS."
           : "New verification code created. Check Admin → Vendors while SMS is off.",
       ...(await vendorOtpResendState(updated.rows[0])),

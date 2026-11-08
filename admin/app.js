@@ -498,6 +498,9 @@ const QUEUE_DEMO_EVENTS = [
 ];
 const QUEUE_DEMO_AGES = ["now", "1m", "3m", "6m"];
 let queueDemoTick = 0;
+// Vendors page refresh, so codes from vendors signing up appear without a reload.
+const VENDOR_REFRESH_MS = 10000;
+let vendorRefreshTimer = null;
 
 function queueDemoCount() {
   return 118 + ((queueDemoTick * 7) % 13);
@@ -2168,7 +2171,15 @@ function vendorBusinessesCell(vendor) {
     .join("");
 }
 
+// "Expires in 7 min" under a vendor's code, so admins know whether it still works.
+function otpExpiryNote(expiresAt) {
+  const minutes = Math.ceil((new Date(expiresAt).getTime() - Date.now()) / 60000);
+  if (!Number.isFinite(minutes) || minutes <= 0) return "";
+  return `<span class="cell-sub">Expires in ${minutes} min</span>`;
+}
+
 async function renderVendors() {
+  clearInterval(vendorRefreshTimer);
   app.innerHTML = shell(
     "vendors",
     `
@@ -2537,8 +2548,9 @@ async function renderVendors() {
 
   let cachedVendors = [];
 
-  async function loadVendors() {
+  async function loadVendors({ onlyIfChanged = false } = {}) {
     const vendors = await api("/admins/vendors");
+    if (onlyIfChanged && JSON.stringify(vendors) === JSON.stringify(cachedVendors)) return;
     vendorsById = new Map(vendors.map((v) => [Number(v.id), v]));
     cachedVendors = vendors;
     renderVendorRows(document.getElementById("vendor-search")?.value || "");
@@ -2606,7 +2618,7 @@ async function renderVendors() {
                   <td>
                     ${
                       vendor.otp_code
-                        ? `<span class="otp-code">${escapeHtml(vendor.otp_code)}</span>`
+                        ? `<span class="otp-code">${escapeHtml(vendor.otp_code)}</span>${otpExpiryNote(vendor.otp_expires_at)}`
                         : vendor.has_pin
                           ? `<span class="status-pill status-active">PIN set</span>`
                           : `<span class="muted">No PIN yet</span>`
@@ -2817,6 +2829,15 @@ async function renderVendors() {
     document.getElementById("vendor-search")?.addEventListener("input", (event) => {
       renderVendorRows(event.target.value);
     });
+    vendorRefreshTimer = setInterval(() => {
+      if (location.hash !== "#vendors") {
+        clearInterval(vendorRefreshTimer);
+        return;
+      }
+      // Skip while hidden or mid-edit; the next tick catches up.
+      if (document.hidden || !editOverlay.classList.contains("hidden")) return;
+      loadVendors({ onlyIfChanged: true }).catch(() => {});
+    }, VENDOR_REFRESH_MS);
   } catch (error) {
     message.textContent = error.message;
   }
