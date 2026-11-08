@@ -2,6 +2,17 @@
   "version": "0.0.1",
   "configurations": [
     {
+      "name": "admin-api",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "--prefix",
+        "backend",
+        "run",
+        "start"
+      ],
+      "port": 4000
+    },
+    {
       "name": "landing",
       "runtimeExecutable": "node",
       "runtimeArgs": [
