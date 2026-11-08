@@ -1,0 +1,7 @@
+Welcome to Queueless Vendor, the first release.
+• See your live queue and serve customers in order, or mark no-shows.
+• Add walk-ins so everyone waits in one line.
+• Pause a branch's queue for a break; people already waiting can still be served.
+• Get a notification when customers join or leave, including any accessibility needs.
+• Manage your branches, services, opening hours and accessibility details.
+• Sign in with your phone number and PIN.

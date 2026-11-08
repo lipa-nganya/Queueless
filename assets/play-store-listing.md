@@ -31,26 +31,35 @@ Queueless: skip the wait, across Kenya.
 
 ### Short description
 
-Manage your live queue, services and branches from one simple app.
+Run your live queue, walk-ins and branches in Kenya from one simple app.
 
 ### Full description
 
 Queueless Vendor helps businesses across Kenya serve customers without crowded waiting areas. Customers join your queue or book from their phones; you manage everything from yours.
 
-SEE EVERY BRANCH AT A GLANCE
-View all your locations in one place, with how many customers are waiting at each. Pick a branch to manage its live queue.
-
 RUN YOUR LIVE QUEUE
-Serve customers in order, mark no-shows, keep the line moving, and see any accessibility needs a customer has shared before they reach the counter.
+Serve customers in order, mark no-shows and keep the line moving. See each customer's party size and any accessibility needs before they reach the counter.
+
+ADD WALK-INS
+Someone arrives without the app? Add them in seconds so walk-ins and app customers wait in one fair line.
+
+PAUSE WHEN YOU NEED A BREAK
+Stop new customers joining a branch's queue for a while. Everyone already waiting can still be served.
+
+GET NOTIFIED
+Get an alert when a customer joins or leaves your queue, with any accessibility needs, and look back at past notifications anytime.
+
+SEE EVERY BRANCH AT A GLANCE
+View all your locations in one place, with how many customers are waiting at each. Add new branches with their address, contact number and opening hours.
 
 MANAGE SERVICES PER BRANCH
 Add, edit or remove services, set how long each one takes, and switch them on or off as you need.
 
-ADD AND EDIT BRANCHES
-Grow to new locations in seconds. Set each branch's address, contact number and opening hours.
-
 SHOW WHAT YOU OFFER
-Tell customers which accessibility options each branch provides, such as wheelchair access or support for blind and low-vision customers, so they can choose with confidence.
+Tell customers which accessibility options each branch provides, such as wheelchair access, a quiet space or sign language, so they can choose with confidence.
+
+SIMPLE, SECURE SIGN-IN
+Sign in with your phone number and a 4-digit PIN.
 
 Fewer crowds, happier customers. Get started with Queueless Vendor.
 
