@@ -197,6 +197,28 @@ export async function migrate() {
     CREATE INDEX IF NOT EXISTS vendor_notifications_vendor_created
       ON vendor_notifications (vendor_id, created_at DESC);
 
+    -- Places found on Google Maps, saved so place search and reverse geocoding
+    -- check here first and only pay Google for places not seen before.
+    CREATE TABLE IF NOT EXISTS places (
+      id SERIAL PRIMARY KEY,
+      google_place_id TEXT NOT NULL UNIQUE,
+      label TEXT NOT NULL,
+      latitude DOUBLE PRECISION NOT NULL,
+      longitude DOUBLE PRECISION NOT NULL,
+      -- Lower-case label, which searches match against.
+      search_text TEXT NOT NULL,
+      -- The last point reverse-geocoded to this place, which can be some way
+      -- from the place itself; a later lookup near either point finds it.
+      lookup_latitude DOUBLE PRECISION,
+      lookup_longitude DOUBLE PRECISION,
+      use_count INTEGER NOT NULL DEFAULT 0,
+      last_used_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS places_coords ON places (latitude, longitude);
+    CREATE INDEX IF NOT EXISTS places_lookup_coords ON places (lookup_latitude, lookup_longitude);
+
     -- Branches are physical sites under a brand business. Existing businesses
     -- are backfilled as a single "Main" branch below.
     CREATE TABLE IF NOT EXISTS business_branches (

@@ -81,14 +81,10 @@ import {
   serializeAccessibilityOptions,
 } from "./accessibilityOptions.js";
 import {
-  getCachedPlacesReverse,
-  getCachedPlacesSearch,
-  reverseCacheKey,
   sendCachedJsonEtag,
   sendJsonEtag,
-  setCachedPlacesReverse,
-  setCachedPlacesSearch,
 } from "./httpCache.js";
+import { reverseGeocodeKenya, searchPlacesKenya } from "./places.js";
 
 function enrichBranchFields(row) {
   return enrichAccessibilityFields(enrichHoursFields(row));
@@ -99,116 +95,11 @@ const uploadsDir = path.resolve(__dirname, "../uploads");
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const INVITE_TTL_HOURS = 72;
 
-// Kenya bounding box used to bias Photon results toward the country.
-const KENYA_BBOX = "33.909,-4.678,41.899,5.507";
-const NAIROBI = { lat: -1.286389, lon: 36.817223 };
-
 function parseCoord(value, min, max) {
   if (value === null || value === undefined || value === "") return null;
   const n = Number(value);
   if (!Number.isFinite(n) || n < min || n > max) return null;
   return n;
-}
-
-async function searchPlacesKenya(q, { limit = 8 } = {}) {
-  const queryText = String(q || "").trim();
-  if (queryText.length < 2) return [];
-
-  const cacheKey = `${queryText.toLowerCase()}|${limit}`;
-  const cached = getCachedPlacesSearch(cacheKey);
-  if (cached) return cached;
-
-  const url = new URL("https://photon.komoot.io/api/");
-  url.searchParams.set("q", queryText);
-  url.searchParams.set("limit", String(Math.min(12, Math.max(1, limit))));
-  url.searchParams.set("lang", "en");
-  url.searchParams.set("lat", String(NAIROBI.lat));
-  url.searchParams.set("lon", String(NAIROBI.lon));
-  url.searchParams.set("bbox", KENYA_BBOX);
-
-  const response = await fetch(url, {
-    headers: {
-      Accept: "application/json",
-      "User-Agent": "QueuelessKenya/1.0 (Kenya place search)",
-    },
-    signal: AbortSignal.timeout(8000),
-  });
-  if (!response.ok) {
-    throw new Error("Place search is temporarily unavailable.");
-  }
-
-  const payload = await response.json().catch(() => ({}));
-  const features = Array.isArray(payload.features) ? payload.features : [];
-  const places = features
-    .filter((feature) => {
-      const code = String(feature?.properties?.countrycode || "").toLowerCase();
-      return !code || code === "ke";
-    })
-    .slice(0, limit)
-    .map((feature) => {
-      const [longitude, latitude] = feature.geometry?.coordinates || [];
-      return {
-        label: placeLabel(feature.properties),
-        latitude: Number(latitude),
-        longitude: Number(longitude),
-      };
-    })
-    .filter(
-      (place) =>
-        place.label &&
-        Number.isFinite(place.latitude) &&
-        Number.isFinite(place.longitude)
-    );
-
-  setCachedPlacesSearch(cacheKey, places);
-  return places;
-}
-
-async function reverseGeocodeKenya(lat, lon) {
-  const latitude = parseCoord(lat, -90, 90);
-  const longitude = parseCoord(lon, -180, 180);
-  if (latitude == null || longitude == null) return null;
-
-  const cacheKey = reverseCacheKey(latitude, longitude);
-  const cached = getCachedPlacesReverse(cacheKey);
-  if (cached) return cached;
-
-  const url = new URL("https://photon.komoot.io/reverse");
-  url.searchParams.set("lat", String(latitude));
-  url.searchParams.set("lon", String(longitude));
-  url.searchParams.set("lang", "en");
-
-  const response = await fetch(url, {
-    headers: {
-      Accept: "application/json",
-      "User-Agent": "QueuelessKenya/1.0 (Kenya reverse geocode)",
-    },
-    signal: AbortSignal.timeout(8000),
-  });
-  if (!response.ok) {
-    throw new Error("Reverse geocode is temporarily unavailable.");
-  }
-
-  const payload = await response.json().catch(() => ({}));
-  const feature = Array.isArray(payload.features) ? payload.features[0] : null;
-  let place;
-  if (!feature) {
-    place = {
-      label: `Near ${latitude.toFixed(5)}, ${longitude.toFixed(5)}`,
-      latitude,
-      longitude,
-    };
-  } else {
-    const [featureLon, featureLat] = feature.geometry?.coordinates || [];
-    place = {
-      label: placeLabel(feature.properties),
-      latitude: Number.isFinite(Number(featureLat)) ? Number(featureLat) : latitude,
-      longitude: Number.isFinite(Number(featureLon)) ? Number(featureLon) : longitude,
-    };
-  }
-
-  setCachedPlacesReverse(cacheKey, place);
-  return place;
 }
 
 async function resolveBusinessCoords(row) {
@@ -243,18 +134,6 @@ async function resolveBusinessCoords(row) {
     console.error("Geocode business failed:", error);
     return { ...row, latitude: null, longitude: null };
   }
-}
-
-function placeLabel(props = {}) {
-  const parts = [
-    props.name,
-    props.street,
-    props.locality || props.city || props.county,
-    props.district || props.state,
-  ].filter(Boolean);
-  // Drop consecutive duplicates (Photon often repeats the city).
-  const unique = parts.filter((part, i) => part !== parts[i - 1]);
-  return unique.join(", ") || "Unknown place";
 }
 
 const storage = multer.diskStorage({
@@ -1216,8 +1095,8 @@ router.get("/businesses", requireAdmin, async (_req, res) => {
   }
 });
 
-// Kenya-only place search via Photon (OSM). Proxied so we can set a proper
-// User-Agent and keep autocomplete credentials/keys out of the client UIs.
+// Kenya-only place search: saved places first, then Google Maps (see places.js).
+// Proxied so the Google key stays out of the client UIs.
 router.get("/places/search", requireAdminOrVendor, async (req, res) => {
   try {
     const q = String(req.query.q || "").trim();
@@ -1233,11 +1112,12 @@ router.get("/places/search", requireAdminOrVendor, async (req, res) => {
 
 router.get("/places/reverse", requireAdminOrVendor, async (req, res) => {
   try {
-    const place = await reverseGeocodeKenya(req.query.lat, req.query.lon);
-    if (!place) {
+    const latitude = parseCoord(req.query.lat, -90, 90);
+    const longitude = parseCoord(req.query.lon, -180, 180);
+    if (latitude == null || longitude == null) {
       return res.status(400).json({ error: "Provide valid latitude and longitude." });
     }
-    return res.json(place);
+    return res.json(await reverseGeocodeKenya(latitude, longitude));
   } catch (error) {
     console.error("Reverse geocode failed:", error);
     return res.status(502).json({ error: "Could not resolve current location." });

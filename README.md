@@ -75,6 +75,19 @@ Postgres is also exposed on the host at `localhost:5434` (mapped away from the l
 
 Advanta credentials are stored in `backend/.env` for when you switch `OTP_MODE=sms`.
 
+### Place search (Google Maps)
+
+Place search and "use my location" in the admin, vendor web and vendor Android apps go through the API (`/places/search`, `/places/reverse`), as does geocoding a business's location. The API checks the `places` table first and only asks Google when nothing saved matches. Every Google result is saved there, so each place costs one Google call.
+
+In `backend/.env` (and on each Railway backend):
+
+```bash
+# Server key with Places API (New) and Geocoding API enabled.
+GOOGLE_MAPS_API_KEY=
+```
+
+Without a key, or when Google fails, Photon (OpenStreetMap) answers instead, and its results aren't saved.
+
 ### Vendor push (FCM)
 
 Vendor activation, trial, and queue alerts prefer **device push** (Android + vendor web) instead of SMS (OTP still uses SMS).
