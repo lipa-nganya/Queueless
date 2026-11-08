@@ -47,8 +47,8 @@ android {
         applicationId = "tech.thewolfgang.queueless.customer"
         minSdk = 26
         targetSdk = 36
-        versionCode = 6
-        versionName = "2.1.1"
+        versionCode = 7
+        versionName = "2.1.2"
     }
 
     flavorDimensions += "environment"
