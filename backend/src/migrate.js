@@ -470,8 +470,10 @@ export async function migrate() {
   `);
 }
 
-// Railway's production environment must never boot with demo logins.
-const IS_PRODUCTION_ENV = process.env.RAILWAY_ENVIRONMENT_NAME === "production";
+// Production must never boot with demo logins. APP_ENV is set on Cloud Run;
+// RAILWAY_ENVIRONMENT_NAME covers the Railway production service.
+const IS_PRODUCTION_ENV =
+  process.env.APP_ENV === "production" || process.env.RAILWAY_ENVIRONMENT_NAME === "production";
 
 export async function seedAdmin() {
   if (IS_PRODUCTION_ENV && !process.env.ADMIN_PASSWORD) {
