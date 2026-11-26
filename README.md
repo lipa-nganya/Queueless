@@ -75,6 +75,20 @@ Postgres is also exposed on the host at `localhost:5434` (mapped away from the l
 
 Advanta credentials are stored in `backend/.env` for when you switch `OTP_MODE=sms`.
 
+### Develop backend (Google Cloud)
+
+The develop API runs on Cloud Run in the `queueless-develop` project (account wolfgangtech6@gmail.com, region `africa-south1`); production is still on Railway.
+
+| Piece | Where |
+| --- | --- |
+| API | Cloud Run service `queueless-api` → https://queueless-api-958382779776.africa-south1.run.app |
+| Database | Cloud SQL `queueless-dev-pg` (Postgres 17), database and user `queueless` |
+| Uploads | Bucket `queueless-develop-uploads`, mounted at `/app/uploads` |
+| Secrets | Secret Manager (`database-url`, `jwt-secret`, `admin-password`, …), injected as env vars |
+| Images | Artifact Registry `africa-south1-docker.pkg.dev/queueless-develop/queueless/api` |
+
+`./deploy-to-development.sh` builds `backend/` from the pushed `develop` commit with Cloud Build and rolls it out to Cloud Run, then deploys the Netlify sites. Change a plain env var with `gcloud run services update queueless-api --update-env-vars KEY=value`, or a secret with `gcloud secrets versions add <name> --data-file=-` followed by a redeploy.
+
 ### Place search (Google Maps)
 
 Place search and "use my location" in the admin, vendor web and vendor Android apps go through the API (`/places/search`, `/places/reverse`), as does geocoding a business's location. The API checks the `places` table first and only asks Google when nothing saved matches. Every Google result is saved there, so each place costs one Google call.

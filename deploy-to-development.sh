@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Deploys the develop tier: the Railway backend plus all Netlify frontends.
-# They build from the develop branch, so this pushes first and then
-# triggers each provider explicitly rather than relying on the git webhooks.
+# Deploys the develop tier: the Cloud Run backend plus all Netlify frontends.
+# Everything builds from the develop branch, so this pushes first, builds the
+# API image from the pushed commit, and triggers each Netlify site explicitly.
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 BRANCH="develop"
@@ -17,10 +17,13 @@ ADMIN_URL="https://admin.queueless.thewolfgang.tech"
 VENDOR_SITE_ID="aaf89a4e-ef96-4d45-bbbc-d6493bcc4ea5"
 VENDOR_URL="https://vendor.queueless.thewolfgang.tech"
 
-RAILWAY_PROJECT="94fe5c8a-1aad-45eb-a004-61da6bfd93d6"
-RAILWAY_ENV="staging"
-RAILWAY_SERVICE="Queueless"
-BACKEND_URL="https://queueless-staging.up.railway.app"
+# Google Cloud: project queueless-develop (owned by the wolfgangtech6 account).
+GCP_ACCOUNT="${GCP_ACCOUNT:-wolfgangtech6@gmail.com}"
+GCP_PROJECT="queueless-develop"
+GCP_REGION="africa-south1"
+RUN_SERVICE="queueless-api"
+IMAGE_REPO="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT/queueless/api"
+BACKEND_URL="https://queueless-api-958382779776.africa-south1.run.app"
 
 SKIP_PUSH=0
 WAIT=1
@@ -30,7 +33,7 @@ usage() {
 Usage: ./deploy-to-development.sh [options]
 
 Deploys the develop tier:
-  backend      Railway  (queueless-dev / staging / Queueless)
+  backend      Cloud Run (queueless-develop / africa-south1 / queueless-api)
   landing      Netlify  (queueless-kenya-dev)
   customer app Netlify  (queueless-kenya-customer)
   admin        Netlify  (queueless-kenya-admin)
@@ -59,7 +62,7 @@ warn() { printf '  \033[33mwarn\033[0m %s\n' "$1"; }
 fail() { printf '  \033[31mfail\033[0m %s\n' "$1"; }
 
 step "Checking prerequisites"
-for cmd in git netlify railway curl python3; do
+for cmd in git netlify gcloud curl python3; do
   if ! command -v "$cmd" >/dev/null 2>&1; then
     fail "$cmd is not installed"
     exit 1
@@ -73,11 +76,11 @@ if ! netlify status >/dev/null 2>&1; then
 fi
 ok "netlify authenticated"
 
-if ! railway whoami >/dev/null 2>&1; then
-  fail "Railway CLI is not logged in — run: railway login"
+if ! gcloud auth print-access-token --account="$GCP_ACCOUNT" >/dev/null 2>&1; then
+  fail "gcloud has no credentials for $GCP_ACCOUNT — run: gcloud auth login $GCP_ACCOUNT"
   exit 1
 fi
-ok "railway authenticated as $(railway whoami 2>/dev/null | sed 's/Logged in as //; s/ .*//')"
+ok "gcloud authenticated for project $GCP_PROJECT"
 
 step "Checking repository state"
 cd "$ROOT"
@@ -125,12 +128,25 @@ netlify_deploy_state() {
     | python3 -c 'import sys,json; print(json.load(sys.stdin).get("state",""))' 2>/dev/null || true
 }
 
-step "Triggering Railway backend"
-if railway redeploy --service "$RAILWAY_SERVICE" --environment "$RAILWAY_ENV" \
-     --project "$RAILWAY_PROJECT" --from-source --yes >/dev/null 2>&1; then
-  ok "backend deploy triggered"
+step "Building and deploying the Cloud Run backend"
+# Build from the pushed commit, not the working tree, so the API matches the frontends.
+build_dir="$(mktemp -d)"
+trap 'rm -rf "$build_dir"' EXIT
+git archive "origin/$BRANCH" backend | tar -x -C "$build_dir"
+image="$IMAGE_REPO:$deploy_sha"
+if gcloud builds submit "$build_dir/backend" --tag "$image" --region "$GCP_REGION" \
+     --project "$GCP_PROJECT" --account "$GCP_ACCOUNT" --quiet >/dev/null 2>&1; then
+  ok "image built: $image"
 else
-  fail "could not trigger the Railway deploy"
+  fail "Cloud Build failed — check: gcloud builds list --project $GCP_PROJECT"
+  exit 1
+fi
+# Env vars, secrets, Cloud SQL and the uploads bucket stay as configured on the service.
+if gcloud run deploy "$RUN_SERVICE" --image "$image" --region "$GCP_REGION" \
+     --project "$GCP_PROJECT" --account "$GCP_ACCOUNT" --quiet >/dev/null 2>&1; then
+  ok "backend deployed to Cloud Run"
+else
+  fail "could not deploy to Cloud Run"
   exit 1
 fi
 
@@ -169,7 +185,7 @@ done
 if [[ "$backend_ready" -eq 1 ]]; then
   ok "backend healthy at $BACKEND_URL"
 else
-  fail "backend did not become healthy — check: railway logs"
+  fail "backend did not become healthy — check: gcloud run services logs read $RUN_SERVICE --region $GCP_REGION --project $GCP_PROJECT"
   status=1
 fi
 

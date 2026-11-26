@@ -77,7 +77,7 @@ android {
             buildConfigField(
                 "String",
                 "API_BASE_URL",
-                "\"${apiUrl("queueless.api.dev", "https://queueless-staging.up.railway.app/api")}\"",
+                "\"${apiUrl("queueless.api.dev", "https://queueless-api-958382779776.africa-south1.run.app/api")}\"",
             )
         }
         create("production") {

@@ -5,7 +5,7 @@ window.QUEUELESS_API_ORIGIN = ["localhost", "127.0.0.1"].includes(location.hostn
   ? "http://localhost:4000"
   : location.hostname.endsWith("queueless.co.ke")
     ? "https://queueless-prod.up.railway.app"
-    : "https://queueless-staging.up.railway.app";
+    : "https://queueless-api-958382779776.africa-south1.run.app";
 
 // Keep in sync with android-vendor versionName (app/build.gradle.kts).
 window.QUEUELESS_VENDOR_APP_VERSION = "2.1.2";
