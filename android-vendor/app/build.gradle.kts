@@ -92,7 +92,7 @@ android {
             buildConfigField(
                 "String",
                 "API_BASE_URL",
-                "\"${apiUrl("queueless.api.production", "https://queueless-prod.up.railway.app/api")}\"",
+                "\"${apiUrl("queueless.api.production", "https://api.queueless.co.ke/api")}\"",
             )
         }
     }

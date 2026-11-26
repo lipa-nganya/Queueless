@@ -13,7 +13,7 @@ Product flavors (pick one in Android Studio’s build variant dropdown):
 | --- | --- | --- | --- |
 | **local** | `.local` | `https://homiest-psychopharmacologic-anaya.ngrok-free.dev/api` | Host API via ngrok (physical device or emulator) |
 | **dev** | `.dev` | `https://queueless-api-958382779776.africa-south1.run.app/api` | Develop / Cloud Run (queueless-develop) |
-| **production** | _(none)_ | `https://queueless-prod.up.railway.app/api` | Live API |
+| **production** | _(none)_ | `https://api.queueless.co.ke/api` | Live API |
 
 All three can be installed side-by-side. Non-production builds show the env name + API URL on the login screen.
 
@@ -24,7 +24,7 @@ In `android-vendor/local.properties` (gitignored):
 ```properties
 queueless.api.local=https://homiest-psychopharmacologic-anaya.ngrok-free.dev/api
 queueless.api.dev=https://queueless-api-958382779776.africa-south1.run.app/api
-queueless.api.production=https://queueless-prod.up.railway.app/api
+queueless.api.production=https://api.queueless.co.ke/api
 ```
 
 ### Local API via ngrok (recommended)
