@@ -2285,7 +2285,7 @@ async function renderVendors() {
   let editingId = null;
   let vendorsById = new Map();
   let inviteContact = { phone: "+254712674333", email: "" };
-  let vendorWebUrl = "https://vendor.queueless.thewolfgang.tech";
+  let vendorWebUrl = "https://dev-vendor.queueless.co.ke";
   let vendorAppUrl = "";
   function normalizeInvitePhone(value) {
     const digits = String(value || "").replace(/\D/g, "");

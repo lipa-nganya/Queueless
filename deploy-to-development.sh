@@ -9,13 +9,13 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 BRANCH="develop"
 
 CUSTOMER_SITE_ID="6c7337a3-6a81-4d75-9de2-1dbb3c7ef40a"
-CUSTOMER_URL="https://queueless.thewolfgang.tech"
+CUSTOMER_URL="https://dev.queueless.co.ke"
 CUSTOMER_APP_SITE_ID="78f0bec0-0f42-4192-adf6-3c2167733713"
-CUSTOMER_APP_URL="https://customer.thewolfgang.tech/"
+CUSTOMER_APP_URL="https://dev-customer.queueless.co.ke/"
 ADMIN_SITE_ID="a63fe2df-41f1-4665-88c2-970c6911cfdb"
-ADMIN_URL="https://admin.queueless.thewolfgang.tech"
+ADMIN_URL="https://dev-admin.queueless.co.ke"
 VENDOR_SITE_ID="aaf89a4e-ef96-4d45-bbbc-d6493bcc4ea5"
-VENDOR_URL="https://vendor.queueless.thewolfgang.tech"
+VENDOR_URL="https://dev-vendor.queueless.co.ke"
 
 # Google Cloud: project queueless-develop (owned by the wolfgangtech6 account).
 GCP_ACCOUNT="${GCP_ACCOUNT:-wolfgangtech6@gmail.com}"

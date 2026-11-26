@@ -3,7 +3,7 @@
 // *.queueless.co.ke is production; everything else deployed is develop/staging.
 window.QUEUELESS_API_ORIGIN = ["localhost", "127.0.0.1"].includes(location.hostname)
   ? ""
-  : location.hostname.endsWith("queueless.co.ke")
+  : location.hostname.endsWith("queueless.co.ke") && !/^dev[.-]/.test(location.hostname)
     ? "https://queueless-prod.up.railway.app"
     : "https://queueless-api-958382779776.africa-south1.run.app";
 

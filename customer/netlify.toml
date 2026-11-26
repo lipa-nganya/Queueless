@@ -1,6 +1,6 @@
 # Config for the customer site (queueless-kenya-customer), which builds with
 # base = "customer" so Netlify reads this file instead of the one at the repo root.
-# Dev URL: https://customer.thewolfgang.tech
+# Dev URL: https://dev-customer.queueless.co.ke
 [build]
   publish = "."
   command = "echo Static site - no build"

@@ -2,7 +2,7 @@
 (function () {
   const host = typeof location !== "undefined" ? location.hostname : "";
   const isLocal = host === "localhost" || host === "127.0.0.1";
-  const isProduction = host.endsWith("queueless.co.ke");
+  const isProduction = host.endsWith("queueless.co.ke") && !/^dev[.-]/.test(host);
 
   window.QUEUELESS_LANDING = {
     // Local: customer app on :3000. Production and develop: their own customer subdomains.
@@ -10,12 +10,12 @@
       ? "http://localhost:3000/"
       : isProduction
         ? "https://customer.queueless.co.ke/"
-        : "https://customer.thewolfgang.tech/",
+        : "https://dev-customer.queueless.co.ke/",
     vendorWebUrl: isLocal
       ? "http://localhost:3500/"
       : isProduction
         ? "https://vendor.queueless.co.ke"
-        : "https://vendor.queueless.thewolfgang.tech",
+        : "https://dev-vendor.queueless.co.ke",
     // Play Store listing for the customer app. Leave blank until the listing is public.
     customerPlayUrl: "",
     customerAppUrl:

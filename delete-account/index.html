@@ -201,7 +201,7 @@
         // Same API split as the customer and vendor web apps.
         const apiOrigin = ["localhost", "127.0.0.1"].includes(host)
           ? "http://localhost:4000"
-          : host.endsWith("queueless.co.ke")
+          : host.endsWith("queueless.co.ke") && !/^dev[.-]/.test(host)
             ? "https://queueless-prod.up.railway.app"
             : "https://queueless-api-958382779776.africa-south1.run.app";
 

@@ -82,9 +82,9 @@ function switchableBranches(branches, selectedId) {
 
 const LANDING_ORIGIN = ["localhost", "127.0.0.1"].includes(location.hostname)
   ? "http://localhost:8080"
-  : location.hostname.endsWith("queueless.co.ke")
+  : location.hostname.endsWith("queueless.co.ke") && !/^dev[.-]/.test(location.hostname)
     ? "https://queueless.co.ke"
-    : "https://queueless.thewolfgang.tech";
+    : "https://dev.queueless.co.ke";
 
 const PIN_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 21s6-5.2 6-10a6 6 0 1 0-12 0c0 4.8 6 10 6 10Z"/><circle cx="12" cy="11" r="2.2"/></svg>`;
 

@@ -1,10 +1,10 @@
 # Netlify static site (shared build config for both sites)
 # Production: queueless-kenya  → branch main    → https://queueless.co.ke
-# Dev:        queueless-kenya-dev → branch develop → https://queueless.thewolfgang.tech
+# Dev:        queueless-kenya-dev → branch develop → https://dev.queueless.co.ke
 #
 # Site root = Queueless landing page.
-# Customer product app = separate Netlify site (customer.thewolfgang.tech)
-# Vendor product app   = separate Netlify site (vendor.queueless.thewolfgang.tech)
+# Customer product app = separate Netlify site (dev-customer.queueless.co.ke)
+# Vendor product app   = separate Netlify site (dev-vendor.queueless.co.ke)
 #
 # Required env vars (both sites):
 #   GMAIL_USER          — Gmail address used to send
@@ -62,22 +62,22 @@
 # Develop landing.
 [[redirects]]
   from = "/app"
-  to = "https://customer.thewolfgang.tech/"
+  to = "https://dev-customer.queueless.co.ke/"
   status = 302
 
 [[redirects]]
   from = "/app/*"
-  to = "https://customer.thewolfgang.tech/:splat"
+  to = "https://dev-customer.queueless.co.ke/:splat"
   status = 302
 
 [[redirects]]
   from = "/customer"
-  to = "https://customer.thewolfgang.tech/"
+  to = "https://dev-customer.queueless.co.ke/"
   status = 302
 
 [[redirects]]
   from = "/customer/*"
-  to = "https://customer.thewolfgang.tech/:splat"
+  to = "https://dev-customer.queueless.co.ke/:splat"
   status = 302
 
 [[headers]]

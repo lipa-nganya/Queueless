@@ -291,7 +291,7 @@ async function settingsPayload() {
     contact_phone: (await getSetting(CONTACT_PHONE, "")) || "",
     contact_email: (await getSetting(CONTACT_EMAIL, "")) || "",
     vendor_web_url:
-      process.env.VENDOR_PUBLIC_URL || "https://vendor.queueless.thewolfgang.tech",
+      process.env.VENDOR_PUBLIC_URL || "https://dev-vendor.queueless.co.ke",
     vendor_app_url: process.env.VENDOR_APP_URL || "",
   };
 }
@@ -5526,7 +5526,7 @@ router.post("/admins/vendors", requireAdmin, async (req, res) => {
       contact_phone: activationNotify?.contact?.phone || null,
       contact_email: activationNotify?.contact?.email || null,
       vendor_web_url:
-        process.env.VENDOR_PUBLIC_URL || "https://vendor.queueless.thewolfgang.tech",
+        process.env.VENDOR_PUBLIC_URL || "https://dev-vendor.queueless.co.ke",
       vendor_app_url: process.env.VENDOR_APP_URL || "",
       message: activateNow
         ? vendorActivatedNotifySummary(activationNotify)
@@ -5685,7 +5685,7 @@ router.post("/admins/vendors/:id/invite", requireAdmin, async (req, res) => {
       contact_phone: invite.contact?.phone || null,
       contact_email: invite.contact?.email || null,
       vendor_web_url:
-        process.env.VENDOR_PUBLIC_URL || "https://vendor.queueless.thewolfgang.tech",
+        process.env.VENDOR_PUBLIC_URL || "https://dev-vendor.queueless.co.ke",
       vendor_app_url: process.env.VENDOR_APP_URL || "",
       message: invite.sms.sent
         ? "Invite SMS sent from Wolfgang. Open WhatsApp from Admin to share login details."

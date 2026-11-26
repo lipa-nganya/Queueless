@@ -10,9 +10,9 @@ const API_ORIGIN =
 const API_BASE = `${API_ORIGIN}/api`;
 const LANDING_ORIGIN = ["localhost", "127.0.0.1"].includes(location.hostname)
   ? "http://localhost:8080"
-  : location.hostname.endsWith("queueless.co.ke")
+  : location.hostname.endsWith("queueless.co.ke") && !/^dev[.-]/.test(location.hostname)
     ? "https://queueless.co.ke"
-    : "https://queueless.thewolfgang.tech";
+    : "https://dev.queueless.co.ke";
 const UPLOADS_BASE = API_ORIGIN;
 const TOKEN_KEY = "queueless_customer_token";
 const PENDING_PHONE_KEY = "queueless_pending_phone";
