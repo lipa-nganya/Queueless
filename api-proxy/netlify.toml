@@ -1,0 +1,13 @@
+# api.queueless.co.ke: the production API address used by the websites and the
+# Android apps. This Netlify site only forwards every request to the production
+# Cloud Run service (queueless-api-prod, GCP project queueless-develop), so the
+# backend can move again later without new app releases.
+[build]
+  publish = "."
+  command = "echo Queueless api production proxy"
+
+[[redirects]]
+  from = "/*"
+  to = "https://queueless-api-prod-958382779776.africa-south1.run.app/:splat"
+  status = 200
+  force = true
