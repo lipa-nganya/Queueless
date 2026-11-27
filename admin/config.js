@@ -7,4 +7,4 @@ window.QUEUELESS_API_ORIGIN = ["localhost", "127.0.0.1"].includes(location.hostn
     ? "https://api.queueless.co.ke"
     : "https://queueless-api-958382779776.africa-south1.run.app";
 
-window.QUEUELESS_ADMIN_APP_VERSION = "2.1.2";
+window.QUEUELESS_ADMIN_APP_VERSION = "2.1.3";

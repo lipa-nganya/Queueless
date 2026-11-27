@@ -852,7 +852,7 @@ function tabbar(active) {
 
 function appVersion() {
   return (
-    String(window.QUEUELESS_CUSTOMER_APP_VERSION || "2.1.2").trim() || "2.1.2"
+    String(window.QUEUELESS_CUSTOMER_APP_VERSION || "2.1.3").trim() || "2.1.3"
   );
 }
 
