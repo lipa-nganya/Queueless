@@ -51,7 +51,7 @@ android {
         minSdk = 26
         targetSdk = 36
         versionCode = 10
-        versionName = "2.1.2"
+        versionName = "2.1.3"
         buildConfigField("boolean", "PUSH_ENABLED", hasGoogleServices.toString())
     }
 
